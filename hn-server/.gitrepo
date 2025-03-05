@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/pskill9/hn-server.git
+	branch = main
+	commit = ed1a4b951e9a7cdd7de0575a16d53bbe53330a9d
+	parent = 4ae6ddefae3334b2b7baf1f0fde95f3f61fef8ac
+	method = merge
+	cmdver = 0.4.9
