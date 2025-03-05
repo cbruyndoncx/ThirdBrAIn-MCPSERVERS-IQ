@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/dkmaker/mcp-rest-api.git
+	branch = main
+	commit = 7f47326488877167c9b97a65fff5d20457cf664e
+	parent = ebe235264885031a1f3f03ae85f620cada6cf1c2
+	method = merge
+	cmdver = 0.4.9
