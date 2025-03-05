@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/dshivendra/crewai_mcp_adapter.git
+	branch = main
+	commit = 5e3fd4b0406c5eeae7196925333b8a6e36a34168
+	parent = 6b06f797bf464ec819aa811f82990545cbdba429
+	method = merge
+	cmdver = 0.4.9
