@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/GongRzhe/Gmail-MCP-Server.git
+	branch = main
+	commit = a09f20cbd38b87df22a89a70580124b11860361f
+	parent = e8e0a88b13e809e6f36b2dafc2335b5c05c50337
+	method = merge
+	cmdver = 0.4.9
