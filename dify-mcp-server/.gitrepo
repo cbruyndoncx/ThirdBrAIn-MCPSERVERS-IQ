@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/YanxingLiu/dify-mcp-server.git
+	branch = main
+	commit = 7bcdb1352813a1a7a0e13d7005927415c10e0fbb
+	parent = 71f21a150e35ab0e598e705b8d5327e6924f3489
+	method = merge
+	cmdver = 0.4.9
