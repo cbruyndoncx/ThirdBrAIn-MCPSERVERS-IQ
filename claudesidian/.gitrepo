@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/Synaptic-Labs-AI/claudesidian.git
+	branch = main
+	commit = e280dcafd13131d17e07af8fe41d60fe48a98fe3
+	parent = aecdd735607956f8ceb9157d665242dd368c0a84
+	method = merge
+	cmdver = 0.4.9
