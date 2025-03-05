@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/mokafari/orchestrator-server.git
+	branch = main
+	commit = e07c2bd8d86d39ffa2f3d6886d6143230d09c66a
+	parent = d842992412d8350de21d8f91d908e4b802108eb0
+	method = merge
+	cmdver = 0.4.9
