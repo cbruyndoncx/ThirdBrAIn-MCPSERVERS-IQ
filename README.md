@@ -244,15 +244,20 @@ This repository contains the following submodules:
 - **Languages Used**: TypeScript, JavaScript
 - **Number of Releases**: 0
 
-# MCPSERVERS
+# MCPSERVERS Manually Added
 
-This repository contains the following submodules:
 
-# MCPSERVERS
-
-This repository contains the following submodules:
-
-# MCPSERVERS
-
-This repository contains the following submodules:
-
+git subrepo clone https://github.com/lastmile-ai/mcp-agent.git;
+git subrepo clone https://github.com/dkmaker/mcp-rest-api.git;
+git subrepo clone https://github.com/p2c2e/mcp_proxy_pydantic_agent.git;
+git subrepo clone https://github.com/lutzleonhardt/mcpm-aider.git;
+git subrepo clone https://github.com/squirrelogic/mcp-architect.git;
+git subrepo clone https://github.com/phil65/mcp-server-llmling.git;
+git subrepo clone https://github.com/chrishayuk/mcp-cli.git;
+git subrepo clone https://github.com/justjoehere/mcp_gradio_client.git;
+git subrepo clone https://github.com/agentico-dev/mcp-server.git;
+git subrepo clone https://github.com/docker/mcp-servers.git;
+git subrepo clone https://github.com/adhikasp/mcp-client-cli.git;
+git subrepo clone https://github.com/ggozad/oterm.git;
+git subrepo clone https://github.com/AI-QL/chat-mcp.git;
+git subrepo clone https://github.com/shahshrey/universal-mcp-ui.git;
