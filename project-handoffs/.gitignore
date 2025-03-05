@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+build/
+dist/
+
+# IDE and OS files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Runtime data
+*.pid
+*.seed
+*.pid.lock
+
+# Test coverage
+coverage/
+
+# Project specific
+project_data/

@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/davidorex/project-handoffs.git
+	branch = main
+	commit = 0745aac7f41574fa16460d1358f2df999898e5ac
+	parent = 8f05190f07347cc887f8eb23038621e7e84e1abb
+	method = merge
+	cmdver = 0.4.9
