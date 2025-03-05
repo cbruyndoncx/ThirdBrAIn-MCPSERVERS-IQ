@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/zcaceres/markdownify-mcp.git
+	branch = main
+	commit = 949f12e633320548c565c6ec892d33695b158d64
+	parent = a59b48cb15fb395fd713e73996bb5f22f5716c89
+	method = merge
+	cmdver = 0.4.9
