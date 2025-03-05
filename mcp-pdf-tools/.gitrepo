@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/hanweg/mcp-pdf-tools.git
+	branch = main
+	commit = 388ba1fcb8cb30b9c938e681cbb5945e74b22596
+	parent = eb136ae924eea1ec5a2997614e370e1828e4d722
+	method = merge
+	cmdver = 0.4.9
