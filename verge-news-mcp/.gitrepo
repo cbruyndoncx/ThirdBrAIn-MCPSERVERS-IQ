@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/manimohans/verge-news-mcp.git
+	branch = main
+	commit = 3545bfbbfe24fec5f916032f2cdc686220649a50
+	parent = e252ff4657e734f2df142a10b013332bf464194b
+	method = merge
+	cmdver = 0.4.9
