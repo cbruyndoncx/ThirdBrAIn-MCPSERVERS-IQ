@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/hirokidaichi/mcp-tts-say.git
+	branch = main
+	commit = 66d85ddfdba64c69d5d8400bfe46ada5f9eb82b3
+	parent = 94435cb19863b4db5ae82508fe0253f44be81abc
+	method = merge
+	cmdver = 0.4.9
