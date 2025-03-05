@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/delorenj/mcp-server-ticketmaster.git
+	branch = main
+	commit = 14411843cdecc88957c61a9d8b576cbaf5e65c09
+	parent = ec0aeb1cca5a5c236cc56114e2ae8e792fbf2182
+	method = merge
+	cmdver = 0.4.9
