@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/p2c2e/mcp_proxy_pydantic_agent.git
+	branch = main
+	commit = 5c3b6ea909e7fa0e56163f3651b556004ae697c9
+	parent = 08cb2470ad400c7f4dd3c115ebe440b21f45ef22
+	method = merge
+	cmdver = 0.4.9
