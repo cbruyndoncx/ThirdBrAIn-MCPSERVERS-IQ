@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/cyanheads/atlas-mcp-server.git
+	branch = main
+	commit = b1b8b7dbf8ae1aeae1c986db7d88ab92ceae4a70
+	parent = 675782a25cf8362b46738735b2555e6e280ea33b
+	method = merge
+	cmdver = 0.4.9

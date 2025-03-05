@@ -1,0 +1,48 @@
+{
+  "name": "atlas-mcp-server",
+  "version": "2.0.2",
+  "description": "A Model Context Protocol server built in TypeScript that leverages Neo4j’s graph database, delivers intelligent project and task management while empowering LLM agents with seamless collaboration and guidance.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "atlas-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc && node scripts/make-executable.js",
+    "start": "node dist/index.js",
+    "dev": "tsc -w",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "rebuild": "node scripts/clean.js && npm run build",
+    "tree": "node scripts/generate-tree.js"
+  },
+  "keywords": [
+    "mcp",
+    "neo4j",
+    "project-management",
+    "typescript",
+    "llm",
+    "agent",
+    "collaboration",
+    "task-management",
+    "whiteboard",
+    "graph-database"
+  ],
+  "author": "@cyanheads",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.5.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "fuzzysort": "^3.1.0",
+    "neo4j-driver": "^5.28.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3",
+    "winston": "^3.17.0",
+    "zod": "^3.24.2",
+    "cross-env": "^7.0.3"
+  }
+}
