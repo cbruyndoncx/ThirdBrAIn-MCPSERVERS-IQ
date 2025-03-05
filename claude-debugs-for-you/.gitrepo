@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/jasonjmcghee/claude-debugs-for-you.git
+	branch = main
+	commit = 06b43b1214c90f4067c553258bfde37dd821616d
+	parent = 9a156c59f4412ca9181a79a059d1501e38cd390e
+	method = merge
+	cmdver = 0.4.9
