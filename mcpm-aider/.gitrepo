@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/lutzleonhardt/mcpm-aider.git
+	branch = main
+	commit = 547a28b10b8e242295fdf514dce6374448ba80b1
+	parent = 3080fbf313438f57618a3824d2909d127db8609a
+	method = merge
+	cmdver = 0.4.9
