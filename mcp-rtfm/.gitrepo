@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/ryanjoachim/mcp-rtfm.git
+	branch = main
+	commit = 054fe515735cb477d4640c20930c04b243e443fc
+	parent = 80e3108a7c0f1db2c5070e6eb6f018160717703d
+	method = merge
+	cmdver = 0.4.9
