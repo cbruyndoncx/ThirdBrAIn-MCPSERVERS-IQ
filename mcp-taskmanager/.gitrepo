@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/kazuph/mcp-taskmanager.git
+	branch = main
+	commit = 8a1d519512ba59dd32b5366a82ee6e92e0584364
+	parent = 3ae53e8dc4f04947948552e15295c5d690578630
+	method = merge
+	cmdver = 0.4.9
