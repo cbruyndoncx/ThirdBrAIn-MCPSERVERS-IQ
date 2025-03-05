@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/varunneal/spotify-mcp.git
+	branch = main
+	commit = 8764076c4f9e09baf25ef404809eafcbe1568759
+	parent = 9cab13dd197b971a7360d8b895bbed01f8922a39
+	method = merge
+	cmdver = 0.4.9
