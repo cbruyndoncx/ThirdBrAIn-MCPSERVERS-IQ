@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "stdio_uvx_launched_server_fetch": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    },
+    "stdio_npx_launched_server_brave-search": {
+      "type": "stdio",
+      "command": "npx.cmd",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-brave-search"
+      ],
+      "env": {
+        "BRAVE_API_KEY": "api_key_here"
+      }
+    },
+    "stdio_bat_file_launched_stdio_server": {
+      "type": "stdio",
+      "command": "C:\\path\\to\\bat\\file\\mcp_stdio_server_bats\\example.bat",
+      "args": [],
+      "env": {}
+    },
+    "sse_connected_server": {
+      "type": "sse",
+      "url": "http://127.0.0.1:3001/sse",
+      "headers": {}
+    }
+  }
+}

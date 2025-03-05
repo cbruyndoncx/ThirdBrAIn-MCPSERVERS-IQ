@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/justjoehere/mcp_gradio_client.git
+	branch = master
+	commit = 79603b1ad6b1e0566c2f4e573270385e5a825955
+	parent = a0191d55cf658bfdf3952acef29219d628355b01
+	method = merge
+	cmdver = 0.4.9

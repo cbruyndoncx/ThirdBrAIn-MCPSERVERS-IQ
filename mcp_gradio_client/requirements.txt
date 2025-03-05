@@ -1,0 +1,10 @@
+gradio
+langchain
+langchain-openai
+langchain_core
+langgraph
+mcp
+pydantic
+jsonschema-pydantic
+aiosqlite
+python-dotenv
