@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/lastmile-ai/mcp-agent.git
+	branch = main
+	commit = 73af711bd48d057eae01660baf4c4cd613e13c38
+	parent = f815cc33c55ec661202cbfbd0ab2dc61bd06309c
+	method = merge
+	cmdver = 0.4.9
