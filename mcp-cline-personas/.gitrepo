@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/bradfair/mcp-cline-personas.git
+	branch = main
+	commit = 82eaa52528e454020a2f12b37be573b3db48b5de
+	parent = cf67f910e703242c310872e25eddaa81890be69d
+	method = merge
+	cmdver = 0.4.9
