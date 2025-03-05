@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/jankowtf/mcp-hitchcode.git
+	branch = main
+	commit = f46172cdf81254ef1be6599fff8226abe99ef642
+	parent = b501c1ab48826cdd7548bebb09c7adf7624f2281
+	method = merge
+	cmdver = 0.4.9
