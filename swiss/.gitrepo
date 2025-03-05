@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/a1j9o94/swiss.git
+	branch = main
+	commit = 8cb69bb7a68c619b55f9312bc8cd3df7bcd40b97
+	parent = c76f4a73d46ccab937aa1d2d6c8fd3c249081bec
+	method = merge
+	cmdver = 0.4.9
