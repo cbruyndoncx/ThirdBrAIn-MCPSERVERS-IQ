@@ -1,0 +1,21 @@
+{
+  "server": "http://localhost:8080",
+  "tests": [
+    {
+      "endpoint": "run_python",
+      "name": "Basic Hello World",
+      "request": {
+        "code": "print('Hello, World!')"
+      },
+      "expectedStatus": 200
+    },
+    {
+      "endpoint": "run_python",
+      "name": "Simple Arithmetic",
+      "request": {
+        "code": "2 + 2"
+      },
+      "expectedStatus": 200
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+    "request": {
+        "code": "print('Hello, World!')",
+        "timeout": 30
+    },
+    "expected_response": {
+        "status": "success",
+        "result": {
+            "output": "Mock output",
+            "error": null
+        }
+    }
+}

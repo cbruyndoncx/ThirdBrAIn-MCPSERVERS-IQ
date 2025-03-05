@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/topherbc/python-run-mcp.git
+	branch = main
+	commit = 5f7844aacb48350b0807c68da6746ee356770e27
+	parent = c7311123c9b6a4748866bcaad0a1a0238768c87a
+	method = merge
+	cmdver = 0.4.9

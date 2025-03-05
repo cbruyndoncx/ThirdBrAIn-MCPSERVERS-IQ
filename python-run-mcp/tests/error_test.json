@@ -1,0 +1,21 @@
+{
+  "server": "http://localhost:8080",
+  "tests": [
+    {
+      "endpoint": "run_python",
+      "name": "Syntax Error Test",
+      "request": {
+        "code": "print('Unclosed string"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "endpoint": "run_python",
+      "name": "Runtime Error Test",
+      "request": {
+        "code": "1/0"
+      },
+      "expectedStatus": 400
+    }
+  ]
+}
