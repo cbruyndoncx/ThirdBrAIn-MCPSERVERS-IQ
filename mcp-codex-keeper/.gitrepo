@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/aindreyway/mcp-codex-keeper.git
+	branch = main
+	commit = f59e7972e220576d813d7b8d43c97acc1c36d8d0
+	parent = dc45e7232bdc0f507935c43d84c3b01c2f501863
+	method = merge
+	cmdver = 0.4.9
