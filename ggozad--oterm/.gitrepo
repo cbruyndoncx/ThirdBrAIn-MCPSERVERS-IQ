@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/ggozad/oterm.git
+	branch = main
+	commit = ed95ebd9b02b249a5844540b8f708b15c79c7033
+	parent = 9a623dc019f29345728adf421bde7e2d49cba92f
+	method = merge
+	cmdver = 0.4.9
