@@ -1,0 +1,23 @@
+{
+  "name": "mcp-server-server",
+  "description": "a model context protocol server of servers",
+  "module": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "mcp-server-wrapper-build": "bun build --compile --minify --sourcemap --bytecode ./src/mcp-server-wrapper/mcp-server-wrapper.ts --outfile build/mcp-server-wrapper",
+    "mcp-server-wrapper": "bun run src/mcp-server-wrapper/mcp-server-wrapper.ts",
+    "mcp-server-wrapper-client": "bun run src/mcp-server-wrapper/example-client/example-client.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "0.6.0",
+    "winston": "^3.17.0",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
