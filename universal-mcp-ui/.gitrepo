@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/shahshrey/universal-mcp-ui.git
+	branch = main
+	commit = cec9ca85b3ce3f41ebdde8c29128cd52e67d2b9c
+	parent = 8d703d8587338ec94540a7852833ce77ea2a8cb3
+	method = merge
+	cmdver = 0.4.9
