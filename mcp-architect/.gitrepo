@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/squirrelogic/mcp-architect.git
+	branch = main
+	commit = 8dceb322380397314158154f662e3ddfaff6013c
+	parent = 2a380b2209e47ba3d3472f4601355cc91d89d9a7
+	method = merge
+	cmdver = 0.4.9
