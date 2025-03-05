@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/brysontang/DeltaTask.git
+	branch = main
+	commit = 68753c08cf34bfbc50d21e97827a2aa260b2ca47
+	parent = ceb686bdf867043ef20063e470c4ff62db7656d2
+	method = merge
+	cmdver = 0.4.9
