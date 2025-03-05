@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/Rickyyy1116/mcp-youtube-sheets.git
+	branch = main
+	commit = 4c32d17646fab72162217030864179b68fa7688c
+	parent = 37523a45bc2953df32e628e33487446c7e51157b
+	method = merge
+	cmdver = 0.4.9

@@ -1,0 +1,47 @@
+{
+  "name": "@rikukawa/youtube-sheets-server",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc && chmod +x build/index.js",
+    "start": "node build/index.js",
+    "dev": "ts-node --esm src/index.ts",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "youtube",
+    "google-sheets",
+    "claude",
+    "anthropic",
+    "ai",
+    "automation"
+  ],
+  "author": "Riku Kawashima",
+  "license": "MIT",
+  "description": "MCP server for searching YouTube videos and saving results to Google Sheets",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rickyyy1116/mcp-youtube-sheets.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Rickyyy1116/mcp-youtube-sheets/issues"
+  },
+  "homepage": "https://github.com/Rickyyy1116/mcp-youtube-sheets#readme",
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.1.0",
+    "axios": "^1.6.7",
+    "googleapis": "^133.0.0"
+  },
+  "files": [
+    "build",
+    "README.md",
+    "LICENSE"
+  ]
+}
