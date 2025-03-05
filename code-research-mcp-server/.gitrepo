@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/nahmanmate/code-research-mcp-server.git
+	branch = main
+	commit = 435d3960b8b223402c97a5ebcf0f20d11436b8d8
+	parent = e1fc8721e517fdbe8b74e3616dfc417ab01b3d53
+	method = merge
+	cmdver = 0.4.9
