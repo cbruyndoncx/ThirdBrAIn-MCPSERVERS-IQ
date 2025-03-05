@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/privsim/mcp-test-runner.git
+	branch = main
+	commit = 6aa4e06af8ffb01480503454cdaa21009ee8c537
+	parent = 4832035c8ed9a72707fb69b3599507e982effd30
+	method = merge
+	cmdver = 0.4.9
