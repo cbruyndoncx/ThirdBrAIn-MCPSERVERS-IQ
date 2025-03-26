@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/jankowtf/mcp-hitchcode.git
 	branch = main
-	commit = f46172cdf81254ef1be6599fff8226abe99ef642
-	parent = b501c1ab48826cdd7548bebb09c7adf7624f2281
+	commit = 78d36482d9b0efc45b1d4cc84b7bd82f68d3ef9c
+	parent = bda4d2a5e27a89acd37349392c341a5d60067799
 	method = merge
 	cmdver = 0.4.9
