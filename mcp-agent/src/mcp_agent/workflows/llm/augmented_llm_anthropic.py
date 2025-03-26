@@ -3,7 +3,6 @@ from typing import Iterable, List, Type
 
 from pydantic import BaseModel
 
-import instructor
 from anthropic import Anthropic
 from anthropic.types import (
     ContentBlock,
@@ -65,8 +64,14 @@ class AnthropicAugmentedLLM(AugmentedLLM[MessageParam, Message]):
             speedPriority=0.4,
             intelligencePriority=0.3,
         )
+
+        default_model = "claude-3-7-sonnet-latest"  # Fallback default
+
+        if self.context.config.anthropic:
+            if hasattr(self.context.config.anthropic, "default_model"):
+                default_model = self.context.config.anthropic.default_model
         self.default_request_params = self.default_request_params or RequestParams(
-            model="claude-3-5-sonnet-20241022",
+            model=default_model,
             modelPreferences=self.model_preferences,
             maxTokens=2048,
             systemPrompt=self.instruction,
@@ -265,6 +270,8 @@ class AnthropicAugmentedLLM(AugmentedLLM[MessageParam, Message]):
         # We need to do this in a two-step process because Instructor doesn't
         # know how to invoke MCP tools via call_tool, so we'll handle all the
         # processing first and then pass the final response through Instructor
+        import instructor
+
         response = await self.generate_str(
             message=message,
             request_params=request_params,
