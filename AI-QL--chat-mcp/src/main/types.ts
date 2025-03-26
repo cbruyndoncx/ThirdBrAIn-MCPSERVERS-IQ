@@ -27,6 +27,8 @@ export interface McpServersConfig {
   }
 
 export interface ServerConfig {
-    command: string;
-    args: string[];
+  command: string;
+  // ---- Example ----
+  // args: string[];
+  [key: string]: any
 }
