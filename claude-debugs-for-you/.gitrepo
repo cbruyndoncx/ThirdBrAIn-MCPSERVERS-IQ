@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/jasonjmcghee/claude-debugs-for-you.git
 	branch = main
-	commit = 06b43b1214c90f4067c553258bfde37dd821616d
-	parent = 9a156c59f4412ca9181a79a059d1501e38cd390e
+	commit = 90baeab75b59e4df4eb92fb3dd7179e6616f42a7
+	parent = 53fc1de1abc161f0701acc996ce4c6236d114186
 	method = merge
 	cmdver = 0.4.9
