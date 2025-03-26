@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/YanxingLiu/dify-mcp-server.git
 	branch = main
-	commit = 7bcdb1352813a1a7a0e13d7005927415c10e0fbb
-	parent = 71f21a150e35ab0e598e705b8d5327e6924f3489
+	commit = bf960b4508fb2a94645a2633ec10a3f6c8b46cf5
+	parent = c3149ab12d2e6a3844221834ab65f394ee16c9dc
 	method = merge
 	cmdver = 0.4.9

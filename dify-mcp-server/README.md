@@ -39,11 +39,25 @@ You can also run the dify mcp server manually in your clients. The config of cli
 Example config:
 ```json
 "mcpServers": {
-  "mcp-server-rag-web-browser": {
+  "dify-mcp-server": {
     "command": "uv",
       "args": [
         "--directory", "/Users/lyx/Downloads/dify-mcp-server",
         "run", "dify_mcp_server"
+      ],
+    "env": {
+       "CONFIG_PATH": "/Users/lyx/Downloads/config.yaml"
+    }
+  }
+}
+```
+or using uvx:
+```json
+"mcpServers": {
+  "dify-mcp-server": {
+    "command": "uvx",
+      "args": [
+        "--from","git+https://github.com/YanxingLiu/dify-mcp-server","dify_mcp_server"
       ],
     "env": {
        "CONFIG_PATH": "/Users/lyx/Downloads/config.yaml"

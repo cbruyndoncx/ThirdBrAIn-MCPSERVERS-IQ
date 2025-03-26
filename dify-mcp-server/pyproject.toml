@@ -19,3 +19,7 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 dify_mcp_server = "dify_mcp_server:main"
+
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dify_mcp_server"]
