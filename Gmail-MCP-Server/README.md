@@ -4,14 +4,16 @@ A Model Context Protocol (MCP) server for Gmail integration in Claude Desktop wi
 
 ![](https://badge.mcpx.dev?type=server 'MCP Server')
 [![smithery badge](https://smithery.ai/badge/@gongrzhe/server-gmail-autoauth-mcp)](https://smithery.ai/server/@gongrzhe/server-gmail-autoauth-mcp)
-[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
 
 
 ## Features
 
 - Send emails with subject, content, attachments, and recipients
-- Read email messages by ID
+- Full support for international characters in subject lines and email content
+- Read email messages by ID with advanced MIME structure handling
+- View email attachments information (filenames, types, sizes)
 - Search emails with various criteria (subject, sender, date range)
+- List all available Gmail labels (system and user-defined)
 - List emails in inbox, sent, or custom labels
 - Mark emails as read/unread
 - Move emails to different labels/folders
@@ -131,11 +133,13 @@ docker run -i --rm \
 }
 ```
 
-## Usage Examples
+## Available Tools
 
-The server provides several tools that can be used through the Claude Desktop:
+The server provides the following tools that can be used through Claude Desktop:
 
-### Send Email
+### 1. Send Email (`send_email`)
+Sends a new email immediately.
+
 ```json
 {
   "to": ["recipient@example.com"],
@@ -146,28 +150,100 @@ The server provides several tools that can be used through the Claude Desktop:
 }
 ```
 
-### Search Emails
+### 2. Draft Email (`draft_email`)
+Creates a draft email without sending it.
+
 ```json
 {
-  "query": "from:sender@example.com after:2024/01/01",
+  "to": ["recipient@example.com"],
+  "subject": "Draft Report",
+  "body": "Here's the draft report for your review.",
+  "cc": ["manager@example.com"]
+}
+```
+
+### 3. Read Email (`read_email`)
+Retrieves the content of a specific email by its ID.
+
+```json
+{
+  "messageId": "182ab45cd67ef"
+}
+```
+
+### 4. Search Emails (`search_emails`)
+Searches for emails using Gmail search syntax.
+
+```json
+{
+  "query": "from:sender@example.com after:2024/01/01 has:attachment",
   "maxResults": 10
 }
 ```
 
-### Read Email
+### 5. Modify Email (`modify_email`)
+Adds or removes labels from emails (move to different folders, archive, etc.).
+
 ```json
 {
-  "messageId": "message123"
+  "messageId": "182ab45cd67ef",
+  "addLabelIds": ["IMPORTANT"],
+  "removeLabelIds": ["INBOX"]
 }
 ```
 
-### Move Email
+### 6. Delete Email (`delete_email`)
+Permanently deletes an email.
+
 ```json
 {
-  "messageId": "message123",
-  "labelIds": ["INBOX", "IMPORTANT"]
+  "messageId": "182ab45cd67ef"
 }
 ```
+
+### 7. List Email Labels (`list_email_labels`)
+Retrieves all available Gmail labels.
+
+```json
+{}
+```
+
+## Advanced Search Syntax
+
+The `search_emails` tool supports Gmail's powerful search operators:
+
+| Operator | Example | Description |
+|----------|---------|-------------|
+| `from:` | `from:john@example.com` | Emails from a specific sender |
+| `to:` | `to:mary@example.com` | Emails sent to a specific recipient |
+| `subject:` | `subject:"meeting notes"` | Emails with specific text in the subject |
+| `has:attachment` | `has:attachment` | Emails with attachments |
+| `after:` | `after:2024/01/01` | Emails received after a date |
+| `before:` | `before:2024/02/01` | Emails received before a date |
+| `is:` | `is:unread` | Emails with a specific state |
+| `label:` | `label:work` | Emails with a specific label |
+
+You can combine multiple operators: `from:john@example.com after:2024/01/01 has:attachment`
+
+## Advanced Features
+
+### Email Content Extraction
+
+The server intelligently extracts email content from complex MIME structures:
+
+- Prioritizes plain text content when available
+- Falls back to HTML content if plain text is not available
+- Handles multi-part MIME messages with nested parts
+- Processes attachments information (filename, type, size)
+- Preserves original email headers (From, To, Subject, Date)
+
+### International Character Support
+
+The server fully supports non-ASCII characters in email subjects and content, including:
+- Turkish, Chinese, Japanese, Korean, and other non-Latin alphabets
+- Special characters and symbols
+- Proper encoding ensures correct display in email clients
+
 
 ## Security Notes
 
@@ -197,7 +273,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the ISC License.
+MIT
 
 ## Support
 

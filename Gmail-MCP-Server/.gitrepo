@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/GongRzhe/Gmail-MCP-Server.git
 	branch = main
-	commit = a09f20cbd38b87df22a89a70580124b11860361f
-	parent = e8e0a88b13e809e6f36b2dafc2335b5c05c50337
+	commit = 27af9b9a5e89fcc35b573e9c5cf4ace3caa5b08c
+	parent = dc7e17af8561cbc8f782fe57c26ea8bd0fbac50d
 	method = merge
 	cmdver = 0.4.9
