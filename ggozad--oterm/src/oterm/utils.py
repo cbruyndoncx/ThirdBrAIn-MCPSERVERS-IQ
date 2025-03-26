@@ -1,11 +1,50 @@
+import asyncio
 import sys
+from functools import wraps
 from importlib import metadata
 from pathlib import Path
+from typing import Callable
 
 import httpx
 from packaging.version import Version, parse
 
 from oterm.types import ParsedResponse
+
+
+def debounce(wait: float) -> Callable:
+    """
+    A decorator to debounce a function, ensuring it is called only after a specified delay
+    and always executes after the last call.
+
+    Args:
+        wait (float): The debounce delay in seconds.
+
+    Returns:
+        Callable: The decorated function.
+    """
+
+    def decorator(func: Callable) -> Callable:
+        last_call = None
+        task = None
+
+        @wraps(func)
+        async def debounced(*args, **kwargs):
+            nonlocal last_call, task
+            last_call = asyncio.get_event_loop().time()
+
+            if task:
+                task.cancel()
+
+            async def call_func():
+                await asyncio.sleep(wait)
+                if asyncio.get_event_loop().time() - last_call >= wait:
+                    await func(*args, **kwargs)
+
+            task = asyncio.create_task(call_func())
+
+        return debounced
+
+    return decorator
 
 
 def parse_response(input_text: str) -> ParsedResponse:
@@ -18,27 +57,17 @@ def parse_response(input_text: str) -> ParsedResponse:
     formatted_output = input_text
 
     # If the response contains a think tag, split the response into the thought process and the actual response
-    if input_text.startswith("<think>") and input_text.find("</think>") != -1:
-        thought = (
-            input_text[input_text.find("<think>") + 7 : input_text.find("</think>")]
-            .lstrip("\n")
-            .rstrip("\n")
-            .strip()
-        )
-        response = (
-            input_text[input_text.find("</think>") + 8 :].lstrip("\n").rstrip("\n")
-        )
-
+    thought_end = input_text.find("</think>")
+    if input_text.startswith("<think>") and thought_end != -1:
+        thought = input_text[7:thought_end].lstrip("\n").rstrip("\n").strip()
+        response = input_text[thought_end + 8 :].lstrip("\n").rstrip("\n")
         # transform the think tag into a markdown blockquote (for clarity)
-        if len(thought) == 0:
-            formatted_output = response
-        else:
-            formatted_output = (
-                "> ### \<think\>\n"
-                + "\n".join([f"> {line}" for line in thought.split("\n")])
-                + "\n> ### \</think\>\n"
-                + response
-            )
+        formatted_output = (
+            "> ### \<thought\>\n"  # noqa: W605
+            + "\n".join([f"> {line}" for line in thought.split("\n")])
+            + "\n> ### \</thought\>\n"  # noqa: W605
+            + response
+        )
 
     return ParsedResponse(
         thought=thought, response=response, formatted_output=formatted_output
@@ -110,7 +139,7 @@ async def is_up_to_date() -> tuple[bool, Version, Version]:
     async with httpx.AsyncClient() as client:
         running_version = parse(metadata.version("oterm"))
         try:
-            response = await client.get("https://ipinfo.io/")
+            response = await client.get("https://pypi.prg/pypi/oterm/json")
             data = await response.json()
             pypi_version = parse(data["info"]["version"])
         except Exception:

@@ -1,4 +1,5 @@
 import json
+from typing import Optional, Sequence
 
 from ollama import Options, ShowResponse
 from pydantic import ValidationError
@@ -21,11 +22,16 @@ from oterm.ollamaclient import (
     parse_format,
     parse_ollama_parameters,
 )
-from oterm.tools import available as available_tool_defs
+from oterm.tools import avail_tool_defs as available_tool_defs
 from oterm.types import Tool
 
 
 class OtermOllamaOptions(Options):
+    # Patch stop to allow for a single string.
+    # This is an issue with the gemma model which has a single stop parameter.
+    # Remove when fixed upstream and close #187
+    stop: Optional[Sequence[str] | str] = None
+
     class Config:
         extra = "forbid"
 
@@ -80,6 +86,9 @@ class ChatEdit(ModalScreen[str]):
             parameters = OtermOllamaOptions.model_validate_json(
                 p_area.text, strict=True
             ).model_dump(exclude_unset=True)
+            if isinstance(parameters.get("stop"), str):
+                parameters["stop"] = [parameters["stop"]]
+
         except ValidationError:
             p_area = self.query_one(".parameters", TextArea)
             p_area.styles.animate("opacity", 0.0, final_value=1.0, duration=0.5)
@@ -130,7 +139,7 @@ class ChatEdit(ModalScreen[str]):
         option_list = self.query_one("#model-select", OptionList)
         option_list.clear_options()
         for model in models:
-            option_list.add_option(item=self.model_option(model))
+            option_list.add_option(option=self.model_option(model))
         option_list.highlighted = self.last_highlighted_index
         if self.model_name and self.tag:
             self.select_model(f"{self.model_name}:{self.tag}")
@@ -208,7 +217,7 @@ class ChatEdit(ModalScreen[str]):
         return Text(model)
 
     def compose(self) -> ComposeResult:
-        with Container(id="edit-chat-container"):
+        with Container(classes="screen-container full-height"):
             with Horizontal():
                 with Vertical():
                     with Horizontal(id="model-info"):
