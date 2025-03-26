@@ -3,8 +3,7 @@ import { Client, StdioClientTransport, CreateMessageRequestSchema, ServerConfig 
 
 export async function initializeClient(name: String, config: ServerConfig) {
     const transport = new StdioClientTransport({
-        command: config.command,
-        args: config.args,
+        ...config,
     });
     const client_name = `${name}-client`;
     const client = new Client({
