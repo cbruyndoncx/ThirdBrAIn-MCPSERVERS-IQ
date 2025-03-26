@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/chrishayuk/mcp-cli.git
 	branch = main
-	commit = f046382790a711bbe2d2d36e472a60fd060c49d2
-	parent = 70ea05a3e7e2ada8c5cb41a921b40e541e3782dc
+	commit = c477d3910e1087de12a4625a9c3bcd0bc3b32e26
+	parent = 9abb070ec0d0a880de11380ced5af135aa94b942
 	method = merge
 	cmdver = 0.4.9
