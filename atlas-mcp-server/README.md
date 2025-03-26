@@ -1,43 +1,74 @@
-# ATLAS MCP Server 2.0
+# ATLAS: Task Management System
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
-[![Model Context Protocol](https://img.shields.io/badge/MCP-1.5-green.svg)](https://modelcontextprotocol.io/)
-[![Version](https://img.shields.io/badge/Version-2.0.1-blue.svg)]()
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8.2-blue.svg)](https://www.typescriptlang.org/)
+[![Model Context Protocol](https://img.shields.io/badge/MCP-1.8.0-green.svg)](https://modelcontextprotocol.io/)
+[![Version](https://img.shields.io/badge/Version-2.5.0-blue.svg)](https://github.com/cyanheads/atlas-mcp-server/releases)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Status](https://img.shields.io/badge/Status-Stable-blue.svg)]()
+[![Status](https://img.shields.io/badge/Status-Stable-green.svg)]()
 [![GitHub](https://img.shields.io/github/stars/cyanheads/atlas-mcp-server?style=social)](https://github.com/cyanheads/atlas-mcp-server)
 
-ATLAS (Adaptive Task & Logic Automation System) is a Model Context Protocol server designed for LLMs to manage complex projects. Built with TypeScript and featuring
-Neo4j graph database integration, efficient project management, and collaborative features, ATLAS provides LLM Agents project management capabilities through a clean, flexible tool interface.
+ATLAS (Adaptive Task & Logic Automation System) is a task management system for LLM Agents.
+
+Built on a three-tier architecture:
+
+```
+                  +------------------------------------------+
+                  |                PROJECT                   |
+                  |------------------------------------------|
+                  | id: string                               |
+                  | name: string                             |
+                  | description: string                      |
+                  | status: string                           |
+                  | urls: Array<{title: string, url: string}>|
+                  | completionRequirements: string           |
+                  | outputFormat: string                     |
+                  | taskType: string                         |
+                  | createdAt: string                        |
+                  | updatedAt: string                        |
+                  +----------------+-------------------------+
+                            |                    |
+                            |                    |
+                            v                    v
++----------------------------------+ +----------------------------------+
+|               TASK               | |            KNOWLEDGE             |
+|----------------------------------| |----------------------------------|
+| id: string                       | | id: string                       |
+| projectId: string                | | projectId: string                |
+| title: string                    | | text: string                     |
+| description: string              | | tags: string                     |
+| priority: string                 | | domain: string                   |
+| status: string                   | | citations: string[]              |
+| assignedTo: string               | | createdAt: string                |
+| urls: Array<{}>                  | | updatedAt: string                |
+| tags: string[]                   | |                                  |
+| completionRequirements: string   | |                                  |
+| outputFormat: string             | |                                  |
+| taskType: string                 | |                                  |
+| createdAt: string                | |                                  |
+| updatedAt: string                | |                                  |
++----------------------------------+ +----------------------------------+
+```
+
+Implemented as a Model Context Protocol (MCP) server, ATLAS allows LLM agents to interact with project management database, enabling managing projects, tasks, and knowledge items.
 
 > **Important Version Note**: [Version 1.5.4](https://github.com/cyanheads/atlas-mcp-server/releases/tag/v1.5.4) is the last version that uses SQLite as the database. Version 2.0 and onwards has been completely rewritten to use Neo4j, which requires either:
+>
 > - Self-hosting using Docker (docker-compose included in repository)
 > - Using Neo4j AuraDB cloud service: https://neo4j.com/product/auradb/
+>
+> Version 2.5.0 introduces a new 3-node system (Projects, Tasks, Knowledge) that replaces the previous structure.
 
 ## Table of Contents
 
 - [Overview](#overview)
-  - [Architecture & Components](#architecture--components)
 - [Features](#features)
-  - [Project Management](#project-management)
-  - [Collaboration Features](#collaboration-features)
-  - [Whiteboard System](#whiteboard-system)
-  - [Graph Database Integration](#graph-database-integration)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Project Structure](#project-structure)
 - [Tools](#tools)
-  - [Project Operations](#project-operations)
-  - [Member Management](#member-management)
-  - [Dependency Management](#dependency-management)
-  - [Whiteboard Operations](#whiteboard-operations)
-  - [Database Operations](#database-operations)
 - [Resources](#resources)
-  - [Project Resources](#project-resources)
-- [Best Practices](#best-practices)
-  - [Project Organization](#project-organization)
-  - [Performance Optimization](#performance-optimization)
-  - [Error Prevention](#error-prevention)
+- [Database Backup and Restore](#database-backup-and-restore)
+- [Examples](#examples)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -46,138 +77,71 @@ Neo4j graph database integration, efficient project management, and collaborativ
 ATLAS implements the Model Context Protocol (MCP), enabling standardized communication between LLMs and external systems through:
 
 - **Clients**: Claude Desktop, IDEs, and other MCP-compatible clients
-- **Servers**: Tools and resources for project management and collaboration
-- **LLM Agents**: AI models that leverage the server's project management capabilities
+- **Servers**: Tools and resources for project, task, and knowledge management
+- **LLM Agents**: AI models that leverage the server's management capabilities
 
-Key capabilities:
+### System Integration
 
-- **Project Management**: Comprehensive project lifecycle management with metadata and status tracking
-- **Collaboration Tools**: Member management, dependencies, and resource linking
-- **Whiteboard System**: Real-time collaborative whiteboards with version history
-- **Graph Database**: Neo4j-powered relationship management and querying
-- **Performance Focus**: Optimized caching, batch operations, and health monitoring
-- **Graceful Shutdown**: Robust error handling and graceful shutdown mechanisms
+The Atlas Platform integrates these components into a cohesive system:
 
-### Architecture & Components
-
-Core system architecture:
-
-```mermaid
-flowchart TB
-    subgraph API["API Layer"]
-        direction LR
-        MCP["MCP Protocol"]
-        Val["Validation"]
-        Rate["Rate Limiting"]
-
-        MCP --> Val --> Rate
-    end
-
-    subgraph Core["Core Services"]
-        direction LR
-        Project["Project Store"]
-        Whiteboard["Whiteboard System"]
-        Member["Member Management"]
-
-        Project <--> Member
-        Member <--> Whiteboard
-        Project <-.-> Whiteboard
-    end
-
-    subgraph Storage["Storage Layer"]
-        direction LR
-        Neo4j["Neo4j Graph DB"]
-        Cache["Cache Layer"]
-
-        Neo4j <--> Cache
-    end
-
-    Rate --> Project
-    Rate --> Whiteboard
-    Project --> Neo4j
-    Whiteboard --> Neo4j
-
-    classDef layer fill:#2d3748,stroke:#4299e1,stroke-width:3px,rx:5,color:#fff
-    classDef component fill:#1a202c,stroke:#a0aec0,stroke-width:2px,rx:3,color:#fff
-    classDef api fill:#3182ce,stroke:#90cdf4,stroke-width:2px,rx:3,color:#fff
-    classDef core fill:#319795,stroke:#81e6d9,stroke-width:2px,rx:3,color:#fff
-    classDef storage fill:#2f855a,stroke:#9ae6b4,stroke-width:2px,rx:3,color:#fff
-
-    class API,Core,Storage layer
-    class MCP,Val,Rate api
-    class Project,Whiteboard,Member core
-    class Neo4j,Cache storage
-```
-
-Core Components:
-
-- **Storage Layer**: Neo4j graph database with caching layer
-- **Project Layer**: Project management, relationships, and dependency tracking
-- **Member System**: Role-based access control and collaboration
-- **Whiteboard Engine**: Real-time collaboration and version control
-- **Error Handling**: Comprehensive error handling and logging system
+- **Project-Task Relationship**: Projects contain tasks that represent actionable steps needed to achieve project goals. Tasks inherit context from their parent project while providing granular tracking of individual work items.
+- **Knowledge Integration**: Both projects and tasks can be enriched with knowledge items, providing team members with necessary information and context.
+- **Dependency Management**: Both projects and tasks support dependency relationships, allowing for complex workflows with prerequisites and sequential execution requirements.
+- **Unified Search**: The platform provides cross-entity search capabilities, allowing users to find relevant projects, tasks, or knowledge based on various criteria.
 
 ## Features
 
 ### Project Management
 
-- **Project Organization**: Comprehensive project metadata and status tracking
-- **Rich Content**: Notes, links, and documentation management
-- **Status Tracking**: Project lifecycle state management
-- **Dependency Management**: Project relationship tracking and validation
-- **Bulk Operations**: Efficient batch processing for project operations
-- **Search Capabilities**: Advanced Neo4j-powered search functionality
+- **Comprehensive Tracking:** Manage project metadata, statuses, and rich content (notes, links, etc.) with built-in support for bulk operations.
+- **Dependency & Relationship Handling:** Automatically validate and track inter-project dependencies.
 
-### Collaboration Features
+### Task Management
 
-- **Member Management**: Role-based access control (owner, admin, member, viewer)
-- **Team Coordination**: Project-level collaboration tools
-- **Resource Sharing**: Link management and organization
-- **Activity Tracking**: Project updates and member contributions
+- **Task Lifecycle Management:** Create, track, and update tasks through their entire lifecycle.
+- **Prioritization & Categorization:** Assign priority levels and categorize tasks with tags for better organization.
+- **Dependency Tracking:** Establish task dependencies to create structured workflows.
 
-### Whiteboard System
+### Knowledge Management
 
-- **Real-time Collaboration**: Shared whiteboard spaces
-- **Version Control**: History tracking and rollback capabilities
-- **Schema Validation**: Structured content validation
-- **Project Integration**: Whiteboard-project relationships
+- **Structured Knowledge Repository:** Maintain a searchable repository of project-related information.
+- **Domain Categorization:** Organize knowledge by domain and tags for easy retrieval.
+- **Citation Support:** Track sources and references for knowledge items.
 
 ### Graph Database Integration
 
-- **Relationship Management**: Native graph database capabilities
-- **Efficient Queries**: Optimized graph traversal and search
-- **Data Integrity**: ACID-compliant transactions
-- **Scalability**: High-performance graph operations
-- **Advanced Search**: Property-based search with fuzzy matching and wildcards
+- **Native Relationship Management:** Leverage Neo4j's ACID-compliant transactions and optimized queries for robust data integrity.
+- **Advanced Search & Scalability:** Perform property-based searches with fuzzy matching and wildcards while maintaining high performance.
+
+### Unified Search
+
+- **Cross-Entity Search:** Find relevant projects, tasks, or knowledge based on content, metadata, or relationships.
+- **Flexible Query Options:** Support for case-insensitive, fuzzy, and advanced filtering options.
 
 ## Installation
 
-### Option 1: Install via npm
-
-```bash
-npm install atlas-mcp-server
-```
-
-### Option 2: Install from source
-
 1. Clone the repository:
+
 ```bash
 git clone https://github.com/cyanheads/atlas-mcp-server.git
 cd atlas-mcp-server
 ```
 
 2. Install dependencies:
+
 ```bash
 npm install
 ```
 
 3. Configure Neo4j:
+
 ```bash
 # Start Neo4j using Docker
 docker-compose up -d
 ```
 
 4. Build the project:
+
 ```bash
 npm run build
 ```
@@ -227,105 +191,191 @@ The codebase follows a modular structure:
 
 ```
 src/
-├── config/          # Configuration management
-├── mcp/            # MCP server implementation
-│   ├── resources/  # MCP resources
-│   └── tools/      # MCP tools
-├── scripts/        # Build and maintenance scripts
-├── logs/           # Application logs
-├── output/         # Generated output files
-├── neo4j/         # Neo4j database services
-│   └── projectService/ # Project-related operations
-├── types/         # TypeScript type definitions
-└── utils/         # Utility functions
+├── config/          # Configuration management (index.ts)
+├── index.ts         # Main server entry point
+├── mcp/             # MCP server implementation (server.ts)
+│   ├── resources/   # MCP resource handlers (index.ts, types.ts, knowledge/, projects/, tasks/)
+│   └── tools/       # MCP tool handlers (individual tool directories)
+├── services/        # Core application services
+│   └── neo4j/       # Neo4j database services (index.ts, driver.ts, backupRestoreService.ts, etc.)
+├── types/           # Shared TypeScript type definitions (errors.ts, mcp.ts, tool.ts)
+└── utils/           # Utility functions (logger.ts, errorHandler.ts, idGenerator.ts, etc.)
 ```
 
 ## Tools
 
-ATLAS 2.0 provides comprehensive tools for project management:
+ATLAS provides a comprehensive suite of tools for project, task, and knowledge management, callable via the Model Context Protocol.
 
 ### Project Operations
 
-```typescript
-// Project Management
-project.create    // Create new projects
-project.update    // Update existing projects
-project.delete    // Remove projects
-project.note.add  // Add project notes
-project.link.add  // Add project links
+#### `atlas_project_create`
 
-// Bulk Operations
-project.create (bulk mode)  // Create multiple projects
-project.update (bulk mode)  // Update multiple projects
-```
+Creates new projects (single or bulk).
 
-### Member Management
+- **Key Arguments:** `mode` ('single'/'bulk'), project details (`name`, `description`, `status`, `urls`, `completionRequirements`, `dependencies`, `outputFormat`, `taskType`). Bulk mode uses a `projects` array.
 
-```typescript
-// Member Operations
-project.member.add     // Add project members
-project.member.remove  // Remove project members
-project.member.list    // List project members
-```
+#### `atlas_project_list`
 
-### Dependency Management
+Lists projects (all or details for one).
 
-```typescript
-// Dependency Operations
-project.dependency.add     // Add project dependencies
-project.dependency.remove  // Remove project dependencies
-project.dependency.list    // List project dependencies
-```
+- **Key Arguments:** `mode` ('all'/'details'), `id` (for details), filters (`status`, `taskType`), pagination (`page`, `limit`), includes (`includeKnowledge`, `includeTasks`).
 
-### Whiteboard Operations
+#### `atlas_project_update`
 
-```typescript
-// Whiteboard Management
-whiteboard.create   // Create new whiteboards
-whiteboard.update   // Update whiteboard content
-whiteboard.get      // Retrieve whiteboard data
-whiteboard.delete   // Remove whiteboards
-```
+Updates existing projects (single or bulk).
+
+- **Key Arguments:** `mode` ('single'/'bulk'), `id`, `updates` object (containing fields to change). Bulk mode uses a `projects` array with `id` and `updates`.
+
+#### `atlas_project_delete`
+
+Deletes projects (single or bulk).
+
+- **Key Arguments:** `mode` ('single'/'bulk'), `id` (for single) or `projectIds` array (for bulk).
+
+### Task Operations
+
+#### `atlas_task_create`
+
+Creates new tasks (single or bulk) associated with a project.
+
+- **Key Arguments:** `mode` ('single'/'bulk'), `projectId`, task details (`title`, `description`, `priority`, `status`, `assignedTo`, `tags`, `completionRequirements`, `dependencies`, `outputFormat`, `taskType`). Bulk mode uses a `tasks` array.
+
+#### `atlas_task_update`
+
+Updates existing tasks (single or bulk).
+
+- **Key Arguments:** `mode` ('single'/'bulk'), `id`, `updates` object (containing fields to change). Bulk mode uses a `tasks` array with `id` and `updates`.
+
+#### `atlas_task_delete`
+
+Deletes tasks (single or bulk).
+
+- **Key Arguments:** `mode` ('single'/'bulk'), `id` (for single) or `taskIds` array (for bulk).
+
+#### `atlas_task_list`
+
+Lists tasks for a specific project.
+
+- **Key Arguments:** `projectId` (required), filters (`status`, `assignedTo`, `priority`, `tags`, `taskType`), sorting (`sortBy`, `sortDirection`), pagination (`page`, `limit`).
+
+### Knowledge Operations
+
+#### `atlas_knowledge_add`
+
+Adds new knowledge items (single or bulk) associated with a project.
+
+- **Key Arguments:** `mode` ('single'/'bulk'), `projectId`, knowledge details (`text`, `tags`, `domain`, `citations`). Bulk mode uses a `knowledge` array.
+
+#### `atlas_knowledge_delete`
+
+Deletes knowledge items (single or bulk).
+
+- **Key Arguments:** `mode` ('single'/'bulk'), `id` (for single) or `knowledgeIds` array (for bulk).
+
+#### `atlas_knowledge_list`
+
+Lists knowledge items for a specific project.
+
+- **Key Arguments:** `projectId` (required), filters (`tags`, `domain`, `search`), pagination (`page`, `limit`).
+
+### Search Operations
+
+#### `atlas_unified_search`
+
+Performs a unified search across projects, tasks, and knowledge.
+
+- **Key Arguments:** `value` (search term), `property` (optional field to search), filters (`entityTypes`, `taskType`), options (`caseInsensitive`, `fuzzy`), pagination (`page`, `limit`).
 
 ### Database Operations
 
-```typescript
-// Neo4j Search
-neo4j.search       // Search nodes with property filters
-database.clean     // Clean and reinitialize database
-```
+#### `atlas_database_clean`
+
+**Destructive:** Completely resets the database, removing all projects, tasks, and knowledge.
+
+- **Key Arguments:** `acknowledgement` (must be set to `true` to confirm).
 
 ## Resources
 
-ATLAS 2.0 exposes system resources through standard MCP endpoints:
+ATLAS exposes project, task, and knowledge data through standard MCP resource endpoints.
 
-### Project Resources
+### Direct Resources
 
-```typescript
-// Project List
-project-list://all          // Lists all projects with pagination
+#### `atlas://projects`
 
-// Project Details
-project://{projectId}       // Fetches project details with related data
+- **Description:** List of all projects in the Atlas platform with pagination support.
 
-// Project Notes
-project://{projectId}/notes // Fetches project notes with tags and metadata
+#### `atlas://tasks`
 
-// Project Links
-project://{projectId}/links // Fetches project links with categories
+- **Description:** List of all tasks in the Atlas platform with pagination and filtering support.
 
-// Project Dependencies
-project://{projectId}/dependencies // Lists dependencies and dependents
+#### `atlas://knowledge`
 
-// Project Members
-project://{projectId}/members     // Lists members with roles and activity
-```
+- **Description:** List of all knowledge items in the Atlas platform with pagination and filtering support.
+
+### Resource Templates
+
+#### `atlas://projects/{projectId}`
+
+- **Description:** Retrieves a single project by its unique identifier (`projectId`).
+
+#### `atlas://tasks/{taskId}`
+
+- **Description:** Retrieves a single task by its unique identifier (`taskId`).
+
+#### `atlas://projects/{projectId}/tasks`
+
+- **Description:** Retrieves all tasks belonging to a specific project (`projectId`).
+
+#### `atlas://knowledge/{knowledgeId}`
+
+- **Description:** Retrieves a single knowledge item by its unique identifier (`knowledgeId`).
+
+#### `atlas://projects/{projectId}/knowledge`
+
+- **Description:** Retrieves all knowledge items belonging to a specific project (`projectId`).
+
+## Database Backup and Restore
+
+ATLAS provides functionality to back up and restore the Neo4j database content. The core logic resides in `src/services/neo4j/backupRestoreService.ts`.
+
+### Automatic Backups (Note)
+
+**Important:** The automatic backup functionality is currently not working. Please use the manual backup process described below until this feature is fully implemented.
+
+The `src/services/neo4j/driver.ts` includes a `triggerBackgroundBackup` function that is intended to call `exportDatabase` after every write operation, but this feature is still under development. For now, rely on regular manual backups to protect your data.
+
+### Backup Process
+
+- **Mechanism**: The backup process exports all `Project`, `Task`, and `Knowledge` nodes, along with their relationships, into separate JSON files.
+- **Output**: Each backup creates a timestamped directory (e.g., `atlas-backup-YYYYMMDDHHMMSS`) within the configured backup path (default: `./atlas-backups/`). This directory contains `projects.json`, `tasks.json`, `knowledge.json`, and `relationships.json`.
+- **Manual Backup**: You can trigger a manual backup using the provided script:
+  ```bash
+  npm run db:backup
+  ```
+  This command executes `scripts/db-backup.ts`, which calls the `exportDatabase` function.
+
+### Restore Process
+
+- **Mechanism**: The restore process first completely clears the existing Neo4j database. Then, it imports nodes and relationships from the JSON files located in the specified backup directory.
+- **Warning**: Restoring from a backup is a destructive operation. **It will overwrite all current data in your Neo4j database.**
+- **Manual Restore**: To restore the database from a backup directory, use the import script:
+  ```bash
+  npm run db:import <path_to_backup_directory>
+  ```
+  Replace `<path_to_backup_directory>` with the actual path to the backup folder (e.g., `./atlas-backups/atlas-backup-20250326120000`). This command executes `scripts/db-import.ts`, which calls the `importDatabase` function.
+- **Relationship Handling**: The import process attempts to recreate relationships based on the `id` properties stored within the nodes during export. Ensure your nodes have consistent `id` properties for relationships to be restored correctly.
+
+## Examples
+
+The `examples/` directory contains practical examples demonstrating various features of the ATLAS MCP Server.
+
+- **Backup Example**: Located in `examples/backup-example/`, this shows the structure and format of the JSON files generated by the `npm run db:backup` command. See the [Examples README](./examples/README.md) for more details.
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Commit your changes
+3. Commit your changes with a descriptive message
 4. Push to the branch
 5. Create a Pull Request
 

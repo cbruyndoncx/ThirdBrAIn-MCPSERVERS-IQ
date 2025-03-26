@@ -1,119 +1,131 @@
-# Project Directory Structure
+# atlas-mcp-server - Directory Structure
+
+
 
 ```
+atlas-mcp-server
 ├── docs
+    ├── atlas-reference.md
+    └── tree.md
 ├── scripts
-    ├── clean.js
-    ├── generate-tree.js
-    └── make-executable.js
+    ├── clean.ts
+    ├── generate-tree.ts
+    ├── make-executable.ts
+    └── update-deps.ts
 ├── src
     ├── config
     │   └── index.ts
     ├── mcp
     │   ├── resources
-    │   │   ├── projectDependencies
-    │   │   │   ├── getProjectDependencies.ts
-    │   │   │   ├── index.ts
-    │   │   │   └── types.ts
-    │   │   ├── projectDetails
-    │   │   │   ├── getProjectDetails.ts
-    │   │   │   ├── index.ts
-    │   │   │   └── types.ts
-    │   │   ├── projectLinks
-    │   │   │   ├── getProjectLinks.ts
-    │   │   │   ├── index.ts
-    │   │   │   └── types.ts
-    │   │   ├── projectList
-    │   │   │   ├── index.ts
-    │   │   │   ├── listProjects.ts
-    │   │   │   └── types.ts
-    │   │   ├── projectMembers
-    │   │   │   ├── getProjectMembers.ts
-    │   │   │   ├── index.ts
-    │   │   │   └── types.ts
-    │   │   └── projectNotes
-    │   │   │   ├── getProjectNotes.ts
-    │   │   │   ├── index.ts
-    │   │   │   └── types.ts
+    │   │   ├── knowledge
+    │   │   │   └── knowledgeResources.ts
+    │   │   ├── projects
+    │   │   │   └── projectResources.ts
+    │   │   ├── tasks
+    │   │   │   └── taskResources.ts
+    │   │   ├── index.ts
+    │   │   └── types.ts
     │   ├── tools
-    │   │   ├── addProjectNote
-    │   │   │   ├── addProjectNote.ts
-    │   │   │   ├── index.ts
-    │   │   │   └── types.ts
-    │   │   ├── createProject
-    │   │   │   ├── createProject.ts
-    │   │   │   ├── index.ts
-    │   │   │   └── types.ts
-    │   │   ├── databaseManagement
+    │   │   ├── atlas_database_clean
     │   │   │   ├── cleanDatabase.ts
     │   │   │   ├── index.ts
+    │   │   │   ├── responseFormat.ts
     │   │   │   └── types.ts
-    │   │   ├── deleteProject
+    │   │   ├── atlas_knowledge_add
+    │   │   │   ├── addKnowledge.ts
+    │   │   │   ├── index.ts
+    │   │   │   ├── responseFormat.ts
+    │   │   │   └── types.ts
+    │   │   ├── atlas_knowledge_delete
+    │   │   │   ├── deleteKnowledge.ts
+    │   │   │   ├── index.ts
+    │   │   │   ├── responseFormat.ts
+    │   │   │   └── types.ts
+    │   │   ├── atlas_knowledge_list
+    │   │   │   ├── index.ts
+    │   │   │   ├── listKnowledge.ts
+    │   │   │   ├── responseFormat.ts
+    │   │   │   └── types.ts
+    │   │   ├── atlas_project_create
+    │   │   │   ├── createProject.ts
+    │   │   │   ├── index.ts
+    │   │   │   ├── responseFormat.ts
+    │   │   │   └── types.ts
+    │   │   ├── atlas_project_delete
     │   │   │   ├── deleteProject.ts
     │   │   │   ├── index.ts
+    │   │   │   ├── responseFormat.ts
     │   │   │   └── types.ts
-    │   │   ├── manageDependencies
-    │   │   │   ├── addDependency.ts
+    │   │   ├── atlas_project_list
     │   │   │   ├── index.ts
-    │   │   │   ├── listDependencies.ts
-    │   │   │   ├── removeDependency.ts
+    │   │   │   ├── listProjects.ts
+    │   │   │   ├── responseFormat.ts
     │   │   │   └── types.ts
-    │   │   ├── manageMembers
-    │   │   │   ├── addMember.ts
+    │   │   ├── atlas_project_update
     │   │   │   ├── index.ts
-    │   │   │   ├── listMembers.ts
-    │   │   │   ├── removeMember.ts
-    │   │   │   └── types.ts
-    │   │   ├── manageProjectLinks
-    │   │   │   ├── addProjectLink.ts
-    │   │   │   ├── deleteProjectLink.ts
-    │   │   │   ├── index.ts
-    │   │   │   ├── types.ts
-    │   │   │   └── updateProjectLink.ts
-    │   │   ├── neo4jSearch
-    │   │   │   ├── index.ts
-    │   │   │   ├── neo4jSearch.ts
-    │   │   │   ├── neo4jSearchTool.ts
-    │   │   │   └── types.ts
-    │   │   ├── updateProject
-    │   │   │   ├── index.ts
+    │   │   │   ├── responseFormat.ts
     │   │   │   ├── types.ts
     │   │   │   └── updateProject.ts
-    │   │   └── whiteboard
-    │   │   │   ├── createWhiteboard.ts
-    │   │   │   ├── deleteWhiteboard.ts
-    │   │   │   ├── getWhiteboard.ts
+    │   │   ├── atlas_task_create
+    │   │   │   ├── createTask.ts
     │   │   │   ├── index.ts
+    │   │   │   ├── responseFormat.ts
+    │   │   │   └── types.ts
+    │   │   ├── atlas_task_delete
+    │   │   │   ├── deleteTask.ts
+    │   │   │   ├── index.ts
+    │   │   │   ├── responseFormat.ts
+    │   │   │   └── types.ts
+    │   │   ├── atlas_task_list
+    │   │   │   ├── index.ts
+    │   │   │   ├── listTasks.ts
+    │   │   │   ├── responseFormat.ts
+    │   │   │   └── types.ts
+    │   │   ├── atlas_task_update
+    │   │   │   ├── index.ts
+    │   │   │   ├── responseFormat.ts
     │   │   │   ├── types.ts
-    │   │   │   └── updateWhiteboard.ts
+    │   │   │   └── updateTask.ts
+    │   │   └── atlas_unified_search
+    │   │   │   ├── index.ts
+    │   │   │   ├── responseFormat.ts
+    │   │   │   ├── types.ts
+    │   │   │   └── unifiedSearch.ts
     │   └── server.ts
-    ├── neo4j
-    │   ├── projectService
-    │   │   ├── projectContent.ts
-    │   │   ├── projectCore.ts
-    │   │   ├── projectRelations.ts
+    ├── services
+    │   └── neo4j
+    │   │   ├── backupRestoreService.ts
+    │   │   ├── driver.ts
+    │   │   ├── events.ts
+    │   │   ├── helpers.ts
+    │   │   ├── index.ts
+    │   │   ├── knowledgeService.ts
+    │   │   ├── projectService.ts
+    │   │   ├── searchService.ts
+    │   │   ├── taskService.ts
     │   │   ├── types.ts
     │   │   └── utils.ts
-    │   ├── driver.ts
-    │   ├── projectService.ts
-    │   └── whiteboardService.ts
     ├── types
     │   ├── errors.ts
     │   ├── mcp.ts
     │   └── tool.ts
     ├── utils
-    │   ├── bulkOperationManager.ts
     │   ├── errorHandler.ts
     │   ├── idGenerator.ts
     │   ├── logger.ts
-    │   ├── projectHelpers.ts
+    │   ├── responseFormatter.ts
     │   └── security.ts
     └── index.ts
-├── .env.example
+├── .clinerules
+├── .repomixignore
 ├── docker-compose.yml
 ├── LICENSE
 ├── package-lock.json
 ├── package.json
 ├── README.md
+├── repomix.config.json
 └── tsconfig.json
+
 ```
+
+_Note: This tree excludes files and directories matched by .gitignore and common patterns like node_modules._

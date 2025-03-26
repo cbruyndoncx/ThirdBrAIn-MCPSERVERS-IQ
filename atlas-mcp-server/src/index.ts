@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createMcpServer } from "./mcp/server.js";
+import { closeNeo4jConnection } from "./services/neo4j/index.js";
 import { logger } from "./utils/logger.js";
-import { closeDriver } from "./neo4j/driver.js";
 
 let server: Awaited<ReturnType<typeof createMcpServer>> | undefined;
 
@@ -16,7 +16,7 @@ const shutdown = async (signal: string) => {
     }
 
     logger.info("Closing Neo4j driver...");
-    await closeDriver();
+    await closeNeo4jConnection();
     logger.info("Neo4j driver closed successfully.");
 
     logger.info("Graceful shutdown completed.");

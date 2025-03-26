@@ -7,7 +7,8 @@ export enum BaseErrorCode {
   RATE_LIMITED = 'RATE_LIMITED',
   VALIDATION_ERROR = 'VALIDATION_ERROR',
   INTERNAL_ERROR = 'INTERNAL_ERROR',
-  NOT_FOUND = 'NOT_FOUND'
+  NOT_FOUND = 'NOT_FOUND',
+  PERMISSION_DENIED = 'PERMISSION_DENIED'  // Added permission denied error
 }
 
 // Project-specific error codes
@@ -17,6 +18,15 @@ export enum ProjectErrorCode {
   PROJECT_NOT_FOUND = 'PROJECT_NOT_FOUND',
   DEPENDENCY_CYCLE = 'DEPENDENCY_CYCLE',
   INVALID_DEPENDENCY = 'INVALID_DEPENDENCY'
+}
+
+// Task-specific error codes
+export enum TaskErrorCode {
+  TASK_NOT_FOUND = 'TASK_NOT_FOUND',
+  INVALID_STATUS = 'INVALID_STATUS',
+  INVALID_PRIORITY = 'INVALID_PRIORITY',
+  INVALID_DEPENDENCY = 'INVALID_DEPENDENCY',
+  DEPENDENCY_CYCLE = 'DEPENDENCY_CYCLE'
 }
 
 // Note-specific error codes
@@ -39,10 +49,30 @@ export enum MemberErrorCode {
   DUPLICATE_MEMBER = 'DUPLICATE_MEMBER'
 }
 
+// Skill-specific error codes
+export enum SkillErrorCode {
+  SKILL_NOT_FOUND = 'SKILL_NOT_FOUND',
+  DEPENDENCY_NOT_FOUND = 'DEPENDENCY_NOT_FOUND',
+  MISSING_PARAMETER = 'MISSING_PARAMETER',
+  CIRCULAR_DEPENDENCY = 'CIRCULAR_DEPENDENCY',
+  SKILL_EXECUTION_ERROR = 'SKILL_EXECUTION_ERROR'
+}
+
+// Database export/import error codes
+export enum DatabaseExportImportErrorCode {
+  EXPORT_ERROR = 'EXPORT_ERROR',
+  IMPORT_ERROR = 'IMPORT_ERROR',
+  FILE_ACCESS_ERROR = 'FILE_ACCESS_ERROR',
+  INVALID_EXPORT_FORMAT = 'INVALID_EXPORT_FORMAT',
+  RESET_FAILED = 'RESET_FAILED',
+  INVALID_CONFIRMATION_CODE = 'INVALID_CONFIRMATION_CODE',
+  PERMISSION_DENIED = 'PERMISSION_DENIED'
+}
+
 // Base MCP error class
 export class McpError extends Error {
   constructor(
-    public code: BaseErrorCode | ProjectErrorCode | NoteErrorCode | LinkErrorCode | MemberErrorCode,
+    public code: BaseErrorCode | ProjectErrorCode | TaskErrorCode | NoteErrorCode | LinkErrorCode | MemberErrorCode | SkillErrorCode | DatabaseExportImportErrorCode,
     message: string,
     public details?: Record<string, unknown>
   ) {
