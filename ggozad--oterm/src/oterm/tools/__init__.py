@@ -1,42 +1,9 @@
-from importlib import import_module
-from typing import Awaitable, Callable, Sequence
+import itertools
 
-from ollama._types import Tool
+from oterm.types import ToolCall
 
-from oterm.config import appConfig
-from oterm.types import ExternalToolDefinition, ToolCall
+available_tool_defs: dict[str, list[ToolCall]] = {}
 
 
-def load_tools(tool_defs: Sequence[ExternalToolDefinition]) -> Sequence[ToolCall]:
-    tools = []
-    for tool_def in tool_defs:
-        tool_path = tool_def["tool"]
-
-        try:
-            module, tool = tool_path.split(":")
-            module = import_module(module)
-            tool = getattr(module, tool)
-            if not isinstance(tool, Tool):
-                raise Exception(f"Expected Tool, got {type(tool)}")
-        except ModuleNotFoundError as e:
-            raise Exception(f"Error loading tool {tool_path}: {str(e)}")
-
-        callable_path = tool_def["callable"]
-        try:
-            module, function = callable_path.split(":")
-            module = import_module(module)
-            callable = getattr(module, function)
-            if not isinstance(callable, (Callable, Awaitable)):
-                raise Exception(f"Expected Callable, got {type(callable)}")
-        except ModuleNotFoundError as e:
-            raise Exception(f"Error loading callable {callable_path}: {str(e)}")
-        tools.append({"tool": tool, "callable": callable})
-
-    return tools
-
-
-avail_tool_defs: list[ToolCall] = []
-
-external_tools = appConfig.get("tools")
-if external_tools:
-    avail_tool_defs.extend(load_tools(external_tools))
+def available_tool_calls() -> list[ToolCall]:
+    return list(itertools.chain.from_iterable(available_tool_defs.values()))

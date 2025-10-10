@@ -1,6 +1,6 @@
 # oterm
 
-the text-based terminal client for [Ollama](https://github.com/ollama/ollama).
+the terminal client for [Ollama](https://github.com/ollama/ollama).
 
 ## Features
 
@@ -29,6 +29,12 @@ To start `oterm` simply run:
 oterm
 ```
 
+If you installed oterm using `uvx`, you can also start it using:
+
+```bash
+uvx oterm
+```
+
 ### Screenshots
 ![Splash](img/splash.gif)
 The splash screen animation that greets users when they start oterm.
@@ -36,9 +42,9 @@ The splash screen animation that greets users when they start oterm.
 ![Chat](img/chat.png)
 A view of the chat interface, showcasing the conversation between the user and the model.
 
-![Theme](./img/theme.svg)
+![Theme](./img/theme.png)
 oterm supports multiple themes, allowing users to customize the appearance of the interface.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](https://raw.githubusercontent.com/ggozad/oterm/main/LICENSE).

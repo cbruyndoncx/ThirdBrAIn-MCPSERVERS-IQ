@@ -2,29 +2,36 @@ import pytest
 from ollama import ResponseError
 
 from oterm.ollamaclient import OllamaLLM
-from oterm.tools.location import LocationTool
+from oterm.tools.date_time import DateTimeTool
 
 
 @pytest.mark.asyncio
-async def test_generate():
-    llm = OllamaLLM()
-    res = await llm.completion(prompt="Please add 42 and 42")
+async def test_generate(default_model):
+    llm = OllamaLLM(model=default_model)
+    res = ""
+    async for _, text in llm.stream(prompt="Please add 42 and 42"):
+        res = text
     assert "84" in res
 
 
 @pytest.mark.asyncio
-async def test_llm_context():
-    llm = OllamaLLM()
-    await llm.completion("I am testing oterm, a python client for Ollama.")
+async def test_llm_context(default_model):
+    llm = OllamaLLM(model=default_model)
+    async for _, _ in llm.stream("I am testing oterm, a python client for Ollama."):
+        pass
     # There should now be a context saved for the conversation.
-    res = await llm.completion("Do you remember what I am testing?")
+    res = ""
+    async for _, text in llm.stream("Do you remember what I am testing?"):
+        res = text
     assert "oterm" in res.lower()
 
 
 @pytest.mark.asyncio
 async def test_multi_modal_llm(llama_image):
     llm = OllamaLLM(model="llava")
-    res = await llm.completion("Describe this image", images=[llama_image])
+    res = ""
+    async for _, text in llm.stream("Describe this image", images=[llama_image]):
+        res = text
     assert "llama" in res or "animal" in res
 
 
@@ -32,36 +39,23 @@ async def test_multi_modal_llm(llama_image):
 async def test_errors():
     llm = OllamaLLM(model="non-existent-model")
     try:
-        await llm.completion("This should fail.")
+        async for _, _ in llm.stream("This should fail."):
+            pass
     except ResponseError as e:
         assert 'model "non-existent-model" not found' in str(e)
 
 
 @pytest.mark.asyncio
-async def test_iterator():
-    llm = OllamaLLM()
-    response = ""
-    async for text in llm.stream("Please add 2 and 2"):
-        response = text
-    assert "4" in response
-
-
-@pytest.mark.skip(
-    reason="Skipped till https://github.com/ollama/ollama-python/issues/279 is fixed."
-)
-@pytest.mark.asyncio
-async def test_tool_streaming():
-    # This test will fail until Ollama supports streaming with tools.
-    # See https://github.com/ollama/ollama-python/issues/279
-
+async def test_tool_streaming(default_model):
     llm = OllamaLLM(
+        model=default_model,
         tool_defs=[
-            {"tool": LocationTool, "callable": lambda: "New York"},
+            {"tool": DateTimeTool, "callable": lambda: "2025-01-01"},
         ],
     )
     response = ""
-    async for text in llm.stream(
-        "In which city am I currently located?. Reply with no other text, just the city."
+    async for _, text in llm.stream(
+        "What is the current date in YYYY-MM-DD format?. Use the date_time tool to answer."
     ):
         response = text
-    assert "New York" in response
+    assert "2025-01-01" in response or ("January" in response and "2025" in response)

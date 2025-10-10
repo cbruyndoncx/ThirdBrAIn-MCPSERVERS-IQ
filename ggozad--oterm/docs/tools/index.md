@@ -4,11 +4,11 @@
 
 With tools, you can provide the model with access to the web, run shell commands, perform RAG and more.
 
-[Use existing Model Context Protocol servers](../mcp/index.md) 
+[Use existing Model Context Protocol servers](../mcp/index.md)
 
-or 
+or
 
-[create your own custom tools](./custom_tools.md).
+[create your own custom tools](#custom-tools-with-oterm).
 
 ### Custom tools with oterm
 
@@ -21,7 +21,7 @@ You will need to create a python package that exports a `Tool` definition as wel
 Here is an [example](https://github.com/ggozad/oterm/tree/main/docs/oracle){:target="_blank"} of a simple tool that implements an Oracle. The tool is defined in the `oracle` package which exports the `OracleTool` tool definition and an `oracle` callable function.
 
 ```python
-from ollama._types import Tool
+from ollama import Tool
 
 OracleTool = Tool(
     type="function",
@@ -65,7 +65,7 @@ You can register the tool with `oterm` by adding the tool definittion and callab
     }]
 }
 ```
-Note the notation `module:object` for the tool and callable. 
+Note the notation `module:object` for the tool and callable.
 
 That's it! You can now use the tool in `oterm` with models that support it.
 
@@ -73,10 +73,8 @@ That's it! You can now use the tool in `oterm` with models that support it.
 
 The following example tools are currently built-in to `oterm`:
 
-* `fetch_url` - allows your models access to the web, fetches a URL and provides the content as input to the model.
+* `think` - provides the model with a way to think about a question before answering it. This is useful for complex questions that require reasoning. Use it for adding a "thinking" step to the model's response.
 * `date_time` - provides the current date and time in ISO format.
-* `current_location` - provides the current location of the user (longitude, latitude, city, region, country). Uses [ipinfo.io](https://ipinfo.io) to determine the location.
-* `current_weather` - provides the current weather in the user's location. Uses [OpenWeatherMap](https://openweathermap.org) to determine the weather. You need to provide your (free) API key in the `OPEN_WEATHER_MAP_API_KEY` environment variable.
 * `shell` - allows you to run shell commands and use the output as input to the model. Obviously this can be dangerous, so use with caution.
 
 These tools are defined in `src/oterm/tools`. You can make those tools available and enable them for selection when creating or editing a chat, by adding them to the `tools` section of the `oterm` configuration file. You can find the location of the configuration file's directory by running `oterm --data-dir`. So for example to enable the `shell` tool, you would add the following to the configuration file:
@@ -85,9 +83,8 @@ These tools are defined in `src/oterm/tools`. You can make those tools available
 {
     ...
     "tools": [{
-        "tool": "oterm.tools.shell:ShellTool",
-        "callable": "oterm.tools.shell:shell_command"
+        "tool": "oterm.tools.think:ThinkTool",
+        "callable": "oterm.tools.think:think"
     }]
 }
 ```
-

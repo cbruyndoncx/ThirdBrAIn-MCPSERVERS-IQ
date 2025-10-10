@@ -1,4 +1,4 @@
-from ollama._types import Tool
+from ollama import Tool
 
 OracleTool = Tool(
     type="function",
@@ -13,7 +13,7 @@ OracleTool = Tool(
                 ),
             },
             required=["question"],
-        ),
+        ),  # type: ignore
     ),
 )
 

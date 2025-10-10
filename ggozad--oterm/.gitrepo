@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/ggozad/oterm.git
 	branch = main
-	commit = 0f93e7abc17b02f88601cb0389be865389ac39b5
-	parent = b1956b4e8797d43091da606007f544086004241a
+	commit = f9ef03a18540ace6b0488ef0d0025aecd7f7e7ce
+	parent = f55130fd3924fc0d2dc1e14bd9e8fc4d57e91964
 	method = merge
 	cmdver = 0.4.9

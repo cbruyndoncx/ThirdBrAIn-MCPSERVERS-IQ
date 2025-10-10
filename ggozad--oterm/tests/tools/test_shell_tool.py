@@ -5,12 +5,16 @@ from oterm.tools.shell import ShellTool, shell_command
 
 
 @pytest.mark.asyncio
-async def test_shell():
+async def test_shell(default_model):
     llm = OllamaLLM(
-        model="mistral-nemo",
+        model=default_model,
         tool_defs=[
             {"tool": ShellTool, "callable": shell_command},
         ],
     )
-    res = await llm.completion("What is the current directory")
+    res = ""
+    async for _, text in llm.stream(
+        "What is the current directory? Use the shell tool available and execute the command."
+    ):
+        res = text
     assert "oterm" in res
