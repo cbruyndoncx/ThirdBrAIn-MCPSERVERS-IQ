@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/adhikasp/mcp-client-cli.git
 	branch = master
-	commit = 4c9cc1b57c3981ad8abfba1373063da0e680e18a
-	parent = d7884c2413439c5d477c873481de6db97711d4b3
+	commit = e9eb8bcd29eadc0f1281d695af6f182249f7f94c
+	parent = a9e1d86d319c9eea38c74010cb803f921ecad324
 	method = merge
 	cmdver = 0.4.9
