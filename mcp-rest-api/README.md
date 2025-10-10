@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/dkmaker-mcp-rest-api-badge.png)](https://mseep.ai/app/dkmaker-mcp-rest-api)
+
 # MCP REST API Tester
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![NPM Package](https://img.shields.io/npm/v/dkmaker-mcp-rest-api.svg)](https://www.npmjs.com/package/dkmaker-mcp-rest-api)
@@ -47,7 +49,7 @@ The `test_request` tool enables testing, debugging, and interacting with REST AP
 
 ## Key Features
 
-- Supports GET, POST, PUT, DELETE methods
+- Supports GET, POST, PUT, DELETE, PATCH methods
 - Handles authentication (Basic, Bearer, API Key)
 - Normalizes endpoints automatically
 - Provides detailed response information
@@ -152,7 +154,7 @@ Note: Replace the environment variables with your actual values. Only configure 
 ## Features
 
 - Test REST API endpoints with different HTTP methods
-- Support for GET, POST, PUT, and DELETE requests
+- Support for GET, POST, PUT, DELETE, and PATCH requests
 - Detailed response information including status, headers, and body
 - Custom Headers:
   - Global headers via HEADER_* environment variables

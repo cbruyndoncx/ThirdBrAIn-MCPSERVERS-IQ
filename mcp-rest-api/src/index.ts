@@ -32,10 +32,11 @@ const AUTH_APIKEY_VALUE = process.env.AUTH_APIKEY_VALUE;
 const REST_ENABLE_SSL_VERIFY = process.env.REST_ENABLE_SSL_VERIFY !== 'false';
 
 interface EndpointArgs {
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   endpoint: string;
   body?: any;
   headers?: Record<string, string>;
+  host?: string;
 }
 
 interface ValidationResult {
@@ -119,7 +120,7 @@ const normalizeBaseUrl = (url: string): string => url.replace(/\/+$/, '');
 
 const isValidEndpointArgs = (args: any): args is EndpointArgs => {
   if (typeof args !== 'object' || args === null) return false;
-  if (!['GET', 'POST', 'PUT', 'DELETE'].includes(args.method)) return false;
+  if (!['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(args.method)) return false;
   if (typeof args.endpoint !== 'string') return false;
   if (args.headers !== undefined && (typeof args.headers !== 'object' || args.headers === null)) return false;
   
@@ -132,6 +133,24 @@ const isValidEndpointArgs = (args: any): args is EndpointArgs => {
       `Your path will be resolved to: ${process.env.REST_BASE_URL}${args.endpoint.replace(/^\/+|\/+$/g, '')}. ` +
       `To test a different base URL, update the REST_BASE_URL environment variable.`
     );
+  }
+  // Validate .host if present
+  if (args.host !== undefined) {
+    try {
+      const url = new URL(args.host);
+      if (!/^https?:$/.test(url.protocol)) {
+        throw new Error();
+      }
+      // Remove trailing slash if present
+      if (url.pathname.endsWith('/') && url.pathname !== '/') {
+        url.pathname = url.pathname.replace(/\/+$/, '');
+        args.host = url.origin + url.pathname;
+      } else {
+        args.host = url.origin + url.pathname;
+      }
+    } catch (e) {
+      throw new McpError(ErrorCode.InvalidParams, `Invalid host format. The 'host' argument must be a valid URL starting with http:// or https://, e.g. "https://example.com" or "http://localhost:3001/api/v1". Received: "${args.host}"`);
+    }
   }
   
   return true;
@@ -310,7 +329,7 @@ class RestTester {
             properties: {
               method: {
                 type: 'string',
-                enum: ['GET', 'POST', 'PUT', 'DELETE'],
+                enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
                 description: 'HTTP method to use',
               },
               endpoint: {
@@ -353,15 +372,16 @@ class RestTester {
       // Ensure endpoint starts with / and remove any trailing slashes
       const normalizedEndpoint = `/${request.params.arguments.endpoint.replace(/^\/+|\/+$/g, '')}`;
       
+      const fullUrl = `${request.params.arguments.host || process.env.REST_BASE_URL}${normalizedEndpoint}`;
       // Initialize request config
       const config: AxiosRequestConfig = {
           method: request.params.arguments.method as Method,
-          url: normalizedEndpoint,
+          url: fullUrl,
           headers: {},
         };
 
-      // Add request body for POST/PUT
-      if (['POST', 'PUT'].includes(request.params.arguments.method) && request.params.arguments.body) {
+      // Add request body for POST/PUT/PATCH
+      if (['POST', 'PUT', 'PATCH'].includes(request.params.arguments.method) && request.params.arguments.body) {
         config.data = request.params.arguments.body;
       }
 
@@ -398,7 +418,6 @@ class RestTester {
         const startTime = Date.now();
         const response = await this.axiosInstance.request(config);
         const endTime = Date.now();
-        const fullUrl = `${process.env.REST_BASE_URL}${normalizedEndpoint}`;
 
         // Determine auth method used
         let authMethod = 'none';
