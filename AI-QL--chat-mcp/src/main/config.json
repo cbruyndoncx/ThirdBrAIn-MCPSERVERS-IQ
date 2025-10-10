@@ -1,9 +1,10 @@
 {
     "mcpServers": {
         "everything": {
-            "command": "node",
+            "command": "npx",
             "args": [
-                "D:/Github/chat-mcp/node_modules/@modelcontextprotocol/server-everything/dist/index.js"
+                "-y",
+                "@modelcontextprotocol/server-everything"
             ]
         }
     }

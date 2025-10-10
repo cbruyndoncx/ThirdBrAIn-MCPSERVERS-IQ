@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/AI-QL/chat-mcp.git
 	branch = main
-	commit = be02c53fd458074786657babcd1184c9e984ba0d
-	parent = 52a81c24d2081723e43c684a743b3128dbc81abf
+	commit = f5bdc68e8adaa055a2d5e5b24d9ce5d3d70b9e61
+	parent = ccc2ce79f4a3abe9a453dbce5f0570b5e2120525
 	method = merge
 	cmdver = 0.4.9
