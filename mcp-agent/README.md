@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/6f4e40c4-dc88-47b6-b965-5856b69416d2" alt="Logo" width="300" />
+  <a href="https://docs.mcp-agent.com"><img src="https://github.com/user-attachments/assets/c8d059e5-bd56-4ea2-a72d-807fb4897bde" alt="Logo" width="300" /></a>
 </p>
 
 <p align="center">
@@ -14,11 +14,16 @@
 </p>
 
 <p align="center">
+<a href="https://docs.mcp-agent.com"><img src="https://img.shields.io/badge/docs-8F?style=flat&link=https%3A%2F%2Fdocs.mcp-agent.com%2F" /><a/>
 <a href="https://pypi.org/project/mcp-agent/"><img src="https://img.shields.io/pypi/v/mcp-agent?color=%2334D058&label=pypi" /></a>
 <a href="https://github.com/lastmile-ai/mcp-agent/issues"><img src="https://img.shields.io/github/issues-raw/lastmile-ai/mcp-agent" /></a>
-<a href="https://lmai.link/discord/mcp-agent"><img src="https://shields.io/discord/1089284610329952357" alt="discord" /></a>
 <img alt="Pepy Total Downloads" src="https://img.shields.io/pepy/dt/mcp-agent?label=pypi%20%7C%20downloads"/>
-<a href="https://github.com/lastmile-ai/mcp-agent/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/mcp-agent" /></a>
+<a href="https://github.com/lastmile-ai/mcp-agent/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg"/></a>
+<a href="https://lmai.link/discord/mcp-agent"><img src="https://img.shields.io/badge/Discord-%235865F2.svg?logo=discord&logoColor=white" alt="discord"/></a>
+</p>
+
+<p align="center">
+<a href="https://trendshift.io/repositories/13216" target="_blank"><img src="https://trendshift.io/api/badge/repositories/13216" alt="lastmile-ai%2Fmcp-agent | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 </p>
 
 ## Overview
@@ -60,12 +65,15 @@ pip install mcp-agent
 > To run an example, clone this repo, then:
 >
 > ```bash
-> cd examples/mcp_basic_agent # Or any other example
-> cp mcp_agent.secrets.yaml.example mcp_agent.secrets.yaml # Update API keys
+> cd examples/basic/mcp_basic_agent # Or any other example
+> # Option A: secrets YAML
+> # cp mcp_agent.secrets.yaml.example mcp_agent.secrets.yaml && edit mcp_agent.secrets.yaml
+> # Option B: .env
+> cp .env.example .env && edit .env
 > uv run main.py
 > ```
 
-Here is a basic "finder" agent that uses the fetch and filesystem servers to look up a file, read a blog and write a tweet. [Example link](./examples/mcp_basic_agent/):
+Here is a basic "finder" agent that uses the fetch and filesystem servers to look up a file, read a blog and write a tweet. [Example link](./examples/basic/mcp_basic_agent/):
 
 <details open>
 <summary>finder_agent.py</summary>
@@ -128,9 +136,9 @@ if __name__ == "__main__":
 ```yaml
 execution_engine: asyncio
 logger:
-  transports: [console]  # You can use [file, console] for both
+  transports: [console] # You can use [file, console] for both
   level: debug
-  path: "logs/mcp-agent.jsonl"  # Used for file transport
+  path: "logs/mcp-agent.jsonl" # Used for file transport
   # For dynamic log filenames:
   # path_settings:
   #   path_pattern: "logs/mcp-agent-{unique_id}.jsonl"
@@ -223,7 +231,7 @@ then an aggregator summarizes their findings into a final response.
 - dynamically defines agents to do the job
 - uses the appropriate workflow to orchestrate those agents (in this case the Parallel workflow)
 
-**Link to code**: [examples/mcp_agent_server](./examples/mcp_agent_server)
+**Link to code**: [examples/basic/mcp_server_aggregator](./examples/basic/mcp_server_aggregator)
 
 > [!NOTE]
 > Huge thanks to [Jerron Lim (@StreetLamb)](https://github.com/StreetLamb)
@@ -252,7 +260,7 @@ This app uses a Qdrant vector database (via an MCP server) to do Q&A over a corp
 
 https://github.com/user-attachments/assets/f4dcd227-cae9-4a59-aa9e-0eceeb4acaf4
 
-**Link to code**: [examples/streamlit_mcp_rag_agent](./examples/streamlit_mcp_rag_agent/)
+**Link to code**: [examples/usecases/streamlit_mcp_rag_agent](./examples/usecases/streamlit_mcp_rag_agent/)
 
 > [!NOTE]
 > Huge thanks to [Jerron Lim (@StreetLamb)](https://github.com/StreetLamb)
@@ -265,7 +273,7 @@ Here's the "file finder" agent from [Quickstart](#quickstart) implemented in Mar
 
 <img src="https://github.com/user-attachments/assets/139a95a5-e3ac-4ea7-9c8f-bad6577e8597" width="400"/>
 
-**Link to code**: [examples/marimo_mcp_basic_agent](./examples/marimo_mcp_basic_agent/)
+**Link to code**: [examples/usecases/marimo_mcp_basic_agent](./examples/usecases/marimo_mcp_basic_agent/)
 
 > [!NOTE]
 > Huge thanks to [Akshay Agrawal (@akshayka)](https://github.com/akshayka)
@@ -281,7 +289,7 @@ This example demonstrates a multi-agent setup for handling different customer se
 
 https://github.com/user-attachments/assets/b314d75d-7945-4de6-965b-7f21eb14a8bd
 
-**Link to code**: [examples/workflow_swarm](./examples/workflow_swarm/)
+**Link to code**: [examples/workflows/workflow_swarm](./examples/workflows/workflow_swarm/)
 
 ## Core Components
 
@@ -350,7 +358,7 @@ Fan-out tasks to multiple sub-agents and fan-in the results. Each subtask is an 
 
 > [!NOTE]
 >
-> **[Link to full example](examples/workflow_parallel/main.py)**
+> **[Link to full example](examples/workflows/workflow_parallel/main.py)**
 
 <details>
 <summary>Example</summary>
@@ -386,7 +394,7 @@ mcp-agent provides several router implementations, including:
 
 > [!NOTE]
 >
-> **[Link to full example](examples/workflow_router/main.py)**
+> **[Link to full example](examples/workflows/workflow_router/main.py)**
 
 <details>
 <summary>Example</summary>
@@ -429,7 +437,7 @@ One LLM (the “optimizer”) refines a response, another (the “evaluator”) 
 
 > [!NOTE]
 >
-> **[Link to full example](examples/workflow_evaluator_optimizer/main.py)**
+> **[Link to full example](examples/workflows/workflow_evaluator_optimizer/main.py)**
 
 <details>
 <summary>Example</summary>
@@ -438,7 +446,7 @@ One LLM (the “optimizer”) refines a response, another (the “evaluator”) 
 optimizer = Agent(name="cover_letter_writer", server_names=["fetch"], instruction="Generate a cover letter ...")
 evaluator = Agent(name="critiquer", instruction="Evaluate clarity, specificity, relevance...")
 
-llm = EvaluatorOptimizerLLM(
+eo_llm = EvaluatorOptimizerLLM(
     optimizer=optimizer,
     evaluator=evaluator,
     llm_factory=OpenAIAugmentedLLM,
@@ -460,7 +468,7 @@ The Orchestrator workflow automatically parallelizes steps that can be done in p
 
 > [!NOTE]
 >
-> **[Link to full example](examples/workflow_orchestrator_worker/main.py)**
+> **[Link to full example](examples/workflows/workflow_orchestrator_worker/main.py)**
 
 <details>
 <summary>Example</summary>
@@ -494,7 +502,7 @@ The mcp-agent Swarm pattern works seamlessly with MCP servers, and is exposed as
 
 > [!NOTE]
 >
-> **[Link to full example](examples/workflow_swarm/main.py)**
+> **[Link to full example](examples/workflows/workflow_swarm/main.py)**
 
 <details>
 <summary>Example</summary>
@@ -557,19 +565,19 @@ orchestrator = Orchestrator(
 <details>
 <summary>Example</summary>
 
-The [Swarm example](examples/workflow_swarm/main.py) shows this in action.
+The [Swarm example](examples/workflows/workflow_swarm/main.py) shows this in action.
 
 ```python
-from mcp_agent.human_input.handler import console_input_callback
+from mcp_agent.human_input.console_handler import console_input_callback
 
 lost_baggage = SwarmAgent(
     name="Lost baggage traversal",
     instruction=lambda context_variables: f"""
         {
-        FLY_AIR_AGENT_PROMPT.format(
-            customer_context=context_variables.get("customer_context", "None"),
-            flight_context=context_variables.get("flight_context", "None"),
-        )
+    FLY_AIR_AGENT_PROMPT.format(
+        customer_context=context_variables.get("customer_context", "None"),
+        flight_context=context_variables.get("flight_context", "None"),
+    )
     }\n Lost baggage policy: policies/lost_baggage_policy.md""",
     functions=[
         escalate_to_agent,
@@ -578,7 +586,7 @@ lost_baggage = SwarmAgent(
         case_resolved,
     ],
     server_names=["fetch", "filesystem"],
-    human_input_callback=console_input_callback, # Request input from the console
+    human_input_callback=console_input_callback,  # Request input from the console
 )
 ```
 
@@ -586,7 +594,7 @@ lost_baggage = SwarmAgent(
 
 ### App Config
 
-Create an [`mcp_agent.config.yaml`](/schema/mcp-agent.config.schema.json) and a gitignored [`mcp_agent.secrets.yaml`](./examples/mcp_basic_agent/mcp_agent.secrets.yaml.example) to define MCP app configuration. This controls logging, execution, LLM provider APIs, and MCP server configuration.
+Create an [`mcp_agent.config.yaml`](/schema/mcp-agent.config.schema.json) and define secrets via either a gitignored [`mcp_agent.secrets.yaml`](./examples/basic/mcp_basic_agent/mcp_agent.secrets.yaml.example) or a local [`.env`](./examples/basic/mcp_basic_agent/.env.example). In production, prefer `MCP_APP_SETTINGS_PRELOAD` to avoid writing plaintext secrets to disk.
 
 ### MCP server management
 
@@ -681,7 +689,7 @@ async with aggregator:
 
    # no namespacing -- first server in the aggregator exposing that tool wins
    read_file_result = await aggregator.call_tool(name="read_file", arguments={})
-````
+```
 
 </details>
 
@@ -720,7 +728,7 @@ MCP is quite low-level, and this framework handles the mechanics of connecting t
 Core benefits:
 
 - 🤝 **Interoperability**: ensures that any tool exposed by any number of MCP servers can seamlessly plug in to your agents.
-- ⛓️ **Composability & Cutstomizability**: Implements well-defined workflows, but in a composable way that enables compound workflows, and allows full customization across model provider, logging, orchestrator, etc.
+- ⛓️ **Composability & Customizability**: Implements well-defined workflows, but in a composable way that enables compound workflows, and allows full customization across model provider, logging, orchestrator, etc.
 - 💻 **Programmatic control flow**: Keeps things simple as developers just write code instead of thinking in graphs, nodes and edges. For branching logic, you write `if` statements. For cycles, use `while` loops.
 - 🖐️ **Human Input & Signals**: Supports pausing workflows for external signals, such as human input, which are exposed as tool calls an Agent can make.
 

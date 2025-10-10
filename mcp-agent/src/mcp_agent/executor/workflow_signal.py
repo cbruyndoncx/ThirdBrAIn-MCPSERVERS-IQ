@@ -1,23 +1,51 @@
 import asyncio
 import uuid
 from abc import abstractmethod, ABC
-from typing import Any, Callable, Dict, Generic, List, Protocol, TypeVar
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Generic, List, Optional, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict
+from mcp_agent.logging.logger import get_logger
 
 SignalValueT = TypeVar("SignalValueT")
 
-# TODO: saqadri - handle signals properly that works with other execution backends like Temporal as well
+logger = get_logger(__name__)
 
 
 class Signal(BaseModel, Generic[SignalValueT]):
     """Represents a signal that can be sent to a workflow."""
 
     name: str
+    """
+    The name of the signal. This is used to identify the signal and route it to the correct handler.
+    """
+
     description: str | None = "Workflow Signal"
+    """
+    A description of the signal. This can be used to provide additional context about the signal.
+    """
+
     payload: SignalValueT | None = None
+    """
+    The payload of the signal. This is the data that will be sent with the signal.
+    """
+
     metadata: Dict[str, Any] | None = None
+    """
+    Additional metadata about the signal. This can be used to provide extra context or information.
+    """
+
     workflow_id: str | None = None
+    """
+    The ID of the workflow that this signal is associated with. 
+    This is used in conjunction with the run_id to identify the specific workflow instance.
+    """
+
+    run_id: str | None = None
+    """
+    The unique ID for this specific workflow run to signal. 
+    This is used to identify the specific instance of the workflow that this signal is associated with.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -28,6 +56,7 @@ class SignalRegistration(BaseModel):
     signal_name: str
     unique_name: str
     workflow_id: str | None = None
+    run_id: str | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -66,6 +95,62 @@ class PendingSignal(BaseModel):
     value: SignalValueT | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+@dataclass(slots=True)
+class _Record(Generic[SignalValueT]):
+    """Record for tracking signal values with versioning for broadcast semantics"""
+
+    value: Optional[SignalValueT] = None
+    version: int = 0  # monotonic counter
+
+
+class SignalMailbox(Generic[SignalValueT]):
+    """
+    Deterministic broadcast mailbox that stores signal values with versioning.
+    Each workflow run has its own mailbox instance.
+    """
+
+    def __init__(self) -> None:
+        self._store: Dict[str, _Record[SignalValueT]] = {}
+
+    def push(self, name: str, value: SignalValueT) -> None:
+        """
+        Store a signal value and increment its version counter.
+        This enables broadcast semantics where all waiters see the same value.
+        """
+        rec = self._store.setdefault(name, _Record())
+        rec.value = value
+        rec.version += 1
+
+        logger.debug(
+            f"SignalMailbox.push: name={name}, value={value}, version={rec.version}"
+        )
+
+    def version(self, name: str) -> int:
+        """Get the current version counter for a signal name"""
+        return self._store.get(name, _Record()).version
+
+    def value(self, name: str) -> SignalValueT:
+        """
+        Get the current value for a signal name
+
+        Returns:
+            The signal value
+
+        Raises:
+            ValueError: If no value exists for the signal
+        """
+        value = self._store.get(name, _Record()).value
+
+        if value is None:
+            raise ValueError(f"No value for signal {name}")
+
+        logger.debug(
+            f"SignalMailbox.value: name={name}, value={value}, version={self._store.get(name, _Record()).version}"
+        )
+
+        return value
 
 
 class BaseSignalHandler(ABC, Generic[SignalValueT]):
@@ -198,12 +283,13 @@ class AsyncioSignalHandler(BaseSignalHandler[SignalValueT]):
         self, signal, timeout_seconds: int | None = None
     ) -> SignalValueT:
         event = asyncio.Event()
-        unique_name = str(uuid.uuid4())
+        unique_signal_name = f"{signal.name}_{uuid.uuid4()}"
 
         registration = SignalRegistration(
             signal_name=signal.name,
-            unique_name=unique_name,
+            unique_name=unique_signal_name,
             workflow_id=signal.workflow_id,
+            run_id=signal.run_id,
         )
 
         pending_signal = PendingSignal(registration=registration, event=event)
@@ -229,20 +315,24 @@ class AsyncioSignalHandler(BaseSignalHandler[SignalValueT]):
                     self._pending_signals[signal.name] = [
                         ps
                         for ps in self._pending_signals[signal.name]
-                        if ps.registration.unique_name != unique_name
+                        if ps.registration.unique_name != unique_signal_name
                     ]
                     if not self._pending_signals[signal.name]:
                         del self._pending_signals[signal.name]
 
     def on_signal(self, signal_name):
         def decorator(func):
+            unique_signal_name = f"{signal_name}_{uuid.uuid4()}"
+
             async def wrapped(value: SignalValueT):
                 if asyncio.iscoroutinefunction(func):
                     await func(value)
                 else:
                     func(value)
 
-            self._handlers.setdefault(signal_name, []).append(wrapped)
+            self._handlers.setdefault(signal_name, []).append(
+                [unique_signal_name, wrapped]
+            )
             return wrapped
 
         return decorator
@@ -312,6 +402,7 @@ class SignalWaitCallback(Protocol):
         signal_name: str,
         request_id: str | None = None,
         workflow_id: str | None = None,
+        run_id: str | None = None,
         metadata: Dict[str, Any] | None = None,
     ) -> None:
         """
@@ -320,6 +411,7 @@ class SignalWaitCallback(Protocol):
         Args:
             signal_name: The name of the signal the workflow is pausing on.
             workflow_id: The ID of the workflow that is pausing (if using a workflow engine).
+            run_id: The ID of the workflow run that is pausing (if using a workflow engine).
             metadata: Additional metadata about the signal.
         """
         ...

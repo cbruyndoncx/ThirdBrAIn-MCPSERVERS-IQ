@@ -8,6 +8,7 @@ import asyncio
 import json
 import uuid
 import datetime
+import sys
 from abc import ABC, abstractmethod
 from typing import Dict, List, Protocol
 from pathlib import Path
@@ -131,6 +132,12 @@ class FileTransport(FilteredEventTransport):
         self.encoding = encoding
         self._serializer = JSONSerializer()
 
+        # Batching for efficient writes
+        self._write_buffer: List[str] = []
+        self._buffer_lock = asyncio.Lock()
+        self._flush_task: asyncio.Task | None = None
+        self._running = True
+
         # Create directory if it doesn't exist
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
 
@@ -156,14 +163,26 @@ class FileTransport(FilteredEventTransport):
         if event.data:
             log_entry["data"] = self._serializer(event.data)
 
+        # Prepare the log line
+        log_line = json.dumps(log_entry, separators=(",", ":")) + "\n"
+
+        # Use asyncio to run file I/O in executor to avoid blocking
         try:
-            with open(self.filepath, mode=self.mode, encoding=self.encoding) as f:
-                # Write the log entry as compact JSON (JSONL format)
-                f.write(json.dumps(log_entry, separators=(",", ":")) + "\n")
-                f.flush()  # Ensure writing to disk
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,  # Use default executor
+                self._write_to_file,
+                log_line,
+            )
         except IOError as e:
             # Log error without recursion
             print(f"Error writing to log file {self.filepath}: {e}")
+
+    def _write_to_file(self, log_line: str) -> None:
+        """Synchronous file write helper for use in executor."""
+        with open(self.filepath, mode=self.mode, encoding=self.encoding) as f:
+            f.write(log_line)
+            f.flush()  # Ensure writing to disk
 
     async def close(self) -> None:
         """Clean up resources if needed."""
@@ -271,11 +290,14 @@ class AsyncEventBus:
     def __init__(self, transport: EventTransport | None = None):
         self.transport: EventTransport = transport or NoOpTransport()
         self.listeners: Dict[str, EventListener] = {}
-        self._queue = asyncio.Queue()
         self._task: asyncio.Task | None = None
         self._running = False
-        self._stop_event = asyncio.Event()
 
+    def init_queue(self):
+        if self._running:
+            return
+        self._queue = asyncio.Queue()
+        self._stop_event = asyncio.Event()
         # Store the loop we're created on
         try:
             self._loop = asyncio.get_running_loop()
@@ -293,20 +315,48 @@ class AsyncEventBus:
             cls._instance.transport = transport
         return cls._instance
 
+    @classmethod
+    def reset(cls) -> None:
+        """
+        Reset the singleton instance.
+        This is primarily useful for testing scenarios where you need to ensure
+        a clean state between tests.
+        """
+        if cls._instance:
+            # Signal shutdown
+            cls._instance._running = False
+            if hasattr(cls._instance, "_stop_event"):
+                try:
+                    # _stop_event.set() schedules on the event's loop; this can fail if
+                    # the loop is already closed in test teardown. Swallow to ensure
+                    # reset never raises in those cases.
+                    cls._instance._stop_event.set()
+                except RuntimeError:
+                    pass
+                except Exception:
+                    pass
+
+            # Clear the singleton instance
+            cls._instance = None
+
     async def start(self):
         """Start the event bus and all lifecycle-aware listeners."""
-        if self._running:
-            return
+        # Always ensure queue is initialized
+        if not hasattr(self, "_queue"):
+            self.init_queue()
 
-        # Start each lifecycle-aware listener
+        # Start each lifecycle-aware listener (even if already running)
+        # This ensures listeners are started even if auto-start happened
         for listener in self.listeners.values():
             if isinstance(listener, LifecycleAwareListener):
                 await listener.start()
 
-        # Clear stop event and start processing
-        self._stop_event.clear()
-        self._running = True
-        self._task = asyncio.create_task(self._process_events())
+        # If not already running, start the event processing task
+        if not self._running:
+            # Clear stop event and start processing
+            self._stop_event.clear()
+            self._running = True
+            self._task = asyncio.create_task(self._process_events())
 
     async def stop(self):
         """Stop the event bus and all lifecycle-aware listeners."""
@@ -315,10 +365,11 @@ class AsyncEventBus:
 
         # Signal processing to stop
         self._running = False
-        self._stop_event.set()
+        if hasattr(self, "_stop_event"):
+            self._stop_event.set()
 
-        # Try to process remaining items with a timeout
-        if not self._queue.empty():
+        # Try to process remaining items with a timeout if queue exists
+        if hasattr(self, "_queue") and not self._queue.empty():
             try:
                 # Give some time for remaining items to be processed
                 await asyncio.wait_for(self._queue.join(), timeout=5.0)
@@ -371,8 +422,39 @@ class AsyncEventBus:
         except Exception as e:
             print(f"Error in transport.send_event: {e}")
 
+        # Initialize queue and start processing if needed
+        if not hasattr(self, "_queue"):
+            self.init_queue()
+            # Auto-start the event processing task if not running
+            if not self._running:
+                self._running = True
+                self._task = asyncio.create_task(self._process_events())
+
         # Then queue for listeners
         await self._queue.put(event)
+
+    def emit_with_stderr_transport(self, event: Event):
+        print(
+            f"[{event.type}] {event.namespace}: {event.message}",
+            file=sys.stderr,
+        )
+
+        # Initialize queue and start processing if needed
+        if not hasattr(self, "_queue"):
+            self.init_queue()
+            # Auto-start the event processing task if not running
+            if not self._running:
+                self._running = True
+                self._task = asyncio.create_task(self._process_events())
+
+        self._queue.put_nowait(event)
+
+    async def _send_to_transport(self, event: Event):
+        """Send event to transport with error handling."""
+        try:
+            await self.transport.send_event(event)
+        except Exception as e:
+            print(f"Error in transport.send_event: {e}")
 
     def add_listener(self, name: str, listener: EventListener):
         """Add a listener to the event bus."""
@@ -385,12 +467,40 @@ class AsyncEventBus:
     async def _process_events(self):
         """Process events from the queue until stopped."""
         while self._running:
+            event = None
             try:
-                # Use wait_for with a timeout to allow checking running state
+                # Use wait with both queue.get() and stop_event.wait() to avoid timeout delays
                 try:
-                    event = await asyncio.wait_for(self._queue.get(), timeout=0.1)
-                except asyncio.TimeoutError:
-                    continue
+                    # Check if we should be stopping first
+                    if not self._running or self._stop_event.is_set():
+                        break
+
+                    # Wait for either an event or stop signal without timeout
+                    queue_task = asyncio.create_task(self._queue.get())
+                    stop_task = asyncio.create_task(self._stop_event.wait())
+
+                    done, pending = await asyncio.wait(
+                        [queue_task, stop_task], return_when=asyncio.FIRST_COMPLETED
+                    )
+
+                    # Cancel pending tasks
+                    for task in pending:
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+
+                    # Check which task completed
+                    if stop_task in done:
+                        break
+
+                    if queue_task in done:
+                        event = queue_task.result()
+                    else:
+                        continue
+                except asyncio.CancelledError:
+                    break
 
                 # Process the event through all listeners
                 tasks = []
@@ -409,29 +519,32 @@ class AsyncEventBus:
                                 f"Stacktrace: {''.join(traceback.format_exception(type(r), r, r.__traceback__))}"
                             )
 
-                self._queue.task_done()
-
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 print(f"Error in event processing loop: {e}")
                 continue
+            finally:
+                # Always mark the task as done if we got an event
+                if event is not None:
+                    self._queue.task_done()
 
-        # Process remaining events in queue
-        while not self._queue.empty():
-            try:
-                event = self._queue.get_nowait()
-                tasks = []
-                for listener in self.listeners.values():
-                    try:
-                        tasks.append(listener.handle_event(event))
-                    except Exception:
-                        pass
-                if tasks:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                self._queue.task_done()
-            except asyncio.QueueEmpty:
-                break
+        # Process remaining events in queue if it exists
+        if hasattr(self, "_queue"):
+            while not self._queue.empty():
+                try:
+                    event = self._queue.get_nowait()
+                    tasks = []
+                    for listener in self.listeners.values():
+                        try:
+                            tasks.append(listener.handle_event(event))
+                        except Exception:
+                            pass
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                    self._queue.task_done()
+                except asyncio.QueueEmpty:
+                    break
 
 
 class MultiTransport(EventTransport):

@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/lastmile-ai/mcp-agent.git
 	branch = main
-	commit = bffbeb31507ddae0fdfad8689a8eb0b8d0ba9089
-	parent = 5d246b965606b41b7c958b8fd36d18814cb0448d
+	commit = a63f6427476881e249f60df3ce7ad6b9407e52ea
+	parent = 77d0b17bab52ee7a7fd8ffa43270301bdc0cb385
 	method = merge
 	cmdver = 0.4.9
