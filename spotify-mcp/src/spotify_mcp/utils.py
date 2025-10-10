@@ -3,10 +3,27 @@ from typing import Optional, Dict
 import functools
 from typing import Callable, TypeVar
 from typing import Optional, Dict
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, urlunparse
+
+from requests import RequestException
 
 T = TypeVar('T')
 
+
+def normalize_redirect_uri(url: str) -> str:
+    if not url:
+        return url
+        
+    parsed = urlparse(url)
+    
+    # Convert localhost to 127.0.0.1
+    if parsed.netloc == 'localhost' or parsed.netloc.startswith('localhost:'):
+        port = ''
+        if ':' in parsed.netloc:
+            port = ':' + parsed.netloc.split(':')[1]
+        parsed = parsed._replace(netloc=f'127.0.0.1{port}')
+    
+    return urlunparse(parsed)
 
 def parse_track(track_item: dict, detailed=False) -> Optional[dict]:
     if not track_item:
@@ -52,13 +69,15 @@ def parse_artist(artist_item: dict, detailed=False) -> Optional[dict]:
     return narrowed_item
 
 
-def parse_playlist(playlist_item: dict, detailed=False) -> Optional[dict]:
+def parse_playlist(playlist_item: dict, username, detailed=False) -> Optional[dict]:
     if not playlist_item:
         return None
     narrowed_item = {
         'name': playlist_item['name'],
         'id': playlist_item['id'],
-        'owner': playlist_item['owner']['display_name']
+        'owner': playlist_item['owner']['display_name'],
+        'user_is_owner': playlist_item['owner']['display_name'] == username,
+        'total_tracks': playlist_item['tracks']['total'],
     }
     if detailed:
         narrowed_item['description'] = playlist_item.get('description')
@@ -96,8 +115,11 @@ def parse_album(album_item: dict, detailed=False) -> dict:
     return narrowed_item
 
 
-def parse_search_results(results: Dict, qtype: str):
+def parse_search_results(results: Dict, qtype: str, username: Optional[str] = None):
     _results = defaultdict(list)
+    # potential
+    # if username:
+    #     _results['User Spotify URI'] = username
 
     for q in qtype.split(","):
         match q:
@@ -112,15 +134,31 @@ def parse_search_results(results: Dict, qtype: str):
             case "playlist":
                 for idx, item in enumerate(results['playlists']['items']):
                     if not item: continue
-                    _results['playlists'].append(parse_playlist(item))
+                    _results['playlists'].append(parse_playlist(item, username))
             case "album":
                 for idx, item in enumerate(results['albums']['items']):
                     if not item: continue
                     _results['albums'].append(parse_album(item))
             case _:
-                raise ValueError(f"uknown qtype {qtype}")
+                raise ValueError(f"Unknown qtype {qtype}")
 
     return dict(_results)
+
+def parse_tracks(items: Dict) -> list:
+    """
+    Parse a list of track items and return a list of parsed tracks.
+
+    Args:
+        items: List of track items
+    Returns:
+        List of parsed tracks
+    """ 
+    tracks = []
+    for idx, item in enumerate(items):
+        if not item:
+            continue
+        tracks.append(parse_track(item['track']))
+    return tracks
 
 
 def build_search_query(base_query: str,
@@ -192,6 +230,18 @@ def validate(func: Callable[..., T]) -> Callable[..., T]:
         if not self.is_active_device():
             kwargs['device'] = self._get_candidate_device()
 
+        # TODO: try-except RequestException
         return func(self, *args, **kwargs)
 
+    return wrapper
+
+def ensure_username(func):
+    """
+    Decorator to ensure that the username is set before calling the function.
+    """
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        if self.username is None:
+            self.set_username()
+        return func(self, *args, **kwargs)
     return wrapper

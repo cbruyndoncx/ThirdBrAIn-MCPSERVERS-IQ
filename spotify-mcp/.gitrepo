@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/varunneal/spotify-mcp.git
 	branch = main
-	commit = 8764076c4f9e09baf25ef404809eafcbe1568759
-	parent = 9cab13dd197b971a7360d8b895bbed01f8922a39
+	commit = 4802d2f4201c301ee5703d32e9c3481238bb74f1
+	parent = 30a74086d03f0f7195673cb7db36059b4866d282
 	method = merge
 	cmdver = 0.4.9
