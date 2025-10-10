@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/lutzleonhardt/mcpm-aider.git
 	branch = main
-	commit = 547a28b10b8e242295fdf514dce6374448ba80b1
-	parent = 3080fbf313438f57618a3824d2909d127db8609a
+	commit = fb019dfca18bf34ae64daba049c024af4ef9502b
+	parent = 4b895cf6ccef6b9ae3d911249780abae1f050444
 	method = merge
 	cmdver = 0.4.9
