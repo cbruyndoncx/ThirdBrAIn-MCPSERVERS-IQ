@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/p2c2e/mcp_proxy_pydantic_agent.git
 	branch = main
-	commit = 5c3b6ea909e7fa0e56163f3651b556004ae697c9
-	parent = 08cb2470ad400c7f4dd3c115ebe440b21f45ef22
+	commit = 42f0f4d30d16d0a7234db9ce8af56eb2b610be5b
+	parent = b1324dd579b5f6bb4fe7015aa0b3aebffe202525
 	method = merge
 	cmdver = 0.4.9
