@@ -2,6 +2,7 @@ import * as net from 'net';
 import * as http from 'http';
 import * as vscode from 'vscode';
 import { EventEmitter } from 'events';
+import { z } from 'zod';
 
 interface DebugServerEvents {
     on(event: 'started', listener: () => void): this;
@@ -42,6 +43,46 @@ const listFilesDescription = "List all files in the workspace. Use this to find 
 const getFileContentDescription = `Get file content with line numbers - you likely need to list files 
 to understand what files are available. Be careful to use absolute paths.`;
 
+// Zod schemas for the tools
+const listFilesInputSchema = {
+    includePatterns: z.array(z.string()).describe("Glob patterns to include (e.g. ['**/*.js'])").optional(),
+    excludePatterns: z.array(z.string()).describe("Glob patterns to exclude (e.g. ['node_modules/**'])").optional(),
+};
+
+const getFileContentInputSchema = {
+    path: z.string().describe("Path to the file. IT MUST BE AN ABSOLUTE PATH AND MATCH THE OUTPUT OF listFiles"),
+};
+
+const debugStepSchema = z.object({
+    type: z.enum(["setBreakpoint", "removeBreakpoint", "continue", "evaluate", "launch"]).describe(""),
+    file: z.string(),
+    line: z.number().optional(),
+    expression: z.string().describe("An expression to be evaluated in the stack frame of the current breakpoint").optional(),
+    condition: z.string().describe("If needed, a breakpoint condition may be specified to only stop on a breakpoint for some given condition.").optional(),
+});
+
+const debugInputSchema = {
+    steps: z.array(debugStepSchema),
+};
+
+// Main tools array with Zod schemas
+const tools = [
+    {
+        name: "listFiles",
+        description: listFilesDescription, // Make sure this variable is defined in your code
+        inputSchema: listFilesInputSchema,
+    },
+    {
+        name: "getFileContent",
+        description: getFileContentDescription, // Make sure this variable is defined in your code
+        inputSchema: getFileContentInputSchema,
+    },
+    {
+        name: "debug",
+        description: debugDescription, // Make sure this variable is defined in your code
+        inputSchema: debugInputSchema,
+    },
+];
 export class DebugServer extends EventEmitter implements DebugServerEvents {
     private server: net.Server | null = null;
     private port: number = 4711;
@@ -56,95 +97,25 @@ export class DebugServer extends EventEmitter implements DebugServerEvents {
         this.portConfigPath = portConfigPath || null;
         this.mcpServer = new McpServer({
             name: "Debug Server",
-            version: "1.0.0"
+            version: "1.0.0",
         });
 
         // Setup MCP tools to use our existing handlers
-        this.mcpServer.tool("listFiles", async (args: any) => {
+        this.mcpServer.tool("listFiles", listFilesDescription, listFilesInputSchema, async (args: any) => {
             const files = await this.handleListFiles(args);
             return { content: [{ type: "text", text: JSON.stringify(files) }] };
         });
 
-        this.mcpServer.tool("getFileContent", async (args: any) => {
+        this.mcpServer.tool("getFileContent", getFileContentDescription, getFileContentInputSchema, async (args: any) => {
             const content = await this.handleGetFile(args);
             return { content: [{ type: "text", text: content }] };
         });
 
-        this.mcpServer.tool("debug", async (args: any) => {
+        this.mcpServer.tool("debug", debugDescription, debugInputSchema, async (args: any) => {
             const results = await this.handleDebug(args);
             return { content: [{ type: "text", text: results.join('\n') }] };
         });
     }
-
-    private readonly tools = [
-        {
-            name: "listFiles",
-            description: listFilesDescription,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    includePatterns: {
-                        type: "array",
-                        items: { type: "string" },
-                        description: "Glob patterns to include (e.g. ['**/*.js'])"
-                    },
-                    excludePatterns: {
-                        type: "array",
-                        items: { type: "string" },
-                        description: "Glob patterns to exclude (e.g. ['node_modules/**'])"
-                    }
-                }
-            }
-        },
-        {
-            name: "getFileContent",
-            description: getFileContentDescription,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    path: {
-                        type: "string",
-                        description: "Path to the file. IT MUST BE AN ABSOLUTE PATH AND MATCH THE OUTPUT OF listFiles"
-                    }
-                },
-                required: ["path"]
-            }
-        },
-        {
-            name: "debug",
-            description: debugDescription,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    steps: {
-                        type: "array",
-                        items: {
-                            type: "object",
-                            properties: {
-                                type: {
-                                    type: "string",
-                                    enum: ["setBreakpoint", "removeBreakpoint", "continue", "evaluate", "launch"],
-                                    description: ""
-                                },
-                                file: { type: "string" },
-                                line: { type: "number" },
-                                expression: {
-                                    description: "An expression to be evaluated in the stack frame of the current breakpoint",
-                                    type: "string"
-                                },
-                                condition: {
-                                    description: "If needed, a breakpoint condition may be specified to only stop on a breakpoint for some given condition.",
-                                    type: "string"
-                                },
-                            },
-                            required: ["type", "file"]
-                        }
-                    }
-                },
-                required: ["steps"]
-            }
-        }
-    ];
 
     get isRunning(): boolean {
         return this._isRunning;
@@ -249,7 +220,7 @@ export class DebugServer extends EventEmitter implements DebugServerEvents {
                         let response: any;
 
                         if (request.type === 'listTools') {
-                            response = { tools: this.tools };
+                            response = { tools };
                         } else if (request.type === 'callTool') {
                             response = await this.handleCommand(request);
                         }
@@ -355,11 +326,15 @@ export class DebugServer extends EventEmitter implements DebugServerEvents {
             });
         }
 
-        // Start debugging using the configured launch configuration
-        await vscode.debug.startDebugging(workspaceFolder, config);
+        // Check if we're already debugging
+        let session = vscode.debug.activeDebugSession;
+        if (!session) {
+            // Start debugging using the configured launch configuration
+            await vscode.debug.startDebugging(workspaceFolder, config);
 
-        // Wait for session to be available
-        const session = await this.waitForDebugSession();
+            // Wait for session to be available
+            session = await this.waitForDebugSession();
+        }
 
         // Check if we're at a breakpoint
         try {
@@ -528,8 +503,19 @@ export class DebugServer extends EventEmitter implements DebugServerEvents {
                         });
 
                         results.push(`Evaluated "${step.expression}": ${response.result}`);
-                    } catch (err) {
-                        vscode.window.showErrorMessage(`Failed to execute: ${err}`);
+                    } catch (err: any) {
+                        let errorMessage = '';
+                        let stackTrace = '';
+
+                        if (err instanceof Error) {
+                            errorMessage = err.message;
+                            if (err.stack) {
+                                stackTrace = `\nStack: ${err.stack}`;
+                            }
+                        } else {
+                            errorMessage = String(err);
+                        }
+                        results.push(`ERROR: Evaluation failed for "${step.expression}": ${errorMessage}${stackTrace}`);
                     }
                     break;
                 }
