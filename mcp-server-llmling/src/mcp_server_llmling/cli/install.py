@@ -20,10 +20,10 @@ def get_claude_config_path() -> Path | None:
     """Get the Claude config directory based on platform."""
     match sys.platform:
         case "win32":
-            path = Path(Path.home(), "AppData", "Roaming", "Claude")
+            path = Path.home() / "AppData" / "Roaming" / "Claude"
             return path if path.exists() else None
         case "darwin":
-            path = Path(Path.home(), "Library", "Application Support", "Claude")
+            path = Path.home() / "Library" / "Application Support" / "Claude"
             return path if path.exists() else None
         case _:
             return None
@@ -45,6 +45,8 @@ def claude(
     force: bool = t.Option(False, help="Overwrite existing server if present"),
 ) -> None:
     """Install MCP server in Claude Desktop."""
+    import anyenv
+
     config_dir = get_claude_config_path()
     if not config_dir:
         msg = (
@@ -64,10 +66,8 @@ def claude(
             raise t.Exit(code=1) from e
 
     try:
-        config = json.loads(config_file_path.read_text())
-        if "mcpServers" not in config:
-            config["mcpServers"] = {}
-
+        config = anyenv.load_json(config_file_path.read_text("utf-8"), return_type=dict)
+        config.setdefault("mcpServers", {})
         server_name = "llmling"
         if server_name in config["mcpServers"] and not force and not dry_run:
             msg = f"Server '{server_name}' already exists. Use --force to overwrite."
@@ -89,9 +89,9 @@ def claude(
             return
 
         config["mcpServers"][server_name] = server_config
-        config_file_path.write_text(json.dumps(config, indent=2))
+        config_file_path.write_text(anyenv.dump_json(config, indent=True))
         t.echo(
-            f"Successfully installed '{server_name}' server in Claude Desktop config.",
+            f"Successfully installed {server_name!r} server in Claude Desktop config.",
         )
 
     except Exception as e:

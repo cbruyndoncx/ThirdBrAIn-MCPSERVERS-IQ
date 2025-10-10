@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
+from mcp_server_llmling.http_client import HTTPClientConfig, HTTPMCPClient
 from mcp_server_llmling.log import get_logger
-from mcp_server_llmling.sse_client import SSEClientConfig, SSEMCPClient
 
 
 if TYPE_CHECKING:
@@ -24,7 +24,7 @@ class ExternalServerBase(BaseModel):
 
     type: str = Field(init=False)
     name: str
-    transport: Literal["sse"] = "sse"  # for future extension to other transports
+    transport: Literal["http"] = "http"
 
 
 class URLServerConfig(ExternalServerBase):
@@ -61,7 +61,7 @@ class ConnectedServer:
 
     name: str
     config: ExternalServerConfig
-    client: SSEMCPClient
+    client: HTTPMCPClient
 
 
 class ServerFederation:
@@ -75,13 +75,15 @@ class ServerFederation:
         """Connect to all configured external servers."""
         for name, server_cfg in config.external_servers.items():
             try:
-                if server_cfg.transport != "sse":
-                    msg = f"Unsupported transport type: {server_cfg.transport}"
-                    raise ValueError(msg)  # noqa: TRY301
-
                 match server_cfg:
                     case URLServerConfig():
-                        client = SSEMCPClient(SSEClientConfig(server_url=server_cfg.url))
+                        if server_cfg.transport == "http":
+                            client = HTTPMCPClient(
+                                HTTPClientConfig(server_url=server_cfg.url)
+                            )
+                        else:
+                            msg = f"Unsupported transport type: {server_cfg.transport}"
+                            raise ValueError(msg)  # noqa: TRY301
                         await client.start()
                     case CommandServerConfig():
                         msg = "Command-based servers not yet implemented"

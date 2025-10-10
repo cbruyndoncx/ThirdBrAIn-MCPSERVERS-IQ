@@ -8,34 +8,34 @@ import contextlib
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Literal, Self
 
+from fastmcp import FastMCP
 from llmling.config.manager import ConfigManager
 from llmling.config.runtime import RuntimeConfig
-from mcp.server import NotificationOptions, Server
+from mcp.server import NotificationOptions
 from pydantic import AnyUrl
 
 from mcp_server_llmling import constants
 from mcp_server_llmling.handlers import register_handlers
 from mcp_server_llmling.log import get_logger
 from mcp_server_llmling.server_federation import FederatedServers, ServerFederation
-from mcp_server_llmling.transports.sse import SSEServer
-from mcp_server_llmling.transports.stdio import StdioServer
 
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Coroutine
+    from collections.abc import AsyncIterator, Callable, Coroutine
+    from contextlib import AbstractAsyncContextManager
     import os
 
+    from fastmcp.server.auth import AuthProvider
     from llmling.config.models import BaseResource
     from llmling.prompts.models import BasePrompt
     from llmling.tools.base import LLMCallableTool
     import mcp
     from mcp import Implementation
-
-    from mcp_server_llmling.transports.base import TransportBase
+    from mcp.server.lowlevel.server import LifespanResultT
 
 logger = get_logger(__name__)
 
-TransportType = Literal["stdio", "sse"]
+TransportType = Literal["stdio", "streamable-http", "sse"]
 
 
 class LLMLingServer:
@@ -47,6 +47,19 @@ class LLMLingServer:
         *,
         transport: TransportType = "stdio",
         name: str = constants.SERVER_NAME,
+        instructions: str | None = None,
+        tags: set[str] | None = None,
+        dependencies: list[str] | None = None,
+        tool_serializer: Callable[[Any], str] | None = None,
+        lifespan: (
+            Callable[
+                [FastMCP[LifespanResultT]],
+                AbstractAsyncContextManager[LifespanResultT],
+            ]
+            | None
+        ) = None,
+        auth_server_provider: AuthProvider | None = None,
+        # event_store: EventStore | None = None,
         transport_options: dict[str, Any] | None = None,
         enable_injection: bool = False,
         injection_port: int = 8765,
@@ -56,8 +69,14 @@ class LLMLingServer:
 
         Args:
             runtime: Fully initialized runtime configuration
-            transport: Transport type to use ("stdio" or "sse")
+            transport: Transport type to use ("stdio", "streamable-http", or "sse")
             name: Server name for MCP protocol
+            instructions: Instructions for client
+            tags: Tags for server
+            dependencies: Dependencies for server
+            tool_serializer: Tool serializer function
+            lifespan: Lifespan function for server
+            auth_server_provider: Auth server provider
             transport_options: Additional options for transport
             enable_injection: Whether to enable config injection
             injection_port: Port for injection server
@@ -65,8 +84,6 @@ class LLMLingServer:
         """
         self.name = name
         self.runtime = runtime
-
-        # Handle Zed mode if enabled
         self.zed_mode = zed_mode
         if zed_mode:
             from mcp_server_llmling.zed_wrapper import prepare_runtime_for_zed
@@ -76,40 +93,33 @@ class LLMLingServer:
         self._subscriptions: defaultdict[str, set[mcp.ServerSession]] = defaultdict(set)
         self._tasks: set[asyncio.Task[Any]] = set()
         self.federation = ServerFederation()
-
+        self.transport: TransportType = transport
         # Create MCP server
-        self.server = Server[Any](name)
+        self.fastmcp = FastMCP(
+            name,
+            instructions=instructions,
+            lifespan=lifespan,
+            auth=auth_server_provider,
+            include_tags=tags,
+            dependencies=dependencies,
+            tool_serializer=tool_serializer,
+        )
+        self.server = self.fastmcp._mcp_server
         self.server.notification_options = NotificationOptions(
             prompts_changed=True,
             resources_changed=True,
             tools_changed=True,
         )
 
-        # Create transport
-        self.transport = self._create_transport(transport, transport_options or {})
-
         # Setup injection if enabled
         self.injection_server = None
-        if enable_injection and isinstance(self.transport, StdioServer):
+        if enable_injection and transport == "stdio":
             from mcp_server_llmling.injection import ConfigInjectionServer
 
             self.injection_server = ConfigInjectionServer(self, port=injection_port)
 
         self._setup_handlers()
         self._setup_events()
-
-    def _create_transport(
-        self, transport_type: TransportType, options: dict[str, Any]
-    ) -> TransportBase:
-        """Create transport instance."""
-        match transport_type:
-            case "stdio":
-                return StdioServer(self.server)
-            case "sse":
-                return SSEServer(self.server, **options)
-            case _:
-                msg = f"Unknown transport type: {transport_type}"
-                raise ValueError(msg)
 
     @classmethod
     @asynccontextmanager
@@ -203,20 +213,17 @@ class LLMLingServer:
                 try:
                     # Create task but don't await it directly
                     injection_task = asyncio.create_task(self.injection_server.start())
-                    logger.info(
-                        "Config injection server listening on port %d",
-                        self.injection_server.port,
-                    )
+                    msg = "Config injection server listening on port %d"
+                    logger.info(msg, self.injection_server.port)
                 except Exception:
                     logger.exception("Failed to start injection server")
                     if raise_exceptions:
                         raise
 
             # Run main server
-            await self.transport.serve(raise_exceptions=raise_exceptions)
+            await self.fastmcp.run_async(transport=self.transport, show_banner=False)
 
         finally:
-            # Clean shutdown
             if injection_task:
                 injection_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -229,7 +236,7 @@ class LLMLingServer:
             if self.injection_server:
                 await self.injection_server.stop()
 
-            await self.transport.shutdown()
+            # await self.server.shutdown()
             await self.federation.close()
             # Cancel all pending tasks
             if self._tasks:
@@ -277,10 +284,7 @@ class LLMLingServer:
     ) -> None:
         """Send progress notification to client."""
         try:
-            # Get current session
             session = self.current_session
-
-            # Create and track the progress notification task
             task = session.send_progress_notification(
                 progress_token=token,
                 progress=progress,

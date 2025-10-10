@@ -1,4 +1,4 @@
-"""SSE-based MCP protocol client implementation."""
+"""HTTP-based MCP protocol client implementation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
 
 from mcp.client.session import ClientSession
-from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 from pydantic import AnyUrl
 
 from mcp_server_llmling.log import get_logger
@@ -22,14 +22,15 @@ logger = get_logger(__name__)
 
 
 @dataclass
-class SSEClientConfig:
-    """Configuration for SSE-based MCP client."""
+class HTTPClientConfig:
+    """Configuration for HTTP-based MCP client."""
 
     server_url: str
     protocol_version: str = "0.1"
     client_name: str = "mcp-client"
     client_version: str = "1.0"
     timeout: float = 30.0
+    headers: dict[str, str] | None = None
 
 
 class MCPClientError(Exception):
@@ -44,10 +45,10 @@ class ToolError(MCPClientError):
     """Raised when tool execution fails."""
 
 
-class SSEMCPClient:
-    """High-level MCP protocol client for connecting to external servers."""
+class HTTPMCPClient:
+    """High-level MCP protocol client for connecting to external servers via HTTP."""
 
-    def __init__(self, config: SSEClientConfig) -> None:
+    def __init__(self, config: HTTPClientConfig) -> None:
         """Initialize client with configuration.
 
         Args:
@@ -55,32 +56,59 @@ class SSEMCPClient:
         """
         self.config = config
         self._session: ClientSession | None = None
+        self._context_manager: Any = None
 
     async def start(self) -> None:
         """Connect to server and perform handshake."""
         try:
-            # Connect via SSE and get streams
-            async with sse_client(self.config.server_url) as streams:
-                self._streams = streams
-                read_stream, write_stream = streams
+            # Connect via streamablehttp_client and get streams
+            self._context_manager = streamablehttp_client(
+                url=self.config.server_url,
+                headers=self.config.headers,
+                timeout=self.config.timeout,
+            )
 
-                # Create session
-                self._session = ClientSession(read_stream, write_stream)
-                await self._session.__aenter__()
+            streams_and_callback = await self._context_manager.__aenter__()
+            read_stream, write_stream, _get_session_id = streams_and_callback
 
-                # Initialize session
-                result = await self._session.initialize()
-                msg = "Connected to MCP server at %s (protocol version %s)"
-                logger.info(msg, self.config.server_url, result.protocolVersion)
+            # Create session
+            self._session = ClientSession(read_stream, write_stream)
+            await self._session.__aenter__()
+
+            # Initialize session
+            result = await self._session.initialize()
+            msg = "Connected to MCP server at %s (protocol version %s)"
+            logger.info(msg, self.config.server_url, result.protocolVersion)
         except Exception as exc:
+            # Clean up on failure
+            if self._context_manager:
+                try:
+                    await self._context_manager.__aexit__(
+                        type(exc), exc, exc.__traceback__
+                    )
+                except Exception:
+                    logger.exception("Error during cleanup after connection failure")
+                self._context_manager = None
             msg = "Failed to connect to server"
             raise McpConnectionError(msg) from exc
 
     async def close(self) -> None:
         """Close connection to server."""
         if self._session:
-            await self._session.__aexit__(None, None, None)
-            self._session = None
+            try:
+                await self._session.__aexit__(None, None, None)
+            except Exception:
+                logger.exception("Error closing session")
+            finally:
+                self._session = None
+
+        if self._context_manager:
+            try:
+                await self._context_manager.__aexit__(None, None, None)
+            except Exception:
+                logger.exception("Error closing context manager")
+            finally:
+                self._context_manager = None
 
     @property
     def session(self) -> ClientSession:
@@ -173,10 +201,10 @@ class SSEMCPClient:
 if __name__ == "__main__":
 
     async def main() -> None:
-        """Example usage of SSEMCPClient."""
-        config = SSEClientConfig(server_url="http://localhost:8000")
+        """Example usage of HTTPMCPClient."""
+        config = HTTPClientConfig(server_url="http://localhost:3001")
 
-        async with SSEMCPClient(config) as client:
+        async with HTTPMCPClient(config) as client:
             # List available tools
             tools = await client.list_tools()
             print("Available tools:", tools)

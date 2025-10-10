@@ -3,23 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from enum import Enum
 import logging
 import os
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import Any, Literal
 
 from llmling import RuntimeConfig, config_resources
 import typer as t
 
 from mcp_server_llmling import __version__, constants
 from mcp_server_llmling.log import get_logger
-from mcp_server_llmling.server import LLMLingServer
+from mcp_server_llmling.server import LLMLingServer, TransportType
 
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 logger = get_logger(__name__)
 
@@ -38,7 +34,7 @@ cli.add_typer(list_cli, name="list")
 
 # Common option definitions
 CONFIG_HELP = "Path to LLMling configuration file"
-TRANSPORT_HELP = "Transport type (stdio or sse)"
+TRANSPORT_HELP = "Transport type"
 HOST_HELP = "Host address for SSE transport"
 PORT_HELP = "Port number for SSE transport"
 INJ_PORT_HELP = "Port for config injection server"
@@ -47,6 +43,7 @@ NAME_HELP = "Server name for MCP protocol"
 TIMEOUT_HELP = "Connection timeout in seconds"
 VERBOSE_HELP = "Enable verbose output"
 QUIET_HELP = "Suppress non-essential output"
+INSTRUCTIONS_HELP = "Instructions on how to use the server"
 
 # Option command tuples
 CONFIG_CMDS = "-c", "--config"
@@ -56,23 +53,11 @@ PORT_CMDS = "-p", "--port"
 NAME_CMDS = "-n", "--name"
 VERBOSE_CMDS = "-v", "--verbose"
 QUIET_CMDS = "-q", "--quiet"
+INSTRUCTIONS_CMDS = "-i", "--instructions"
 
 
-class LogLevel(str, Enum):
-    """Valid logging levels."""
-
-    DEBUG = "debug"
-    INFO = "info"
-    WARNING = "warning"
-    ERROR = "error"
-
-
-def validate_transport(value: str) -> str:
-    """Validate transport type."""
-    if value not in {"stdio", "sse"}:
-        msg = f"Invalid transport type: {value}. Must be 'stdio' or 'sse'"
-        raise t.BadParameter(msg)
-    return value
+# Type alias for valid logging levels
+LogLevel = Literal["debug", "info", "warning", "error"]
 
 
 def version_callback(value: bool) -> None:
@@ -100,19 +85,19 @@ def quiet_callback(ctx: t.Context, _param: t.CallbackParam, value: bool) -> bool
 def start(
     # ""..."" for required
     config_path: str = t.Argument(config_resources.TEST_CONFIG, help=CONFIG_HELP),
-    transport: str = t.Option(
+    transport: TransportType = t.Option(  # noqa: B008
         "stdio",
         *TRANSPORT_CMDS,
         help=TRANSPORT_HELP,
-        callback=validate_transport,
     ),
     host: str = t.Option("localhost", *HOST_CMDS, help=HOST_HELP),
-    port: int = t.Option(8000, *PORT_CMDS, help=PORT_HELP),
+    port: int = t.Option(3001, *PORT_CMDS, help=PORT_HELP),
     injection_host: str = t.Option("localhost", help=INJ_HOST_HELP),
     injection_port: int = t.Option(8765, help=INJ_PORT_HELP),
     server_name: str = t.Option(constants.SERVER_NAME, *NAME_CMDS, help=NAME_HELP),
+    instructions: str | None = t.Option(None, *INSTRUCTIONS_CMDS, help=INSTRUCTIONS_HELP),
     log_level: LogLevel = t.Option(  # noqa: B008
-        LogLevel.INFO,
+        "info",
         "-l",
         "--log-level",
         case_sensitive=False,
@@ -132,9 +117,9 @@ def start(
 ) -> None:
     """Start the MCP protocol server."""
     try:
-        logging.getLogger().setLevel(log_level.value.upper())
+        logging.getLogger().setLevel(log_level.upper())
         transport_options: dict[str, Any] = {}
-        if transport == "sse":
+        if transport in {"sse", "streamable-http"}:
             transport_options = {"host": host, "port": port}
 
         with RuntimeConfig.open_sync(config_path) as runtime:
@@ -142,6 +127,7 @@ def start(
                 runtime=runtime,
                 transport=transport,  # type: ignore
                 name=server_name,
+                instructions=instructions,
                 transport_options=transport_options,
                 enable_injection=enable_injection,
                 injection_port=injection_port,
@@ -166,9 +152,9 @@ def info(
         "Version": __version__,
         "Python": sys.version,
         "Platform": sys.platform,
-        "Supported transports": ["stdio", "sse"],
+        "Supported transports": ["stdio", "streamable-http", "sse"],
         "Default ports": {
-            "SSE": 8000,
+            "SSE": 3001,
             "Injection": 8765,
         },
     }
