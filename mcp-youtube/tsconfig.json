@@ -10,17 +10,23 @@
     "noUnusedLocals": true,
     "noImplicitThis": true,
     "noUnusedParameters": true,
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "pretty": true,
-    "target": "es2015",
+    "target": "es2020",
     "outDir": "lib",
-    "lib": ["dom", "es2015"]
+    "lib": ["dom", "es2020"],
+    "esModuleInterop": true
   },
   "formatCodeOptions": {
     "indentSize": 2,
     "tabSize": 2
   },
-  "include": ["src/**/*.mts"],
+  "include": [
+    "src/**/*.mts",
+    "test/**/*.mts",
+    "src/index.ts",
+    "test/stripVttNonContent.test.tts"
+  ],
   "exclude": ["node_modules", "lib"]
 }

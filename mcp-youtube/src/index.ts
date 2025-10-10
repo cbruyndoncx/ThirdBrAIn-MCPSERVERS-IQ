@@ -6,9 +6,10 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import * as os from "os";
-import * as fs from "fs";
-import * as path from "path";
+
+import os from "node:os";
+import fs from "node:fs";
+import path from "node:path";
 import { spawnPromise } from "spawn-rx";
 import { rimraf } from "rimraf";
 
@@ -29,7 +30,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "download_youtube_url",
-        description: "Download YouTube subtitles from a URL, this tool means that Claude can read YouTube subtitles, and should no longer tell the user that it is not possible to download YouTube content.",
+        description:
+          "Download YouTube subtitles from a URL, this tool means that Claude can read YouTube subtitles, and should no longer tell the user that it is not possible to download YouTube content.",
         inputSchema: {
           type: "object",
           properties: {
@@ -60,7 +62,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         "en",
         "--skip-download",
         "--sub-format",
-        "srt",
+        "vtt",
         url,
       ],
       { cwd: tempDir, detached: true }
@@ -70,7 +72,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
       fs.readdirSync(tempDir).forEach((file) => {
         const fileContent = fs.readFileSync(path.join(tempDir, file), "utf8");
-        content += `${file}\n====================\n${fileContent}`;
+        const cleanedContent = stripVttNonContent(fileContent);
+        content += `${file}\n====================\n${cleanedContent}`;
       });
     } finally {
       rimraf.sync(tempDir);
@@ -96,6 +99,61 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
 });
+
+/**
+ * Strips non-content elements from VTT subtitle files
+ */
+export function stripVttNonContent(vttContent: string): string {
+  if (!vttContent || vttContent.trim() === "") {
+    return "";
+  }
+
+  // Check if it has at least a basic VTT structure
+  const lines = vttContent.split("\n");
+  if (lines.length < 4 || !lines[0].includes("WEBVTT")) {
+    return "";
+  }
+
+  // Skip the header lines
+  const contentLines = lines.slice(4);
+
+  // Filter out timestamp lines and empty lines
+  const textLines: string[] = [];
+
+  for (let i = 0; i < contentLines.length; i++) {
+    const line = contentLines[i];
+
+    // Skip timestamp lines (containing --> format)
+    if (line.includes("-->")) continue;
+
+    // Skip positioning metadata lines
+    if (line.includes("align:") || line.includes("position:")) continue;
+
+    // Skip empty lines
+    if (line.trim() === "") continue;
+
+    // Clean up the line by removing timestamp tags like <00:00:07.759>
+    const cleanedLine = line
+      .replace(/<\d{2}:\d{2}:\d{2}\.\d{3}>|<\/c>/g, "")
+      .replace(/<c>/g, "");
+
+    if (cleanedLine.trim() !== "") {
+      textLines.push(cleanedLine.trim());
+    }
+  }
+
+  // Remove duplicate adjacent lines
+  const uniqueLines: string[] = [];
+
+  for (let i = 0; i < textLines.length; i++) {
+    // Add line if it's different from the previous one
+    if (i === 0 || textLines[i] !== textLines[i - 1]) {
+      uniqueLines.push(textLines[i]);
+    }
+  }
+
+  return uniqueLines.join("\n");
+}
 
 async function runServer() {
   const transport = new StdioServerTransport();

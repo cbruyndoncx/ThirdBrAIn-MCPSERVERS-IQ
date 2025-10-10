@@ -1,13 +1,14 @@
 {
   "name": "@anaisbetts/mcp-youtube",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "bin": {
     "mcp-youtube": "lib/index.mjs"
   },
   "description": "YouTube downloader for MCP",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
-    "prepare": "tsc && shx chmod +x ./lib/index.mjs"
+    "prepublish": "git clean -xdf dist && bun build --target node src/index.ts --outdir dist",
+    "test": "bun test"
   },
   "author": "Ani Betts <anais@anaisbetts.org>",
   "license": "MIT",
@@ -18,7 +19,6 @@
   },
   "devDependencies": {
     "shx": "^0.3.4",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.6.3"
+    "bun-types": "latest"
   }
 }
