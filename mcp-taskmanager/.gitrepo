@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/kazuph/mcp-taskmanager.git
 	branch = main
-	commit = 8a1d519512ba59dd32b5366a82ee6e92e0584364
-	parent = 3ae53e8dc4f04947948552e15295c5d690578630
+	commit = f2fe1c43ded8cd3a64ce50d3b4c4ea2a199c4afc
+	parent = 010163a259c9ff2d96769203ba102ebd93067598
 	method = merge
 	cmdver = 0.4.9
