@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/cyanheads/atlas-mcp-server.git
 	branch = main
-	commit = 7c9451977f8eff6819c2a52f82fb82d928dbaf9d
-	parent = c693d65a395e66d9fbc10a22c79d7693d56c8533
+	commit = 5a0bfdc08f9d0d106e69432bcaa606cc414340f1
+	parent = 303bd3b456d4c0be98241ed13e270382d5a30d19
 	method = merge
 	cmdver = 0.4.9

@@ -2,12 +2,6 @@
  * Common type definitions for the Neo4j service
  */
 
-import {
-  PriorityLevel,
-  ProjectStatus,
-  TaskStatus
-} from '../../types/mcp.js';
-
 /**
  * Neo4j entity base interface
  * Common properties for all Neo4j entities
@@ -40,7 +34,7 @@ export interface Neo4jTask extends Neo4jEntity {
   description: string;
   priority: string; // Allow any priority value from PriorityLevel
   status: string; // Allow any status value from TaskStatus
-  assignedTo?: string;
+  // assignedTo is now represented by the ASSIGNED_TO relationship
   urls?: Array<{ title: string; url: string }>;
   tags?: string[];
   completionRequirements: string;
@@ -55,8 +49,8 @@ export interface Neo4jKnowledge extends Neo4jEntity {
   projectId: string;
   text: string;
   tags?: string[];
-  domain: string;
-  citations?: string[];
+  // domain is now represented by the BELONGS_TO_DOMAIN relationship
+  // citations are now represented by the CITES relationship
 }
 
 /**
@@ -98,28 +92,28 @@ export interface Neo4jCitation extends Neo4jEntity {
  * Relationship types used in the Neo4j database
  */
 export enum RelationshipTypes {
-  CONTAINS_TASK = 'CONTAINS_TASK',
-  CONTAINS_KNOWLEDGE = 'CONTAINS_KNOWLEDGE',
-  DEPENDS_ON = 'DEPENDS_ON',
-  ASSIGNED_TO = 'ASSIGNED_TO',
-  CITES = 'CITES',
-  RELATED_TO = 'RELATED_TO',
-  HAS_TYPE = 'HAS_TYPE',
-  BELONGS_TO_DOMAIN = 'BELONGS_TO_DOMAIN',
-  BELONGS_TO_PROJECT = 'BELONGS_TO_PROJECT'
+  CONTAINS_TASK = "CONTAINS_TASK",
+  CONTAINS_KNOWLEDGE = "CONTAINS_KNOWLEDGE",
+  DEPENDS_ON = "DEPENDS_ON",
+  ASSIGNED_TO = "ASSIGNED_TO",
+  CITES = "CITES",
+  RELATED_TO = "RELATED_TO",
+  HAS_TYPE = "HAS_TYPE",
+  BELONGS_TO_DOMAIN = "BELONGS_TO_DOMAIN",
+  BELONGS_TO_PROJECT = "BELONGS_TO_PROJECT",
 }
 
 /**
  * Node labels used in the Neo4j database
  */
 export enum NodeLabels {
-  Project = 'Project',
-  Task = 'Task',
-  Knowledge = 'Knowledge',
-  User = 'User',
-  TaskType = 'TaskType',
-  Domain = 'Domain',
-  Citation = 'Citation'
+  Project = "Project",
+  Task = "Task",
+  Knowledge = "Knowledge",
+  User = "User",
+  TaskType = "TaskType",
+  Domain = "Domain",
+  Citation = "Citation",
 }
 
 /**
@@ -145,7 +139,13 @@ export interface PaginatedResult<T> {
  * Filter options for Project queries
  */
 export interface ProjectFilterOptions extends PaginationOptions {
-  status?: 'active' | 'pending' | 'in-progress' | 'completed' | 'archived' | ('active' | 'pending' | 'in-progress' | 'completed' | 'archived')[];
+  status?:
+    | "active"
+    | "pending"
+    | "in-progress"
+    | "completed"
+    | "archived"
+    | ("active" | "pending" | "in-progress" | "completed" | "archived")[];
   taskType?: string;
   searchTerm?: string;
 }
@@ -155,13 +155,23 @@ export interface ProjectFilterOptions extends PaginationOptions {
  */
 export interface TaskFilterOptions extends PaginationOptions {
   projectId: string;
-  status?: 'backlog' | 'todo' | 'in-progress' | 'completed' | ('backlog' | 'todo' | 'in-progress' | 'completed')[];
-  priority?: 'low' | 'medium' | 'high' | 'critical' | ('low' | 'medium' | 'high' | 'critical')[];
-  assignedTo?: string;
+  status?:
+    | "backlog"
+    | "todo"
+    | "in-progress"
+    | "completed"
+    | ("backlog" | "todo" | "in-progress" | "completed")[];
+  priority?:
+    | "low"
+    | "medium"
+    | "high"
+    | "critical"
+    | ("low" | "medium" | "high" | "critical")[];
+  assignedTo?: string; // Filter by user ID (queries relationship)
   tags?: string[];
   taskType?: string;
-  sortBy?: 'priority' | 'createdAt' | 'status';
-  sortDirection?: 'asc' | 'desc';
+  sortBy?: "priority" | "createdAt" | "status";
+  sortDirection?: "asc" | "desc";
 }
 
 /**
@@ -170,8 +180,18 @@ export interface TaskFilterOptions extends PaginationOptions {
 export interface KnowledgeFilterOptions extends PaginationOptions {
   projectId: string;
   tags?: string[];
-  domain?: string;
-  search?: string;
+  domain?: string; // Filter by domain name (queries relationship)
+  search?: string; // Keep search for text content
+}
+
+/**
+ * Specific types for project dependencies stored within the DEPENDS_ON relationship properties.
+ */
+export enum ProjectDependencyType {
+  REQUIRES = "requires",
+  EXTENDS = "extends",
+  IMPLEMENTS = "implements",
+  REFERENCES = "references",
 }
 
 /**
@@ -180,7 +200,7 @@ export interface KnowledgeFilterOptions extends PaginationOptions {
 export interface ProjectDependency {
   sourceProjectId: string;
   targetProjectId: string;
-  type: 'requires' | 'extends' | 'implements' | 'references';
+  type: ProjectDependencyType; // Use the enum
   description: string;
 }
 
@@ -190,8 +210,9 @@ export interface ProjectDependency {
 export interface SearchOptions extends PaginationOptions {
   property?: string;
   value: string;
-  entityTypes?: ('project' | 'task' | 'knowledge')[];
+  entityTypes?: ("project" | "task" | "knowledge")[];
   caseInsensitive?: boolean;
   fuzzy?: boolean;
   taskType?: string;
+  assignedToUserId?: string; // Added for filtering tasks by assignee
 }

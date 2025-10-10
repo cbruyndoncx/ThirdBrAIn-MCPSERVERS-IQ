@@ -1,50 +1,59 @@
-import { KnowledgeService } from '../../../services/neo4j/knowledgeService.js';
-import { BaseErrorCode, McpError } from '../../../types/errors.js';
-import { logger } from '../../../utils/logger.js';
-import { ToolContext } from '../../../utils/security.js';
-import { AtlasKnowledgeDeleteInput, AtlasKnowledgeDeleteSchema } from './types.js';
-import { formatKnowledgeDeleteResponse } from './responseFormat.js';
+import { KnowledgeService } from "../../../services/neo4j/knowledgeService.js";
+import { BaseErrorCode, McpError } from "../../../types/errors.js";
+import { ResponseFormat, createToolResponse } from "../../../types/mcp.js";
+import { logger, requestContextService } from "../../../utils/index.js"; // Import requestContextService
+import { ToolContext } from "../../../types/tool.js";
+import {
+  AtlasKnowledgeDeleteInput,
+  AtlasKnowledgeDeleteSchema,
+} from "./types.js";
+import { formatKnowledgeDeleteResponse } from "./responseFormat.js";
 
 export const atlasDeleteKnowledge = async (
   input: unknown,
-  context: ToolContext
+  context: ToolContext,
 ) => {
   let validatedInput: AtlasKnowledgeDeleteInput | undefined;
-  
+  const reqContext =
+    context.requestContext ??
+    requestContextService.createRequestContext({
+      toolName: "atlasDeleteKnowledge",
+    });
+
   try {
     // Parse and validate input against schema definition
     validatedInput = AtlasKnowledgeDeleteSchema.parse(input);
-    
+
     // Select operation strategy based on request mode
-    if (validatedInput.mode === 'bulk') {
+    if (validatedInput.mode === "bulk") {
       // Process bulk removal operation
       const { knowledgeIds } = validatedInput;
-      
-      logger.info("Initiating batch knowledge item removal", { 
+
+      logger.info("Initiating batch knowledge item removal", {
+        ...reqContext,
         count: knowledgeIds.length,
         knowledgeIds,
-        requestId: context.requestContext?.requestId 
       });
 
       const results = {
         success: true,
         message: `Successfully removed ${knowledgeIds.length} knowledge items`,
         deleted: [] as string[],
-        errors: [] as { 
+        errors: [] as {
           knowledgeId: string;
           error: {
             code: string;
             message: string;
             details?: any;
           };
-        }[]
+        }[],
       };
 
       // Process removal operations sequentially to maintain data integrity
       for (const knowledgeId of knowledgeIds) {
         try {
           const deleted = await KnowledgeService.deleteKnowledge(knowledgeId);
-          
+
           if (deleted) {
             results.deleted.push(knowledgeId);
           } else {
@@ -54,8 +63,8 @@ export const atlasDeleteKnowledge = async (
               knowledgeId,
               error: {
                 code: BaseErrorCode.NOT_FOUND,
-                message: `Knowledge item with ID ${knowledgeId} not found`
-              }
+                message: `Knowledge item with ID ${knowledgeId} not found`,
+              },
             });
           }
         } catch (error) {
@@ -63,62 +72,77 @@ export const atlasDeleteKnowledge = async (
           results.errors.push({
             knowledgeId,
             error: {
-              code: error instanceof McpError ? error.code : BaseErrorCode.INTERNAL_ERROR,
-              message: error instanceof Error ? error.message : 'Unknown error',
-              details: error instanceof McpError ? error.details : undefined
-            }
+              code:
+                error instanceof McpError
+                  ? error.code
+                  : BaseErrorCode.INTERNAL_ERROR,
+              message: error instanceof Error ? error.message : "Unknown error",
+              details: error instanceof McpError ? error.details : undefined,
+            },
           });
         }
       }
-      
+
       if (results.errors.length > 0) {
         results.message = `Removed ${results.deleted.length} of ${knowledgeIds.length} knowledge items with ${results.errors.length} errors`;
       }
-      
-      logger.info("Batch knowledge removal operation completed", { 
+
+      logger.info("Batch knowledge removal operation completed", {
+        ...reqContext,
         successCount: results.deleted.length,
         errorCount: results.errors.length,
-        requestId: context.requestContext?.requestId 
       });
 
-      // Use the formatter to format the response
-      return formatKnowledgeDeleteResponse(results);
-
+      // Conditionally format response
+      if (validatedInput.responseFormat === ResponseFormat.JSON) {
+        return createToolResponse(JSON.stringify(results, null, 2));
+      } else {
+        return formatKnowledgeDeleteResponse(results);
+      }
     } else {
       // Process single entity removal
       const { id } = validatedInput;
-      
-      logger.info("Removing knowledge item", { 
+
+      logger.info("Removing knowledge item", {
+        ...reqContext,
         knowledgeId: id,
-        requestId: context.requestContext?.requestId 
       });
 
       const deleted = await KnowledgeService.deleteKnowledge(id);
-      
+
       if (!deleted) {
-        logger.warn("Target knowledge item not found for removal operation", { 
-          knowledgeId: id,
-          requestId: context.requestContext?.requestId 
-        });
-        
+        logger.warning(
+          "Target knowledge item not found for removal operation",
+          {
+            ...reqContext,
+            knowledgeId: id,
+          },
+        );
+
         throw new McpError(
           BaseErrorCode.NOT_FOUND,
           `Knowledge item with identifier ${id} not found`,
-          { knowledgeId: id }
+          { knowledgeId: id },
         );
       }
-      
-      logger.info("Knowledge item successfully removed", { 
+
+      logger.info("Knowledge item successfully removed", {
+        ...reqContext,
         knowledgeId: id,
-        requestId: context.requestContext?.requestId 
       });
 
-      // Return formatted success response
-      return formatKnowledgeDeleteResponse({
+      const result = {
         id,
         success: true,
-        message: `Knowledge item with ID ${id} removed successfully`
-      });
+        message: `Knowledge item with ID ${id} removed successfully`,
+      };
+
+      // Conditionally format response
+      if (validatedInput.responseFormat === ResponseFormat.JSON) {
+        return createToolResponse(JSON.stringify(result, null, 2));
+      } else {
+        return formatKnowledgeDeleteResponse(result);
+      }
     }
   } catch (error) {
     // Handle specific error cases
@@ -126,15 +150,15 @@ export const atlasDeleteKnowledge = async (
       throw error;
     }
 
-    logger.error("Knowledge item removal operation failed", { 
-      error,
-      requestId: context.requestContext?.requestId 
+    logger.error("Knowledge item removal operation failed", error as Error, {
+      ...reqContext,
+      inputReceived: validatedInput ?? input,
     });
 
     // Translate unknown errors to structured McpError format
     throw new McpError(
       BaseErrorCode.INTERNAL_ERROR,
-      `Failed to remove knowledge item(s): ${error instanceof Error ? error.message : 'Unknown error'}`
+      `Failed to remove knowledge item(s): ${error instanceof Error ? error.message : "Unknown error"}`,
     );
   }
 };
