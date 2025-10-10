@@ -11,7 +11,6 @@ from oterm.ollamaclient import OllamaLLM
 
 
 class PullModel(ModalScreen[str]):
-
     model: str = ""
     BINDINGS = [
         ("escape", "cancel", "Cancel"),
@@ -35,6 +34,7 @@ class PullModel(ModalScreen[str]):
             await asyncio.sleep(1.0)
         except ResponseError as e:
             log.text += f"Error: {e}\n"
+        self.app.notify("Model pulled successfully")
 
     @on(Input.Changed)
     async def on_model_change(self, ev: Input.Changed) -> None:
@@ -46,7 +46,9 @@ class PullModel(ModalScreen[str]):
         self.pull_model()
 
     def compose(self) -> ComposeResult:
-        with Container(id="pull-model-container"):
+        with Container(
+            id="pull-model-container", classes="screen-container full-height"
+        ):
             yield Label("Pull model", classes="title")
             with Horizontal():
                 yield Input(self.model)

@@ -5,21 +5,24 @@ By pressing <kbd>^ Ctrl</kbd>+<kbd>p</kbd> you can access the command palette fr
 * `Edit chat parameters` - edit the current chat session (change system prompt, parameters or format)
 * `Rename chat` - rename the current chat session
 * `Export chat` - export the current chat session as markdown
-* `Delete chat` - delete the current chat session 
+* `Delete chat` - delete the current chat session
 * `Clear chat` - clear the chat history, preserving model and system prompt customizations
 * `Regenerate last Ollama message` - regenerates the last message from Ollama (will override the `seed` for the specific message with a random one.) Useful if you want to change the system prompt or parameters or just want to try again.
 * `Pull model` - pull a model or update an existing one.
 * `Change theme` - choose among the available themes.
-  
+* `Show logs` - shows the logs of the current oterm session.
+
 ### Keyboard shortcuts
 
 The following keyboard shortcuts are supported:
 
 * <kbd>^ Ctrl</kbd>+<kbd>q</kbd> - quit
 
-* <kbd>^ Ctrl</kbd>+<kbd>l</kbd> - switch to multiline input mode
+* <kbd>^ Ctrl</kbd>+<kbd>m</kbd> - switch to multiline input mode
 * <kbd>^ Ctrl</kbd>+<kbd>i</kbd> - select an image to include with the next message
-* <kbd>↑</kbd>     - navigate through history of previous prompts
+* <kbd>↑/↓</kbd> (while messages are focused) - navigate through the messages
+* <kbd>↑</kbd> (while prompt is focused)    - navigate through history of previous prompts
+* <kbd>^ Ctrl</kbd>+<kbd>l</kbd> - show logs
 
 * <kbd>^ Ctrl</kbd>+<kbd>n</kbd> - open a new chat
 * <kbd>^ Ctrl</kbd>+<kbd>Backspace</kbd> - close the current chat
@@ -32,9 +35,9 @@ In multiline mode, you can press <kbd>Enter</kbd> to send the message, or <kbd>S
 While Ollama is inferring the next message, you can press <kbd>Esc</kbd> to cancel the inference.
 
 !!! note
-    Some of the shortcuts may not work in a certain context, if they are overriden by the widget in focus. For example pressing <kbd>↑</kbd> while the prompt is in multi-line mode.
+    Some of the shortcuts may not work in a certain context, if they are overridden by the widget in focus. For example pressing <kbd>↑</kbd> while the prompt is in multi-line mode.
 
-    If the key bindings clash with your terminal, it is possible to change them by editing the configuration file. See [Configuration](/oterm/app_config).
+    If the key bindings clash with your terminal, it is possible to change them by editing the configuration file. See [Configuration](app_config.md).
 
 ### Copy / Paste
 

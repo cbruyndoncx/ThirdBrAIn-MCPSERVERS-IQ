@@ -1,33 +1,25 @@
-import json
-
 from ollama import Options, ShowResponse
 from pydantic import ValidationError
 from rich.text import Text
-from textual import on
 from textual.app import ComposeResult
 from textual.containers import (
     Container,
     Horizontal,
-    ScrollableContainer,
     Vertical,
 )
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, OptionList, TextArea
 
+from oterm.app.widgets.caps import Capabilities
+from oterm.app.widgets.tool_select import ToolSelector
 from oterm.ollamaclient import (
     OllamaLLM,
     jsonify_options,
     parse_format,
     parse_ollama_parameters,
 )
-from oterm.tools import available as available_tool_defs
-from oterm.types import Tool
-
-
-class OtermOllamaOptions(Options):
-    class Config:
-        extra = "forbid"
+from oterm.types import ChatModel, OtermOllamaOptions, Tool
 
 
 class ChatEdit(ModalScreen[str]):
@@ -45,6 +37,7 @@ class ChatEdit(ModalScreen[str]):
     last_highlighted_index = None
     tools: reactive[list[Tool]] = reactive([])
     edit_mode: reactive[bool] = reactive(False)
+    thinking: reactive[bool] = reactive(False)
 
     BINDINGS = [
         ("escape", "cancel", "Cancel"),
@@ -53,22 +46,25 @@ class ChatEdit(ModalScreen[str]):
 
     def __init__(
         self,
-        model: str = "",
-        system: str = "",
-        parameters: Options = Options(),
-        format="",
-        keep_alive: int = 5,
+        chat_model: ChatModel | None = None,
         edit_mode: bool = False,
-        tools: list[Tool] = [],
     ) -> None:
         super().__init__()
-        self.model_name, self.tag = model.split(":") if model else ("", "")
-        self.system = system
-        self.parameters = parameters
-        self.format = format
-        self.keep_alive = keep_alive
+
+        if chat_model is None:
+            chat_model = ChatModel()
+
+        self.chat_model = chat_model
+        self.model_name, self.tag = (
+            chat_model.model.split(":") if chat_model.model else ("", "")
+        )
+        self.system = chat_model.system or ""
+        self.parameters = chat_model.parameters
+        self.format = chat_model.format
+        self.keep_alive = chat_model.keep_alive
+        self.tools = chat_model.tools
         self.edit_mode = edit_mode
-        self.tools = tools
+        self.thinking = chat_model.thinking
 
     def _return_chat_meta(self) -> None:
         model = f"{self.model_name}:{self.tag}"
@@ -79,33 +75,43 @@ class ChatEdit(ModalScreen[str]):
         try:
             parameters = OtermOllamaOptions.model_validate_json(
                 p_area.text, strict=True
-            ).model_dump(exclude_unset=True)
+            )
+
+            if isinstance(parameters.stop, str):
+                parameters.stop = [parameters.stop]
+
         except ValidationError:
+            self.app.notify("Error validating parameters", severity="error")
             p_area = self.query_one(".parameters", TextArea)
             p_area.styles.animate("opacity", 0.0, final_value=1.0, duration=0.5)
             return
-        f_area = self.query_one(".format", TextArea)
 
-        # Try parsing the format
+        f_area = self.query_one(".format", TextArea)
         try:
             parse_format(f_area.text)
             format = f_area.text
         except Exception:
+            self.app.notify("Error parsing format", severity="error")
             f_area.styles.animate("opacity", 0.0, final_value=1.0, duration=0.5)
             return
 
-        result = json.dumps(
-            {
-                "name": model,
-                "system": system,
-                "format": format,
-                "keep_alive": keep_alive,
-                "parameters": parameters,
-                "tools": [tool.model_dump() for tool in self.tools],
-            }
+        self.tools = self.query_one(ToolSelector).selected
+        self.thinking = self.query_one("#thinking-checkbox", Checkbox).value
+
+        # Create updated chat model
+        updated_chat_model = ChatModel(
+            id=self.chat_model.id,
+            name=self.chat_model.name,
+            model=model,
+            system=system,
+            format=format,
+            parameters=parameters,
+            keep_alive=keep_alive,
+            tools=self.tools,
+            thinking=self.thinking,
         )
 
-        self.dismiss(result)
+        self.dismiss(updated_chat_model.model_dump_json(exclude_none=True))
 
     def action_cancel(self) -> None:
         self.dismiss()
@@ -130,7 +136,7 @@ class ChatEdit(ModalScreen[str]):
         option_list = self.query_one("#model-select", OptionList)
         option_list.clear_options()
         for model in models:
-            option_list.add_option(item=self.model_option(model))
+            option_list.add_option(option=self.model_option(model))
         option_list.highlighted = self.last_highlighted_index
         if self.model_name and self.tag:
             self.select_model(f"{self.model_name}:{self.tag}")
@@ -138,19 +144,6 @@ class ChatEdit(ModalScreen[str]):
         # Disable the model select widget if we are in edit mode.
         widget = self.query_one("#model-select", OptionList)
         widget.disabled = self.edit_mode
-
-    @on(Checkbox.Changed)
-    def on_tool_toggled(self, ev: Checkbox.Changed):
-        tool_name = ev.control.label
-        checked = ev.value
-        for tool_def in available_tool_defs:
-            if tool_def["tool"].function.name == str(tool_name):  # type: ignore
-                tool = tool_def["tool"]
-                if checked:
-                    self.tools.append(tool)
-                else:
-                    self.tools.remove(tool)
-                break
 
     def on_option_list_option_highlighted(
         self, option: OptionList.OptionHighlighted
@@ -184,13 +177,21 @@ class ChatEdit(ModalScreen[str]):
             # XXX Does not work as expected, there is no longer system in model_info
             widget.load_text(self.system or self.model_info.get("system", ""))
 
-            # Deduce from the model's template if the model is tool-capable.
-            tools_supported = ".Tools" in self.model_info["template"]
-            widgets = self.query(".tool")
-            for widget in widgets:
-                widget.disabled = not tools_supported
-                if not tools_supported:
-                    widget.value = False  # type: ignore
+            capabilities: list[str] = self.model_info.get("capabilities", [])
+            tools_supported = "tools" in capabilities
+            tool_selector = self.query_one(ToolSelector)
+            tool_selector.disabled = not tools_supported
+
+            thinking_checkbox = self.query_one("#thinking-checkbox", Checkbox)
+            thinking_checkbox.disabled = "thinking" not in capabilities
+
+            if "completion" in capabilities:
+                capabilities.remove("completion")  #
+            if "embedding" in capabilities:
+                capabilities.remove("embedding")
+
+            widget = self.query_one(".caps", Capabilities)
+            widget.caps = capabilities  # type: ignore
 
         # Now that there is a model selected we can save the chat.
         save_button = self.query_one("#save-btn", Button)
@@ -208,7 +209,7 @@ class ChatEdit(ModalScreen[str]):
         return Text(model)
 
     def compose(self) -> ComposeResult:
-        with Container(id="edit-chat-container"):
+        with Container(classes="screen-container full-height"):
             with Horizontal():
                 with Vertical():
                     with Horizontal(id="model-info"):
@@ -218,17 +219,13 @@ class ChatEdit(ModalScreen[str]):
                         yield Label(f"{self.tag}", classes="tag")
                         yield Label("Size:", classes="title")
                         yield Label(f"{self.size}", classes="size")
-
+                        yield Label("Caps:", classes="title")
+                        yield Capabilities([], classes="caps")
                     yield OptionList(id="model-select")
                     yield Label("Tools:", classes="title")
-                    with ScrollableContainer(id="tool-list"):
-                        for tool_def in available_tool_defs:
-                            yield Checkbox(
-                                label=f"{tool_def['tool']['function']['name']}",
-                                tooltip=f"{tool_def['tool']['function']['description']}",
-                                value=tool_def["tool"] in self.tools,
-                                classes="tool",
-                            )
+                    yield ToolSelector(
+                        id="tool-selector-container", selected=self.tools
+                    )
 
                 with Vertical():
                     yield Label("System:", classes="title")
@@ -248,10 +245,18 @@ class ChatEdit(ModalScreen[str]):
 
                     with Horizontal():
                         with Horizontal():
+                            yield Checkbox(
+                                "Thinking",
+                                id="thinking-checkbox",
+                                name="thinking",
+                                value=self.thinking,
+                            )
                             yield Label(
                                 "Keep-alive (min)", classes="title keep-alive-label"
                             )
-                            yield Input(classes="keep-alive", value="5")
+                            yield Input(
+                                classes="keep-alive", value=str(self.keep_alive)
+                            )
 
             with Horizontal(classes="button-container"):
                 yield Button(

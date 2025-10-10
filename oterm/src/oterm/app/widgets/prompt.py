@@ -63,7 +63,7 @@ class PostableTextArea(TextArea):
 class PastableInput(Input):
     BINDINGS = Input.BINDINGS + [
         Binding(
-            key="ctrl+l",
+            key="ctrl+m",
             action="toggle_multiline",
             description="multiline",
             show=True,
@@ -212,7 +212,7 @@ class FlexibleInput(Widget):
         with Horizontal():
             yield PastableInput(
                 id="promptInput",
-                placeholder="Message Ollama…",
+                placeholder="Your message…",
             )
             yield PostableTextArea(id="promptArea")
             with Horizontal(id="button-container"):

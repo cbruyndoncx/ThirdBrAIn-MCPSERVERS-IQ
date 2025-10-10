@@ -11,7 +11,6 @@ load_dotenv()
 
 
 class EnvConfig(BaseModel):
-
     ENV: str = "development"
     OLLAMA_HOST: str = "127.0.0.1:11434"
     OLLAMA_URL: str = ""
@@ -35,7 +34,7 @@ class AppConfig:
             "splash-screen": True,
         }
         try:
-            with open(self._path, "r") as f:
+            with open(self._path) as f:
                 saved = json.load(f)
                 self._data = self._data | saved
         except FileNotFoundError:
@@ -46,8 +45,8 @@ class AppConfig:
         self._data[key] = value
         self.save()
 
-    def get(self, key):
-        return self._data.get(key)
+    def get(self, key, default=None):
+        return self._data.get(key, default)
 
     def save(self):
         with open(self._path, "w") as f:
