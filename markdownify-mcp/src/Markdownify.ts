@@ -1,11 +1,12 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import fs from "fs";
 import os from "os";
 import { fileURLToPath } from "url";
+import { expandHome } from "./utils.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,15 +23,25 @@ export class Markdownify {
     uvPath: string,
   ): Promise<string> {
     const venvPath = path.join(projectRoot, ".venv");
-    const markitdownPath = path.join(venvPath, "bin", "markitdown");
+    const markitdownPath = path.join(
+      venvPath,
+      process.platform === "win32" ? "Scripts" : "bin",
+      `markitdown${process.platform === "win32" ? ".exe" : ""}`,
+    );
 
     if (!fs.existsSync(markitdownPath)) {
       throw new Error("markitdown executable not found");
     }
 
-    const { stdout, stderr } = await execAsync(
-      `${uvPath} run ${markitdownPath} "${filePath}"`,
-    );
+    // Expand tilde in uvPath if present
+    const expandedUvPath = expandHome(uvPath);
+
+    // Use execFile to prevent command injection
+    const { stdout, stderr } = await execFileAsync(expandedUvPath, [
+      "run",
+      markitdownPath,
+      filePath,
+    ]);
 
     if (stderr) {
       throw new Error(`Error executing command: ${stderr}`);
@@ -39,13 +50,25 @@ export class Markdownify {
     return stdout;
   }
 
-  private static async saveToTempFile(content: string): Promise<string> {
+  private static async saveToTempFile(
+    content: string | Buffer,
+    suggestedExtension?: string | null,
+  ): Promise<string> {
+    let outputExtension = "md";
+    if (suggestedExtension != null) {
+      outputExtension = suggestedExtension;
+    }
+
     const tempOutputPath = path.join(
       os.tmpdir(),
-      `markdown_output_${Date.now()}.md`,
+      `markdown_output_${Date.now()}.${outputExtension}`,
     );
     fs.writeFileSync(tempOutputPath, content);
     return tempOutputPath;
+  }
+
+  private static normalizePath(p: string): string {
+    return path.normalize(p);
   }
 
   static async toMarkdown({
@@ -65,8 +88,17 @@ export class Markdownify {
 
       if (url) {
         const response = await fetch(url);
-        const content = await response.text();
-        inputPath = await this.saveToTempFile(content);
+
+        let extension = null;
+
+        if (url.endsWith(".pdf")) {
+          extension = "pdf";
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const content = Buffer.from(arrayBuffer);
+
+        inputPath = await this.saveToTempFile(content, extension);
         isTemporary = true;
       } else if (filePath) {
         inputPath = filePath;
@@ -96,6 +128,22 @@ export class Markdownify {
   }: {
     filePath: string;
   }): Promise<MarkdownResult> {
+    // Check file type is *.md or *.markdown
+    const normPath = this.normalizePath(path.resolve(expandHome(filePath)));
+    const markdownExt = [".md", ".markdown"];
+    if (!markdownExt.includes(path.extname(normPath))) {
+      throw new Error("Required file is not a Markdown file.");
+    }
+
+    if (process.env?.MD_SHARE_DIR) {
+      const allowedShareDir = this.normalizePath(
+        path.resolve(expandHome(process.env.MD_SHARE_DIR)),
+      );
+      if (!normPath.startsWith(allowedShareDir)) {
+        throw new Error(`Only files in ${allowedShareDir} are allowed.`);
+      }
+    }
+
     if (!fs.existsSync(filePath)) {
       throw new Error("File does not exist");
     }
