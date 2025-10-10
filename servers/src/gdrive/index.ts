@@ -191,7 +191,7 @@ async function authenticateAndSaveCredentials() {
     scopes: ["https://www.googleapis.com/auth/drive.readonly"],
   });
   fs.writeFileSync(credentialsPath, JSON.stringify(auth.credentials));
-  console.log("Credentials saved. You can now run the server.");
+  console.log("Credentials saved in " + credentialsPath + " You can now run the server.");
 }
 
 async function loadCredentialsAndRunServer() {
