@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/mokafari/orchestrator-server.git
 	branch = main
-	commit = e07c2bd8d86d39ffa2f3d6886d6143230d09c66a
-	parent = d842992412d8350de21d8f91d908e4b802108eb0
+	commit = 7bc7fe698304a80e474e4816b981848724740829
+	parent = 595038d2f7ee1fa6ea58c55c3e1560e90bfb7f10
 	method = merge
 	cmdver = 0.4.9
