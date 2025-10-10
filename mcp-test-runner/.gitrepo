@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/privsim/mcp-test-runner.git
 	branch = main
-	commit = 6aa4e06af8ffb01480503454cdaa21009ee8c537
-	parent = 4832035c8ed9a72707fb69b3599507e982effd30
+	commit = 1240ea244ddba30f421ae98868e8f4f1ff38dce5
+	parent = 3f2bfbebde10c8c5fa993dddb6287ab21479a487
 	method = merge
 	cmdver = 0.4.9
