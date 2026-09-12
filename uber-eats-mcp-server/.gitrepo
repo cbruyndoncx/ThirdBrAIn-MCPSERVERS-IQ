@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/ericzakariasson/uber-eats-mcp-server.git
+	branch = main
+	commit = ba475ebd9343dc771addd22ecbd19420a8d7534b
+	parent = 9c9816bb3575d6e3f7cb77d46d3a2ece388c54b9
+	method = merge
+	cmdver = 0.4.9
