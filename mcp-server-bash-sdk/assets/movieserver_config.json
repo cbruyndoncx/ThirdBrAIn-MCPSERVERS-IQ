@@ -1,0 +1,15 @@
+{
+  "supportedVersions": ["2026-07-28"],
+  "serverInfo": {
+    "name": "MovieServer",
+    "version": "0.3.0"
+  },
+  "capabilities": {
+    "tools": {
+      "listChanged": false
+    }
+  },
+  "ttlMs": 3600000,
+  "cacheScope": "public",
+  "instructions": "This server provides movie information and ticket booking. Call get_movies to see what is playing, validate_age before booking a rated film, then book_ticket."
+}
