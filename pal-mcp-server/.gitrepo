@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/BeehiveInnovations/pal-mcp-server.git
+	branch = main
+	commit = 7afc7c1cc96e23992c8f105f960132c657883bb1
+	parent = 9ee8f40a4e95b9403c59487c2791e4d26d1d3cda
+	method = merge
+	cmdver = 0.4.9
