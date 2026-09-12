@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/PrefectHQ/fastmcp.git
+	branch = main
+	commit = 58d903c84b0a3fe7596a15f9810ac138bda713dd
+	parent = 7d7ab707298918a6b0419ed805b390a00f3e6a18
+	method = merge
+	cmdver = 0.4.9
