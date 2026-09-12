@@ -1,0 +1,417 @@
+/**
+ * Location: src/services/embeddings/NoteEmbeddingService.ts
+ * Purpose: Domain service for note-level embedding operations.
+ *
+ * Handles embedding, searching, and managing embeddings for vault notes.
+ * Each note gets a single embedding (no chunking) stored in the note_embeddings
+ * vec0 table with metadata in embedding_metadata.
+ *
+ * Features:
+ * - Note-level embeddings (one per note, no chunking)
+ * - Content hash for change detection (skip re-embedding unchanged notes)
+ * - Semantic search with heuristic re-ranking (recency + title match)
+ * - Find similar notes by embedding distance
+ * - Path updates for rename operations
+ *
+ * Relationships:
+ * - Used by EmbeddingService (facade) which delegates note operations here
+ * - Uses EmbeddingEngine for generating embeddings
+ * - Uses SQLiteCacheManager for vector storage
+ * - Uses shared utilities from EmbeddingUtils.ts
+ */
+
+import { App, TFile } from 'obsidian';
+import type { EmbeddingEngine } from './EmbeddingEngine';
+import { preprocessContent, hashContent } from './EmbeddingUtils';
+import type { SQLiteCacheManager } from '../../database/storage/SQLiteCacheManager';
+import type { QueryParams } from '../../database/repositories/base/BaseRepository';
+import { EmbeddingAdapter, type QueryAdapter } from './adapter/EmbeddingAdapter';
+
+const asQueryParams = (params: unknown[]): QueryParams => params as unknown as QueryParams;
+
+/**
+ * True when an error means the note is no longer at the path we read.
+ *
+ * `embedNote` already checks the vault index before reading, but the index and
+ * the filesystem disagree for a moment while a file is being moved, so the
+ * guard can pass and the read still fail. Re-embedding is debounced by ten
+ * seconds, which makes that window easy to hit: create a note and move or
+ * delete it shortly after and the timer fires against the old path.
+ *
+ * That is a normal outcome rather than a failure. The vault's rename and
+ * delete handlers own re-pointing and removing the embedding, so there is
+ * nothing here to repair and nothing worth reporting.
+ */
+function isMissingFileError(error: unknown): boolean {
+  if (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT') {
+    return true;
+  }
+  return error instanceof Error && /ENOENT|no such file or directory/i.test(error.message);
+}
+
+export interface SimilarNote {
+  notePath: string;
+  distance: number;
+}
+
+/**
+ * Escape character used for the `LIKE` patterns built from caller path scopes.
+ *
+ * Vault folders legitimately contain `%` and `_` (`_Base/` is a real example),
+ * both of which are LIKE wildcards. Without an ESCAPE clause `_Base%` would
+ * also match `xBase/…`, quietly widening the very scope the caller asked to
+ * narrow.
+ */
+const LIKE_ESCAPE = '\\';
+
+function escapeLikeLiteral(value: string): string {
+  return value.replace(/[\\%_]/g, character => LIKE_ESCAPE + character);
+}
+
+/**
+ * Build the optional `WHERE` clause that confines the candidate scan to a set
+ * of path prefixes.
+ *
+ * The clause is deliberately a SUPERSET of what the caller ultimately wants: it
+ * matches on `startsWith` semantics only, so a caller scoping to `_Base` still
+ * sees `_Baseball/` rows here. Anchoring to a folder boundary — and matching
+ * globs that do not reduce to a prefix at all — stays with the caller's own
+ * second pass. The job of this clause is narrower: keep the `ORDER BY distance
+ * LIMIT n` candidate window from being spent entirely on rows that are out of
+ * scope, which is what made a scoped search return nothing.
+ *
+ * An empty prefix means "anywhere in the vault". Because the prefixes are OR'd,
+ * a single unbounded entry makes the whole union unbounded, so scoping is
+ * dropped rather than applied partially.
+ */
+function buildPathPrefixScope(pathPrefixes?: string[]): { where: string; params: string[] } {
+  if (!pathPrefixes || pathPrefixes.length === 0) {
+    return { where: '', params: [] };
+  }
+
+  if (pathPrefixes.some(prefix => prefix.length === 0)) {
+    return { where: '', params: [] };
+  }
+
+  const clauses = pathPrefixes.map(() => `em.notePath LIKE ? ESCAPE '${LIKE_ESCAPE}'`);
+  return {
+    where: `WHERE ${clauses.join(' OR ')}`,
+    params: pathPrefixes.map(prefix => `${escapeLikeLiteral(prefix)}%`)
+  };
+}
+
+export class NoteEmbeddingService {
+  private app: App;
+  private db: SQLiteCacheManager;
+  private engine: EmbeddingEngine;
+  /** Query-side learned transform; identity by default (no behavior change). */
+  private queryAdapter: QueryAdapter;
+
+  constructor(app: App, db: SQLiteCacheManager, engine: EmbeddingEngine, queryAdapter?: QueryAdapter) {
+    this.app = app;
+    this.db = db;
+    this.engine = engine;
+    this.queryAdapter = queryAdapter ?? EmbeddingAdapter.identity();
+  }
+
+  /** Swap the query-side adapter (e.g. after the dream job trains a new one). */
+  setQueryAdapter(adapter: QueryAdapter): void {
+    this.queryAdapter = adapter;
+  }
+
+  /**
+   * Embed a single note (or update if content changed)
+   *
+   * @param notePath - Path to the note
+   */
+  async embedNote(notePath: string): Promise<void> {
+    try {
+      const file = this.app.vault.getAbstractFileByPath(notePath);
+      if (!file || !(file instanceof TFile)) {
+        // File doesn't exist - remove stale embedding
+        await this.removeEmbedding(notePath);
+        return;
+      }
+
+      // Only process markdown files
+      if (file.extension !== 'md') {
+        return;
+      }
+
+      const content = await this.app.vault.read(file);
+      const processedContent = preprocessContent(content);
+
+      // Skip empty notes
+      if (!processedContent) {
+        return;
+      }
+
+      const contentHash = hashContent(processedContent);
+
+      // Check if already up to date
+      const existing = await this.db.queryOne<{ rowid: number; contentHash: string }>(
+        'SELECT rowid, contentHash FROM embedding_metadata WHERE notePath = ?',
+        [notePath]
+      );
+
+      if (existing && existing.contentHash === contentHash) {
+        return; // Already current
+      }
+
+      // Generate embedding
+      const embedding = await this.engine.generateEmbedding(processedContent);
+      // Convert Float32Array to Buffer for SQLite BLOB binding
+      const embeddingBuffer = Buffer.from(embedding.buffer);
+
+      const now = Date.now();
+      const modelInfo = this.engine.getModelInfo();
+
+      // Insert or update
+      if (existing) {
+        // Update existing - vec0 tables need direct buffer, no vec_f32() function
+        await this.db.run(
+          'UPDATE note_embeddings SET embedding = ? WHERE rowid = ?',
+          asQueryParams([embeddingBuffer, existing.rowid])
+        );
+        await this.db.run(
+          'UPDATE embedding_metadata SET contentHash = ?, updated = ?, model = ? WHERE rowid = ?',
+          [contentHash, now, modelInfo.id, existing.rowid]
+        );
+      } else {
+        // Insert new - vec0 auto-generates rowid, we get it after insert
+        await this.db.run(
+          'INSERT INTO note_embeddings(embedding) VALUES (?)',
+          asQueryParams([embeddingBuffer])
+        );
+        const result = await this.db.queryOne<{ id: number }>('SELECT last_insert_rowid() as id');
+        const rowid = result?.id ?? 0;
+
+        await this.db.run(
+          `INSERT INTO embedding_metadata(rowid, notePath, model, contentHash, created, updated)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [rowid, notePath, modelInfo.id, contentHash, now, now]
+        );
+      }
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        // The note moved or was deleted between scheduling and now.
+        return;
+      }
+
+      // Deliberately not logged here. Every caller — EmbeddingWatcher,
+      // IndexingQueue — already reports failures with its own context, so
+      // logging and rethrowing printed each one twice, with two stacks.
+      throw error;
+    }
+  }
+
+  /**
+   * Find notes similar to a given note
+   *
+   * @param notePath - Path to the reference note
+   * @param limit - Maximum number of results (default: 10)
+   * @returns Array of similar notes with distance scores
+   */
+  async findSimilarNotes(notePath: string, limit = 10): Promise<SimilarNote[]> {
+    try {
+      // First get the embedding for the source note
+      const sourceEmbed = await this.db.queryOne<{ embedding: Buffer }>(
+        `SELECT ne.embedding FROM note_embeddings ne
+         JOIN embedding_metadata em ON em.rowid = ne.rowid
+         WHERE em.notePath = ?`,
+        [notePath]
+      );
+
+      if (!sourceEmbed) {
+        return [];
+      }
+
+      // Then find similar notes using vec_distance_l2
+      const results = await this.db.query<SimilarNote>(`
+        SELECT
+          em.notePath,
+          vec_distance_l2(ne.embedding, ?) as distance
+        FROM note_embeddings ne
+        JOIN embedding_metadata em ON em.rowid = ne.rowid
+        WHERE em.notePath != ?
+        ORDER BY distance
+        LIMIT ?
+      `, asQueryParams([sourceEmbed.embedding, notePath, limit]));
+
+      return results;
+    } catch (error) {
+      console.error('[NoteEmbeddingService] Failed to find similar notes:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Semantic search for notes by query text.
+   * Applies heuristic re-ranking (Recency + Title Match).
+   *
+   * @param query - Search query
+   * @param limit - Maximum number of results (default: 10)
+   * @param pathPrefixes - Optional path prefixes to confine the candidate scan
+   *   to. Omitted (the default) searches the whole vault, so existing callers
+   *   are unaffected.
+   * @returns Array of matching notes with distance scores
+   */
+  async semanticSearch(query: string, limit = 10, pathPrefixes?: string[]): Promise<SimilarNote[]> {
+    try {
+      // Generate query embedding, then apply the query-side adapter.
+      // Identity adapter returns the vector untouched (zero behavior change).
+      const queryEmbedding = await this.engine.generateEmbedding(query);
+      const adaptedQuery = this.queryAdapter.transform(queryEmbedding);
+      const queryBuffer = Buffer.from(adaptedQuery.buffer);
+
+      // 1. FETCH CANDIDATES
+      // Fetch 3x the limit to allow for re-ranking
+      const candidateLimit = limit * 3;
+
+      // The scope has to be IN the query. This window is `ORDER BY distance
+      // LIMIT n` over the whole vault, so filtering its output afterwards is
+      // not a filter at all — it is a filter applied to whatever the global
+      // ranking happened to leave behind. Notes under a requested folder that
+      // rank below the window are simply never seen, and the caller gets an
+      // empty list indistinguishable from "nothing matches" (#323).
+      const scope = buildPathPrefixScope(pathPrefixes);
+
+      const candidates = await this.db.query<{ notePath: string; distance: number; updated: number }>(`
+        SELECT
+          em.notePath,
+          em.updated,
+          vec_distance_l2(ne.embedding, ?) as distance
+        FROM note_embeddings ne
+        JOIN embedding_metadata em ON em.rowid = ne.rowid
+        ${scope.where}
+        ORDER BY distance
+        LIMIT ?
+      `, asQueryParams([queryBuffer, ...scope.params, candidateLimit]));
+
+      // 2. RE-RANKING LOGIC
+      const now = Date.now();
+      const oneDayMs = 1000 * 60 * 60 * 24;
+      const queryLower = query.toLowerCase();
+      const queryTerms = queryLower.split(/\s+/).filter(t => t.length > 2);
+
+      const ranked = candidates.map(item => {
+        let score = item.distance;
+
+        // --- A. Recency Boost ---
+        // Boost notes modified in the last 30 days
+        const daysSinceUpdate = (now - item.updated) / oneDayMs;
+        if (daysSinceUpdate < 30) {
+          // Linear decay: 0 days = 15% boost, 30 days = 0% boost
+          const recencyBoost = 0.15 * (1 - (daysSinceUpdate / 30));
+          score = score * (1 - recencyBoost);
+        }
+
+        // --- B. Title/Path Boost ---
+        // If query terms appear in the file path, give a significant boost
+        const pathLower = item.notePath.toLowerCase();
+
+        // Exact filename match (strongest)
+        if (pathLower.includes(queryLower)) {
+          score = score * 0.8; // 20% boost
+        }
+        // Partial term match
+        else if (queryTerms.some(term => pathLower.includes(term))) {
+          score = score * 0.9; // 10% boost
+        }
+
+        return {
+          notePath: item.notePath,
+          distance: score,
+          originalDistance: item.distance
+        };
+      });
+
+      // 3. SORT & SLICE
+      ranked.sort((a, b) => a.distance - b.distance);
+
+      return ranked.slice(0, limit);
+    } catch (error) {
+      console.error('[NoteEmbeddingService] Semantic search failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Fetch the stored (document-side) embedding vector for a note, if present.
+   * Used by the retrieval-feedback miner to build training candidates without
+   * re-embedding. Returns the raw stored vector (no query adapter applied).
+   */
+  async getNoteVector(notePath: string): Promise<Float32Array | null> {
+    try {
+      const row = await this.db.queryOne<{ embedding: Uint8Array }>(
+        `SELECT ne.embedding FROM note_embeddings ne
+         JOIN embedding_metadata em ON em.rowid = ne.rowid
+         WHERE em.notePath = ?`,
+        [notePath]
+      );
+      if (!row?.embedding) {
+        return null;
+      }
+      const buf = row.embedding;
+      return new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4));
+    } catch (error) {
+      console.error(`[NoteEmbeddingService] Failed to read vector for ${notePath}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Remove embedding for a note
+   *
+   * @param notePath - Path to the note
+   */
+  async removeEmbedding(notePath: string): Promise<void> {
+    try {
+      const existing = await this.db.queryOne<{ rowid: number }>(
+        'SELECT rowid FROM embedding_metadata WHERE notePath = ?',
+        [notePath]
+      );
+
+      if (existing) {
+        await this.db.run('DELETE FROM note_embeddings WHERE rowid = ?', [existing.rowid]);
+        await this.db.run('DELETE FROM embedding_metadata WHERE rowid = ?', [existing.rowid]);
+      }
+    } catch (error) {
+      console.error(`[NoteEmbeddingService] Failed to remove embedding for ${notePath}:`, error);
+    }
+  }
+
+  /**
+   * Update note path (for rename operations)
+   *
+   * @param oldPath - Old note path
+   * @param newPath - New note path
+   */
+  async updatePath(oldPath: string, newPath: string): Promise<void> {
+    try {
+      await this.db.run(
+        'UPDATE embedding_metadata SET notePath = ? WHERE notePath = ?',
+        [newPath, oldPath]
+      );
+    } catch (error) {
+      console.error(`[NoteEmbeddingService] Failed to update path ${oldPath} -> ${newPath}:`, error);
+    }
+  }
+
+  /**
+   * Get note embedding statistics
+   *
+   * @returns Count of embedded notes
+   */
+  async getNoteStats(): Promise<number> {
+    try {
+      const result = await this.db.queryOne<{ count: number }>(
+        'SELECT COUNT(*) as count FROM embedding_metadata'
+      );
+      return result?.count ?? 0;
+    } catch (error) {
+      console.error('[NoteEmbeddingService] Failed to get stats:', error);
+      return 0;
+    }
+  }
+}

@@ -1,0 +1,499 @@
+import { BaseAgent } from '../baseAgent';
+import {
+  ListPromptsTool,
+  GetPromptTool,
+  CreatePromptTool,
+  UpdatePromptTool,
+  ArchivePromptTool,
+  ListModelsTool,
+  ExecutePromptsTool,
+  GenerateAudioTool,
+  GenerateImageTool,
+  GenerateVideoTool,
+  CheckGeneratedArtifactTool,
+  SubagentTool,
+} from './tools';
+import type { SubagentExecutor } from '../../services/chat/SubagentExecutor';
+import type { SubagentToolContext } from './tools/subagent';
+import { CustomPromptStorageService } from './services/CustomPromptStorageService';
+import { Settings } from '../../settings';
+import { sanitizeVaultName } from '../../utils/vaultUtils';
+import { getErrorMessage } from '../../utils/errorUtils';
+import { LLMProviderManager } from '../../services/llm/providers/ProviderManager';
+import { AgentManager } from '../../services/AgentManager';
+import { UsageTracker } from '../../services/UsageTracker';
+import { App, Vault, EventRef } from 'obsidian';
+import { LLMSettingsNotifier } from '../../services/llm/LLMSettingsNotifier';
+import { LLMProviderSettings } from '../../types';
+import type { MigratableDatabase } from '../../database/schema/SchemaMigrator';
+import { resolveVaultRoot } from '../../database/storage/VaultRootResolver';
+
+/**
+ * PromptManager Agent for custom prompt operations
+ */
+export class PromptManagerAgent extends BaseAgent {
+  /**
+   * Custom prompt storage service
+   */
+  private storageService: CustomPromptStorageService;
+
+  /**
+   * Vault name for multi-vault support
+   */
+  private vaultName: string;
+
+  /**
+   * Flag to prevent infinite recursion in description getter
+   */
+  private isGettingDescription = false;
+
+  /**
+   * LLM Provider Manager for model operations
+   */
+  private readonly providerManager: LLMProviderManager;
+
+  /**
+   * Agent Manager for inter-agent communication
+   */
+  private readonly parentAgentManager: AgentManager;
+
+  /**
+   * Usage Tracker for LLM cost tracking
+   */
+  private readonly usageTracker: UsageTracker;
+
+  /**
+   * App instance for file operations (e.g., findReplace)
+   */
+  private readonly app: App;
+
+  /**
+   * Vault instance for image generation
+   */
+  private readonly vault: Vault;
+
+  /**
+   * Settings manager for provider/app-backed generation defaults
+   */
+  private readonly settings: Settings;
+
+  /**
+   * EventRef for settings change listener (Obsidian Events API)
+   */
+  private settingsEventRef: EventRef | null = null;
+
+  /**
+   * Subagent tool - stored for later executor wiring
+   */
+  private subagentTool: SubagentTool;
+
+  /**
+   * Create a new PromptManagerAgent with dependency injection
+   * @param settings Settings instance for prompt storage
+   * @param providerManager LLM Provider Manager for model operations
+   * @param parentAgentManager Agent Manager for inter-agent communication
+   * @param usageTracker Usage Tracker for LLM cost tracking
+   * @param vault Vault instance for image generation
+   * @param db Database instance for SQLite-based prompt storage (optional)
+   */
+  constructor(
+    settings: Settings,
+    providerManager: LLMProviderManager,
+    parentAgentManager: AgentManager,
+    usageTracker: UsageTracker,
+    app: App,
+    vault: Vault,
+    db?: MigratableDatabase | null
+  ) {
+    super(
+      'promptManager',
+      'Manage custom prompts for personalized AI interactions',
+      '1.0.0'
+    );
+
+    // Store injected dependencies
+    this.settings = settings;
+    this.providerManager = providerManager;
+    this.parentAgentManager = parentAgentManager;
+    this.usageTracker = usageTracker;
+    this.app = app;
+    this.vault = vault;
+
+    this.storageService = new CustomPromptStorageService(db || null, settings);
+    this.vaultName = sanitizeVaultName(vault.getName());
+
+    // Register prompt management tools - lazy loaded
+    this.registerLazyTool({
+      slug: 'list', name: 'List Prompts',
+      description: 'List all custom prompts',
+      version: '1.0.0',
+      factory: () => new ListPromptsTool(this.storageService),
+    });
+    this.registerLazyTool({
+      slug: 'get', name: 'Get Prompt',
+      description: 'Get a custom prompt for persona adoption - does NOT execute tasks automatically',
+      version: '1.0.0',
+      factory: () => new GetPromptTool(this.storageService),
+    });
+    this.registerLazyTool({
+      slug: 'create', name: 'Create Prompt',
+      description: 'Create a new custom prompt',
+      version: '1.0.0',
+      factory: () => new CreatePromptTool(this.storageService),
+    });
+    this.registerLazyTool({
+      slug: 'update', name: 'Update Prompt',
+      description: 'Update an existing custom prompt',
+      version: '1.0.0',
+      factory: () => new UpdatePromptTool(this.storageService),
+    });
+    this.registerLazyTool({
+      slug: 'archive', name: 'Archive Prompt',
+      description: 'Archive a custom prompt by disabling it (preserves configuration for restoration)',
+      version: '1.0.0',
+      factory: () => new ArchivePromptTool(this.storageService),
+    });
+
+    // Register LLM tools - lazy loaded
+    this.registerLazyTool({
+      slug: 'listModels', name: 'List Available Models',
+      description: 'List available LLM models grouped by provider',
+      version: '2.0.0',
+      factory: () => new ListModelsTool(this.providerManager),
+    });
+
+    // Register unified prompt execution tool (handles single and batch) - eager (complex dependencies)
+    this.registerTool(new ExecutePromptsTool(
+      this.app,
+      this.providerManager.getLLMService(),
+      this.providerManager,
+      this.parentAgentManager,
+      this.storageService
+    ));
+
+    // Register image generation tool only if an image-capable provider key is configured
+    const llmProviders = settings.settings.llmProviders;
+    const hasGoogleKey = llmProviders?.providers?.google?.apiKey && llmProviders?.providers?.google?.enabled;
+    const hasOpenAIKey = llmProviders?.providers?.openai?.apiKey && llmProviders?.providers?.openai?.enabled;
+    const hasOpenRouterKey = llmProviders?.providers?.openrouter?.apiKey && llmProviders?.providers?.openrouter?.enabled;
+
+    if (hasGoogleKey || hasOpenAIKey || hasOpenRouterKey) {
+      this.registerLazyTool({
+        slug: 'generateImage', name: 'Generate Image',
+        description: 'Generate images with Google Nano Banana, OpenAI GPT Image, or any OpenRouter image model. Supports reference images for style/composition guidance.',
+        version: '2.1.0',
+        factory: () => new GenerateImageTool({
+          vault: this.vault,
+          llmSettings: llmProviders
+        }),
+      });
+    }
+
+    if (this.shouldHaveGenerateAudio(llmProviders)) {
+      this.registerLazyTool({
+        slug: 'generateAudio', name: 'Generate Audio',
+        description: 'Generate audio files in the vault. Supports voice mode using configured Voice settings, OpenAI, ElevenLabs, Google, Mistral, or OpenRouter speech.',
+        version: '1.0.0',
+        factory: () => new GenerateAudioTool({
+          app: this.app,
+          vault: this.vault,
+          llmSettings: this.settings.settings.llmProviders ?? null,
+          appsSettings: this.settings.settings.apps
+        }),
+      });
+    }
+
+    if (this.shouldHaveGenerateVideo(llmProviders)) {
+      const artifactJobsPath = this.getArtifactJobsPath();
+      this.registerLazyTool({
+        slug: 'generateVideo', name: 'Generate Video',
+        description: 'Generate text-to-video MP4 files in the vault using Google Veo or OpenRouter video models.',
+        version: '1.0.0',
+        factory: () => new GenerateVideoTool({
+          app: this.app,
+          vault: this.vault,
+          llmSettings: this.settings.settings.llmProviders ?? null,
+          artifactJobsPath,
+        }),
+      });
+
+      this.registerLazyTool({
+        slug: 'checkGeneratedArtifact', name: 'Check Generated Artifact',
+        description: 'Check a previously timed-out generated artifact job and save the completed output to its requested vault path.',
+        version: '1.0.0',
+        factory: () => new CheckGeneratedArtifactTool({
+          app: this.app,
+          vault: this.vault,
+          llmSettings: this.settings.settings.llmProviders ?? null,
+          artifactJobsPath,
+        }),
+      });
+    }
+
+    // Register subagent tool (internal chat only - executor wired up separately)
+    // Supports both spawn and cancel actions via action parameter
+    this.subagentTool = new SubagentTool();
+    this.registerTool(this.subagentTool);
+
+    // Subscribe to settings changes to dynamically register/unregister tools (Obsidian Events API)
+    this.settingsEventRef = LLMSettingsNotifier.onSettingsChanged((newSettings) => {
+      this.handleSettingsChange(newSettings);
+    });
+  }
+
+  /**
+   * Handle LLM provider settings changes
+   * Dynamically registers/unregisters GenerateImageTool based on API key availability
+   */
+  private handleSettingsChange(settings: LLMProviderSettings): void {
+    const hasGoogleKey = settings.providers?.google?.apiKey && settings.providers?.google?.enabled;
+    const hasOpenRouterKey = settings.providers?.openrouter?.apiKey && settings.providers?.openrouter?.enabled;
+    const shouldHaveGenerateImage = hasGoogleKey || hasOpenRouterKey;
+    const hasGenerateImage = this.hasTool('generateImage');
+    const shouldHaveGenerateAudio = this.shouldHaveGenerateAudio(settings);
+    const hasGenerateAudio = this.hasTool('generateAudio');
+    const shouldHaveGenerateVideo = this.shouldHaveGenerateVideo(settings);
+    const hasGenerateVideo = this.hasTool('generateVideo');
+    const hasCheckGeneratedArtifact = this.hasTool('checkGeneratedArtifact');
+
+    if (shouldHaveGenerateImage && !hasGenerateImage) {
+      // Register the tool - API key now available
+      this.registerTool(new GenerateImageTool({
+        vault: this.vault,
+        llmSettings: settings
+      }));
+    } else if (!shouldHaveGenerateImage && hasGenerateImage) {
+      // Unregister the tool - API key removed
+      this.unregisterTool('generateImage');
+    } else if (shouldHaveGenerateImage && hasGenerateImage) {
+      // Update the existing tool with new settings
+      this.unregisterTool('generateImage');
+      this.registerTool(new GenerateImageTool({
+        vault: this.vault,
+        llmSettings: settings
+      }));
+    }
+
+    if (shouldHaveGenerateAudio && !hasGenerateAudio) {
+      this.registerTool(new GenerateAudioTool({
+        app: this.app,
+        vault: this.vault,
+        llmSettings: settings,
+        appsSettings: this.settings.settings.apps
+      }));
+    } else if (!shouldHaveGenerateAudio && hasGenerateAudio) {
+      this.unregisterTool('generateAudio');
+    } else if (shouldHaveGenerateAudio && hasGenerateAudio) {
+      this.unregisterTool('generateAudio');
+      this.registerTool(new GenerateAudioTool({
+        app: this.app,
+        vault: this.vault,
+        llmSettings: settings,
+        appsSettings: this.settings.settings.apps
+      }));
+    }
+
+    if (shouldHaveGenerateVideo && !hasGenerateVideo) {
+      const artifactJobsPath = this.getArtifactJobsPath();
+      this.registerTool(new GenerateVideoTool({
+        app: this.app,
+        vault: this.vault,
+        llmSettings: settings,
+        artifactJobsPath
+      }));
+    } else if (!shouldHaveGenerateVideo && hasGenerateVideo) {
+      this.unregisterTool('generateVideo');
+    } else if (shouldHaveGenerateVideo && hasGenerateVideo) {
+      const artifactJobsPath = this.getArtifactJobsPath();
+      this.unregisterTool('generateVideo');
+      this.registerTool(new GenerateVideoTool({
+        app: this.app,
+        vault: this.vault,
+        llmSettings: settings,
+        artifactJobsPath
+      }));
+    }
+
+    if (shouldHaveGenerateVideo && !hasCheckGeneratedArtifact) {
+      const artifactJobsPath = this.getArtifactJobsPath();
+      this.registerTool(new CheckGeneratedArtifactTool({
+        app: this.app,
+        vault: this.vault,
+        llmSettings: settings,
+        artifactJobsPath
+      }));
+    } else if (!shouldHaveGenerateVideo && hasCheckGeneratedArtifact) {
+      this.unregisterTool('checkGeneratedArtifact');
+    } else if (shouldHaveGenerateVideo && hasCheckGeneratedArtifact) {
+      const artifactJobsPath = this.getArtifactJobsPath();
+      this.unregisterTool('checkGeneratedArtifact');
+      this.registerTool(new CheckGeneratedArtifactTool({
+        app: this.app,
+        vault: this.vault,
+        llmSettings: settings,
+        artifactJobsPath
+      }));
+    }
+  }
+
+  private getArtifactJobsPath(): string {
+    const resolution = resolveVaultRoot(this.settings.settings, {
+      configDir: this.app.vault.configDir
+    });
+    return `${resolution.dataPath}/artifact-jobs.jsonl`;
+  }
+
+  private shouldHaveGenerateAudio(settings: LLMProviderSettings | undefined): boolean {
+    const openAIConfig = settings?.providers?.openai;
+    const hasOpenAISpeech = openAIConfig?.enabled === true && !!openAIConfig.apiKey?.trim();
+    const googleConfig = settings?.providers?.google;
+    const hasGoogleSpeech = googleConfig?.enabled === true && !!googleConfig.apiKey?.trim();
+    const mistralConfig = settings?.providers?.mistral;
+    const hasMistralSpeech = mistralConfig?.enabled === true && !!mistralConfig.apiKey?.trim();
+    const openRouterConfig = settings?.providers?.openrouter;
+    const hasOpenRouterSpeech = openRouterConfig?.enabled === true && !!openRouterConfig.apiKey?.trim();
+    const elevenLabsConfig = this.settings.settings.apps?.apps.elevenlabs;
+    const hasElevenLabsSpeech = elevenLabsConfig?.enabled === true && !!elevenLabsConfig.credentials.apiKey?.trim();
+    return hasOpenAISpeech || hasGoogleSpeech || hasMistralSpeech || hasOpenRouterSpeech || hasElevenLabsSpeech;
+  }
+
+  private shouldHaveGenerateVideo(settings: LLMProviderSettings | undefined): boolean {
+    const googleConfig = settings?.providers?.google;
+    const hasGoogleVideo = googleConfig?.enabled === true && !!googleConfig.apiKey?.trim();
+    const openRouterConfig = settings?.providers?.openrouter;
+    const hasOpenRouterVideo = openRouterConfig?.enabled === true && !!openRouterConfig.apiKey?.trim();
+    return hasGoogleVideo || hasOpenRouterVideo;
+  }
+
+  /**
+   * Clean up resources when the agent is unloaded
+   */
+  onunload(): void {
+    // Unsubscribe from settings changes (Obsidian Events API)
+    if (this.settingsEventRef) {
+      LLMSettingsNotifier.unsubscribe(this.settingsEventRef);
+      this.settingsEventRef = null;
+    }
+  }
+
+  /**
+   * Dynamic description that includes information about custom prompts
+   */
+  get description(): string {
+    const baseDescription = 'Manage custom prompts for personalized AI interactions';
+
+    // Prevent infinite recursion
+    if (this.isGettingDescription) {
+      return `[${this.vaultName}] ${baseDescription}`;
+    }
+
+    this.isGettingDescription = true;
+    try {
+      const customPromptsContext = this.getPromptsSummary();
+      return `[${this.vaultName}] ${baseDescription}\n\n${customPromptsContext}`;
+    } finally {
+      this.isGettingDescription = false;
+    }
+  }
+  
+  /**
+   * Get the storage service for direct access if needed
+   * @returns CustomPromptStorageService instance
+   */
+  getStorageService(): CustomPromptStorageService {
+    return this.storageService;
+  }
+
+  /**
+   * Get the LLM Provider Manager
+   * @returns LLM Provider Manager instance
+   */
+  getProviderManager(): LLMProviderManager {
+    return this.providerManager;
+  }
+
+  /**
+   * Get the Usage Tracker
+   * @returns Usage Tracker instance
+   */
+  getUsageTracker(): UsageTracker {
+    return this.usageTracker;
+  }
+
+  /**
+   * Get the parent Agent Manager
+   * @returns Agent Manager instance
+   */
+  getParentAgentManager(): AgentManager {
+    return this.parentAgentManager;
+  }
+
+  /**
+   * Get the Vault instance
+   * @returns Vault instance
+   */
+  getVault(): Vault {
+    return this.vault;
+  }
+
+  /**
+   * Wire up the SubagentExecutor to the subagent tool
+   * Called after the executor is created (typically in ChatView or ChatService)
+   * @param executor The SubagentExecutor instance
+   * @param contextProvider Function that provides execution context
+   */
+  setSubagentExecutor(
+    executor: SubagentExecutor,
+    contextProvider: () => SubagentToolContext
+  ): void {
+    this.subagentTool.setSubagentExecutor(executor);
+    this.subagentTool.setContextProvider(contextProvider);
+  }
+
+  /**
+   * Get the SubagentTool instance for external access
+   * @returns SubagentTool instance
+   */
+  getSubagentTool(): SubagentTool {
+    return this.subagentTool;
+  }
+
+  /**
+   * Get a summary of all available custom prompts
+   * @returns Formatted string with custom prompt information
+   * @private
+   */
+  private getPromptsSummary(): string {
+    try {
+      // Check if storage service is available
+      if (!this.storageService) {
+        return `Custom Prompts: Storage service not available`;
+      }
+
+      // Check if custom prompts feature is enabled
+      if (!this.storageService.isEnabled()) {
+        return `Custom Prompts: Custom prompts feature is disabled`;
+      }
+
+      // Get all custom prompts
+      const customPrompts = this.storageService.getAllPrompts();
+
+      if (!customPrompts || customPrompts.length === 0) {
+        return `Custom Prompts: No custom prompts created yet`;
+      }
+
+      const enabledCount = customPrompts.filter(prompt => prompt.isEnabled).length;
+      const promptSummary = [`Custom Prompts (${customPrompts.length} total, ${enabledCount} enabled):`];
+
+      for (const prompt of customPrompts) {
+        const status = prompt.isEnabled ? '✅' : '❌';
+        const description = prompt.description || 'No description provided';
+        promptSummary.push(`   ${status} ${prompt.name}: ${description}`);
+      }
+
+      return promptSummary.join('\n');
+    } catch (error) {
+      return `Custom Prompts: Error loading custom prompts (${getErrorMessage(error)})`;
+    }
+  }
+}

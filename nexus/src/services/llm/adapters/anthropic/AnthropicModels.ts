@@ -1,0 +1,230 @@
+/**
+ * Anthropic Model Specifications
+ * Updated June 2026 — pruned the Claude 4.5 Opus/Sonnet generation (superseded by Opus 4.8 / Sonnet 4.6)
+ */
+
+import { ModelSpec } from '../modelTypes';
+
+export const ANTHROPIC_MODELS: ModelSpec[] = [
+  // Claude models
+  {
+    provider: 'anthropic',
+    name: 'Claude 4.5 Haiku',
+    apiName: 'claude-haiku-4-5-20251001',
+    contextWindow: 200000,
+    maxTokens: 64000,
+    inputCostPerMillion: 1.00,
+    outputCostPerMillion: 5.00,
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  },
+
+  // Claude Fable 5.1 (native 1M context, 128k output; thinking is always on)
+  {
+    provider: 'anthropic',
+    name: 'Claude Fable 5.1',
+    apiName: 'claude-fable-5-1',
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    inputCostPerMillion: 10.00,
+    outputCostPerMillion: 50.00,
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  },
+
+  // Claude Fable 5
+  {
+    provider: 'anthropic',
+    name: 'Claude Fable 5',
+    apiName: 'claude-fable-5',
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    inputCostPerMillion: 10.00,
+    outputCostPerMillion: 50.00,
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  },
+
+  // Claude Opus 5 (native 1M context, no beta header required)
+  {
+    provider: 'anthropic',
+    name: 'Claude Opus 5',
+    apiName: 'claude-opus-5',
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    inputCostPerMillion: 5.00,
+    outputCostPerMillion: 25.00,
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  },
+
+  // Claude Opus 4.8
+  {
+    provider: 'anthropic',
+    name: 'Claude Opus 4.8',
+    apiName: 'claude-opus-4-8',
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    inputCostPerMillion: 5.00,
+    outputCostPerMillion: 25.00,
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  },
+
+  // Claude Opus 4.7
+  {
+    provider: 'anthropic',
+    name: 'Claude Opus 4.7',
+    apiName: 'claude-opus-4-7',
+    contextWindow: 200000,
+    maxTokens: 128000,
+    inputCostPerMillion: 5.00,
+    outputCostPerMillion: 25.00,
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  },
+
+  // Claude Opus 4.7 (1M context)
+  {
+    provider: 'anthropic',
+    name: 'Claude Opus 4.7 (1M)',
+    apiName: 'claude-opus-4-7',
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    inputCostPerMillion: 5.00,
+    outputCostPerMillion: 25.00,
+    betaHeaders: ['context-1m-2025-08-07'],
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  },
+
+  // Claude Opus 4.6
+  {
+    provider: 'anthropic',
+    name: 'Claude Opus 4.6',
+    apiName: 'claude-opus-4-6',
+    contextWindow: 200000,
+    maxTokens: 128000,
+    inputCostPerMillion: 5.00,
+    outputCostPerMillion: 25.00,
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  },
+
+  // Claude Opus 4.6 (1M context)
+  {
+    provider: 'anthropic',
+    name: 'Claude Opus 4.6 (1M)',
+    apiName: 'claude-opus-4-6',
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    inputCostPerMillion: 5.00,
+    outputCostPerMillion: 25.00,
+    betaHeaders: ['context-1m-2025-08-07'],
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  },
+
+  // Claude Sonnet 5 (native 1M context, no beta header required)
+  {
+    provider: 'anthropic',
+    name: 'Claude Sonnet 5',
+    apiName: 'claude-sonnet-5',
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    // Docs list Sonnet 5 below the 4.6-generation Sonnet price point.
+    inputCostPerMillion: 2.00,
+    outputCostPerMillion: 10.00,
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  },
+
+  // Claude Sonnet 4.6
+  {
+    provider: 'anthropic',
+    name: 'Claude Sonnet 4.6',
+    apiName: 'claude-sonnet-4-6',
+    contextWindow: 200000,
+    maxTokens: 64000,
+    inputCostPerMillion: 3.00,
+    outputCostPerMillion: 15.00,
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  },
+
+  // Claude Sonnet 4.6 (1M context)
+  {
+    provider: 'anthropic',
+    name: 'Claude Sonnet 4.6 (1M)',
+    apiName: 'claude-sonnet-4-6',
+    contextWindow: 1000000,
+    maxTokens: 64000,
+    inputCostPerMillion: 3.00,
+    outputCostPerMillion: 15.00,
+    betaHeaders: ['context-1m-2025-08-07'],
+    capabilities: {
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsStreaming: true,
+      supportsThinking: true
+    }
+  }
+];
+
+export const ANTHROPIC_DEFAULT_MODEL = 'claude-haiku-4-5-20251001';

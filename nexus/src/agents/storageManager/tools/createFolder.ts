@@ -1,0 +1,103 @@
+import { App } from 'obsidian';
+import { BaseTool } from '../../baseTool';
+import { CreateFolderParams, CreateFolderResult } from '../types';
+import { FileOperations } from '../utils/FileOperations';
+import { createErrorMessage } from '../../../utils/errorUtils';
+import { tryResolveVaultPath } from '../../../core/vaultPath';
+import type { ToolStatusTense } from '../../interfaces/ITool';
+import { labelFileOp, verbs } from '../../utils/toolStatusLabels';
+
+/**
+ * Tool to create a new folder
+ */
+export class CreateFolderTool extends BaseTool<CreateFolderParams, CreateFolderResult> {
+  private app: App;
+
+  /**
+   * Create a new CreateFolderTool
+   * @param app Obsidian app instance
+   */
+  constructor(app: App) {
+    super(
+      'createFolder',
+      'Create Folder',
+      'Create a new folder in the vault',
+      '1.0.0'
+    );
+    this.app = app;
+  }
+
+  getStatusLabel(params: Record<string, unknown> | undefined, tense: ToolStatusTense): string | undefined {
+    return labelFileOp(
+      verbs('Creating folder', 'Created folder', 'Failed to create folder'),
+      params,
+      tense,
+      { keys: ['path', 'folderPath', 'name'], fallback: 'folder' }
+    );
+  }
+
+  /**
+   * Execute the tool
+   * @param params Tool parameters
+   * @returns Promise resolving to the result
+   */
+  async execute(params: CreateFolderParams): Promise<CreateFolderResult> {
+    try {
+      if (!params.path) {
+        return this.prepareResult(false, undefined, 'Path is required');
+      }
+
+      // Confine to the vault: reject traversal/absolute/home-expansion paths.
+      const resolved = tryResolveVaultPath(params.path);
+      if (!resolved.ok) {
+        return this.prepareResult(false, undefined, resolved.error);
+      }
+      const folderPath = resolved.path;
+
+      if (typeof FileOperations?.createFolder === 'function') {
+        await FileOperations.createFolder(this.app, folderPath);
+      } else {
+        const existingFolder = this.app.vault.getAbstractFileByPath(folderPath);
+        if (!existingFolder) {
+          await this.app.vault.createFolder(folderPath);
+        }
+      }
+
+      // Success - LLM already knows the path it passed
+      return this.prepareResult(true);
+    } catch (error) {
+      return this.prepareResult(false, undefined, createErrorMessage('Failed to create folder: ', error));
+    }
+  }
+
+  /**
+   * Get the parameter schema
+   */
+  getParameterSchema(): Record<string, unknown> {
+    // Create the tool-specific schema
+    const toolSchema = {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path of the folder to create (REQUIRED)'
+        }
+      },
+      required: ['path']
+    };
+
+    // Merge with common schema (workspace context)
+    return this.getMergedSchema(toolSchema);
+  }
+
+  getResultSchema(): Record<string, unknown> {
+    return {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', description: 'Whether the operation succeeded' },
+        error: { type: 'string', description: 'Error message if failed (includes recovery guidance)' }
+      },
+      required: ['success']
+    };
+  }
+}

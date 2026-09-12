@@ -1,0 +1,307 @@
+import { ModelRegistry, DEFAULT_MODELS } from '../../src/services/llm/adapters/ModelRegistry';
+
+describe('ModelRegistry Claude Opus 4.8 models', () => {
+  it('registers Claude Opus 4.8 for Anthropic', () => {
+    expect(ModelRegistry.findModel('anthropic', 'claude-opus-4-8')).toEqual(expect.objectContaining({
+      name: 'Claude Opus 4.8',
+      contextWindow: 1000000,
+      maxTokens: 128000,
+      inputCostPerMillion: 5,
+      outputCostPerMillion: 25,
+      capabilities: expect.objectContaining({
+        supportsJSON: true,
+        supportsImages: true,
+        supportsFunctions: true,
+        supportsStreaming: true,
+        supportsThinking: true
+      })
+    }));
+  });
+
+  it('registers Claude Opus 4.8 for OpenRouter with the provider namespace', () => {
+    expect(ModelRegistry.findModel('openrouter', 'anthropic/claude-opus-4.8')).toEqual(expect.objectContaining({
+      name: 'Claude Opus 4.8',
+      contextWindow: 1000000,
+      maxTokens: 128000,
+      inputCostPerMillion: 5,
+      outputCostPerMillion: 25,
+      capabilities: expect.objectContaining({
+        supportsJSON: true,
+        supportsImages: true,
+        supportsFunctions: true,
+        supportsStreaming: true,
+        supportsThinking: true
+      })
+    }));
+  });
+});
+
+describe('ModelRegistry GPT-5.5 models', () => {
+  it('registers GPT-5.5 and GPT-5.5 Pro for OpenAI', () => {
+    expect(ModelRegistry.findModel('openai', 'gpt-5.5')).toEqual(expect.objectContaining({
+      name: 'GPT-5.5',
+      contextWindow: 1050000,
+      maxTokens: 128000,
+      inputCostPerMillion: 5,
+      outputCostPerMillion: 30
+    }));
+
+    expect(ModelRegistry.findModel('openai', 'gpt-5.5-pro')).toEqual(expect.objectContaining({
+      name: 'GPT-5.5 Pro',
+      inputCostPerMillion: 30,
+      outputCostPerMillion: 180
+    }));
+  });
+
+  it('registers OpenRouter GPT-5.5 models with OpenRouter IDs', () => {
+    expect(ModelRegistry.findModel('openrouter', 'openai/gpt-5.5')).toEqual(expect.objectContaining({
+      name: 'GPT-5.5',
+      contextWindow: 1050000,
+      inputCostPerMillion: 5,
+      outputCostPerMillion: 30
+    }));
+
+    expect(ModelRegistry.findModel('openrouter', 'openai/gpt-5.5-pro')).toEqual(expect.objectContaining({
+      name: 'GPT-5.5 Pro',
+      inputCostPerMillion: 30,
+      outputCostPerMillion: 180
+    }));
+  });
+
+  it('registers GPT-5.5 but not GPT-5.5 Pro for Codex', () => {
+    expect(ModelRegistry.findModel('openai-codex', 'gpt-5.5')).toEqual(expect.objectContaining({
+      name: 'GPT-5.5',
+      contextWindow: 400000,
+      inputCostPerMillion: 0,
+      outputCostPerMillion: 0
+    }));
+
+    expect(ModelRegistry.findModel('openai-codex', 'gpt-5.5-pro')).toBeUndefined();
+  });
+
+});
+
+describe('ModelRegistry GPT-5.6 models', () => {
+  const tiers = [
+    { suffix: 'sol', name: 'GPT-5.6 Sol', input: 5, output: 30 },
+    { suffix: 'terra', name: 'GPT-5.6 Terra', input: 2.5, output: 15 },
+    { suffix: 'luna', name: 'GPT-5.6 Luna', input: 1, output: 6 }
+  ];
+
+  it.each(tiers)('registers $name for OpenAI', ({ suffix, name, input, output }) => {
+    expect(ModelRegistry.findModel('openai', `gpt-5.6-${suffix}`)).toEqual(expect.objectContaining({
+      name,
+      contextWindow: 1050000,
+      maxTokens: 128000,
+      inputCostPerMillion: input,
+      outputCostPerMillion: output,
+      capabilities: expect.objectContaining({
+        supportsJSON: true,
+        supportsImages: true,
+        supportsFunctions: true,
+        supportsStreaming: true,
+        supportsThinking: true
+      })
+    }));
+  });
+
+  it.each(tiers)('registers $name for Codex', ({ suffix, name }) => {
+    expect(ModelRegistry.findModel('openai-codex', `gpt-5.6-${suffix}`)).toEqual(expect.objectContaining({
+      name,
+      contextWindow: 1050000,
+      maxTokens: 128000,
+      inputCostPerMillion: 0,
+      outputCostPerMillion: 0
+    }));
+  });
+
+  it.each(tiers)('registers $name and its Pro mode for OpenRouter', ({ suffix, name, input, output }) => {
+    expect(ModelRegistry.findModel('openrouter', `openai/gpt-5.6-${suffix}`)).toEqual(expect.objectContaining({
+      name,
+      contextWindow: 1050000,
+      maxTokens: 128000,
+      inputCostPerMillion: input,
+      outputCostPerMillion: output
+    }));
+    expect(ModelRegistry.findModel('openrouter', `openai/gpt-5.6-${suffix}-pro`)).toEqual(expect.objectContaining({
+      name: `${name} Pro`,
+      contextWindow: 1050000,
+      maxTokens: 128000,
+      inputCostPerMillion: input,
+      outputCostPerMillion: output
+    }));
+  });
+
+  it('uses GPT-5.6 Sol as the default for the updated OpenAI providers', () => {
+    expect(DEFAULT_MODELS.openai).toBe('gpt-5.6-sol');
+    expect(DEFAULT_MODELS.openrouter).toBe('openai/gpt-5.6-sol');
+    expect(DEFAULT_MODELS['openai-codex']).toBe('gpt-5.6-sol');
+  });
+});
+
+describe('ModelRegistry Gemini 3.5 Flash models', () => {
+  it('registers Gemini 3.5 Flash for Google', () => {
+    expect(ModelRegistry.findModel('google', 'gemini-3.5-flash')).toEqual(expect.objectContaining({
+      name: 'Gemini 3.5 Flash',
+      contextWindow: 1048576,
+      maxTokens: 65536,
+      inputCostPerMillion: 1.5,
+      outputCostPerMillion: 9
+    }));
+  });
+
+  it('registers Gemini 3.5 Flash for OpenRouter with the provider namespace', () => {
+    expect(ModelRegistry.findModel('openrouter', 'google/gemini-3.5-flash')).toEqual(expect.objectContaining({
+      name: 'Gemini 3.5 Flash',
+      contextWindow: 1048576,
+      maxTokens: 65536,
+      inputCostPerMillion: 1.5,
+      outputCostPerMillion: 9
+    }));
+  });
+});
+
+describe('ModelRegistry latest Gemini Flash models', () => {
+  it.each([
+    ['gemini-3.7-flash', 'Gemini 3.7 Flash', 0.75, 3.75],
+    ['gemini-3.6-flash', 'Gemini 3.6 Flash', 1.5, 7.5],
+    ['gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite', 0.3, 2.5]
+  ])('registers %s for Google', (id, name, input, output) => {
+    expect(ModelRegistry.findModel('google', id)).toEqual(expect.objectContaining({
+      name,
+      contextWindow: 1048576,
+      maxTokens: 65536,
+      inputCostPerMillion: input,
+      outputCostPerMillion: output,
+      capabilities: expect.objectContaining({
+        supportsJSON: true,
+        supportsImages: true,
+        supportsFunctions: true,
+        supportsStreaming: true,
+        supportsThinking: true
+      })
+    }));
+  });
+
+  it.each([
+    ['google/gemini-3.7-flash', 'Gemini 3.7 Flash', 0.75, 3.75],
+    ['google/gemini-3.6-flash', 'Gemini 3.6 Flash', 1.5, 7.5],
+    ['google/gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite', 0.3, 2.5]
+  ])('registers %s for OpenRouter', (id, name, input, output) => {
+    expect(ModelRegistry.findModel('openrouter', id)).toEqual(expect.objectContaining({
+      name,
+      contextWindow: 1048576,
+      maxTokens: 65536,
+      inputCostPerMillion: input,
+      outputCostPerMillion: output
+    }));
+  });
+
+  it('removes the superseded Gemini 3.1 Flash-Lite preview entries', () => {
+    expect(ModelRegistry.findModel('google', 'gemini-3.1-flash-lite-preview')).toBeUndefined();
+    expect(ModelRegistry.findModel('openrouter', 'google/gemini-3.1-flash-lite-preview')).toBeUndefined();
+  });
+});
+
+// If either gateway drops or mislabels GLM 5.3, these lookups and provider-specific
+// limits fail instead of leaving a stale model picker entry undetected.
+describe('ModelRegistry GLM 5.3 models', () => {
+  it('registers GLM 5.3 for OpenRouter with the gateway model ID', () => {
+    expect(ModelRegistry.findModel('openrouter', 'z-ai/glm-5.3')).toEqual(expect.objectContaining({
+      name: 'GLM 5.3',
+      contextWindow: 1048576,
+      maxTokens: 131072,
+      inputCostPerMillion: 1.4,
+      outputCostPerMillion: 4.4,
+      capabilities: {
+        supportsJSON: true,
+        supportsImages: false,
+        supportsFunctions: true,
+        supportsStreaming: true,
+        supportsThinking: true
+      }
+    }));
+  });
+
+  it('registers GLM 5.3 for Requesty with its provider-specific model ID', () => {
+    expect(ModelRegistry.findModel('requesty', 'zai/glm-5.3')).toEqual(expect.objectContaining({
+      name: 'GLM 5.3',
+      contextWindow: 1000000,
+      maxTokens: 128000,
+      inputCostPerMillion: 1.4,
+      outputCostPerMillion: 4.4,
+      capabilities: {
+        supportsJSON: true,
+        supportsImages: false,
+        supportsFunctions: true,
+        supportsStreaming: true,
+        supportsThinking: true
+      }
+    }));
+  });
+});
+
+describe('ModelRegistry Qwen3.8 27B model', () => {
+  it('registers Qwen3.8 27B for OpenRouter with its live catalog metadata', () => {
+    expect(ModelRegistry.findModel('openrouter', 'qwen/qwen3.8-27b')).toEqual(expect.objectContaining({
+      name: 'Qwen3.8 27B',
+      contextWindow: 262144,
+      maxTokens: 131072,
+      inputCostPerMillion: 0.45,
+      outputCostPerMillion: 3.20,
+      capabilities: {
+        supportsJSON: true,
+        supportsImages: true,
+        supportsFunctions: true,
+        supportsStreaming: true,
+        supportsThinking: true
+      }
+    }));
+  });
+});
+
+describe('ModelRegistry DeepSeek V4 Pro 0813 model', () => {
+  it('registers the dated GA snapshot for OpenRouter as a text-only thinking model', () => {
+    expect(ModelRegistry.findModel('openrouter', 'deepseek/deepseek-v4-pro-0813')).toEqual(expect.objectContaining({
+      name: 'DeepSeek V4 Pro 0813',
+      contextWindow: 1048576,
+      maxTokens: 65536,
+      inputCostPerMillion: 0.435,
+      outputCostPerMillion: 0.87,
+      capabilities: expect.objectContaining({
+        supportsJSON: true,
+        supportsImages: false,
+        supportsFunctions: true,
+        supportsStreaming: true,
+        supportsThinking: true
+      })
+    }));
+  });
+
+  it('keeps the direct DeepSeek provider on the undated alias that resolves to 0813', () => {
+    expect(ModelRegistry.findModel('deepseek', 'deepseek-v4-pro')).toEqual(expect.objectContaining({
+      inputCostPerMillion: 0.435,
+      outputCostPerMillion: 0.87
+    }));
+    expect(ModelRegistry.findModel('deepseek', 'deepseek-v4-pro-0813')).toBeUndefined();
+  });
+});
+
+describe('ModelRegistry Kimi K3 model', () => {
+  it('registers Kimi K3 for OpenRouter with current pricing and capabilities', () => {
+    expect(ModelRegistry.findModel('openrouter', 'moonshotai/kimi-k3')).toEqual(expect.objectContaining({
+      name: 'Kimi K3',
+      contextWindow: 1048576,
+      maxTokens: 131072,
+      inputCostPerMillion: 3,
+      outputCostPerMillion: 15,
+      capabilities: expect.objectContaining({
+        supportsJSON: true,
+        supportsImages: true,
+        supportsFunctions: true,
+        supportsStreaming: true,
+        supportsThinking: true
+      })
+    }));
+  });
+});

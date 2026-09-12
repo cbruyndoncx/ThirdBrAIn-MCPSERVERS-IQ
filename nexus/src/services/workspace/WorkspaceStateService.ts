@@ -1,0 +1,364 @@
+// Location: src/services/workspace/WorkspaceStateService.ts
+// State and memory trace CRUD operations extracted from WorkspaceService.
+// Handles addState, getState, getStateByNameOrId, addMemoryTrace, getMemoryTraces.
+// Used by: WorkspaceService (composition delegate)
+
+import { FileSystemService } from '../storage/FileSystemService';
+import { IndexManager } from '../storage/IndexManager';
+import { MemoryTrace, StateData } from '../../types/storage/StorageTypes';
+import * as HybridTypes from '../../types/storage/HybridStorageTypes';
+import { TraceMetadata } from '../../database/types/memory/MemoryTypes';
+import { WorkspaceState } from '../../database/types/session/SessionTypes';
+import { StorageAdapterOrGetter, resolveAdapter, withReadableBackend, withDualBackend } from '../helpers/DualBackendExecutor';
+
+/**
+ * Dependencies injected from WorkspaceService to avoid circular references.
+ * WorkspaceStateService needs session-level operations for referential integrity
+ * (e.g., ensuring session exists before creating a state or trace).
+ */
+interface SessionLookup {
+  id: string;
+}
+
+export interface WorkspaceStateDeps {
+  getSession: (workspaceId: string, sessionId: string) => Promise<SessionLookup | null>;
+  addSession: (workspaceId: string, sessionData: Record<string, unknown>) => Promise<SessionLookup>;
+}
+
+export class WorkspaceStateService {
+  constructor(
+    private fileSystem: FileSystemService,
+    private indexManager: IndexManager,
+    private storageAdapterOrGetter: StorageAdapterOrGetter,
+    private sessionDeps: WorkspaceStateDeps
+  ) {}
+
+  /**
+   * Add memory trace to session.
+   * Ensures the session exists before saving (creates it if needed).
+   */
+  async addMemoryTrace(workspaceId: string, sessionId: string, traceData: Partial<MemoryTrace>): Promise<MemoryTrace> {
+    const adapter = resolveAdapter(this.storageAdapterOrGetter);
+    if (adapter) {
+      // Ensure session exists before saving trace (referential integrity)
+      const existingSession = await this.sessionDeps.getSession(workspaceId, sessionId);
+      if (!existingSession) {
+        await this.sessionDeps.addSession(workspaceId, {
+          id: sessionId,
+          name: `Session ${new Date().toLocaleString()}`,
+          description: `Auto-created session for trace storage`,
+          startTime: Date.now(),
+          isActive: true
+        });
+      }
+
+      const hybridTrace: Omit<HybridTypes.MemoryTraceData, 'id' | 'workspaceId' | 'sessionId'> = {
+        timestamp: traceData.timestamp || Date.now(),
+        type: traceData.type,
+        content: traceData.content || '',
+        metadata: traceData.metadata
+      };
+
+      const traceId = await adapter.addTrace(workspaceId, sessionId, hybridTrace);
+      await adapter.updateWorkspace(workspaceId, { lastAccessed: Date.now() });
+
+      return {
+        id: traceId,
+        timestamp: hybridTrace.timestamp,
+        type: hybridTrace.type || 'generic',
+        content: hybridTrace.content,
+        // Safe conversion: HybridTypes.MemoryTraceData.metadata (Record<string, unknown>)
+        // is cast to TraceMetadata which is the expected type for MemoryTrace.metadata
+        // Note: This metadata may be either TraceMetadata or legacy trace metadata at runtime
+        metadata: hybridTrace.metadata as TraceMetadata | undefined
+      };
+    }
+
+    // Fall back to legacy implementation
+    const workspace = await this.fileSystem.readWorkspace(workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceId} not found`);
+    }
+
+    if (!workspace.sessions[sessionId]) {
+      throw new Error(`Session ${sessionId} not found in workspace ${workspaceId}`);
+    }
+
+    const traceId = traceData.id || `trace_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const trace: MemoryTrace = {
+      id: traceId,
+      timestamp: traceData.timestamp || Date.now(),
+      type: traceData.type || 'generic',
+      content: traceData.content || '',
+      metadata: traceData.metadata
+    };
+
+    workspace.sessions[sessionId].memoryTraces[traceId] = trace;
+    workspace.lastAccessed = Date.now();
+    await this.fileSystem.writeWorkspace(workspaceId, workspace);
+    await this.indexManager.updateWorkspaceInIndex(workspace);
+
+    return trace;
+  }
+
+  /**
+   * Get memory traces from session
+   */
+  async getMemoryTraces(workspaceId: string, sessionId: string): Promise<MemoryTrace[]> {
+    return withReadableBackend(
+      this.storageAdapterOrGetter,
+      async (adapter) => {
+        const result = await adapter.getTraces(workspaceId, sessionId);
+        return result.items.map(t => ({
+          id: t.id,
+          timestamp: t.timestamp,
+          type: t.type || 'generic',
+          content: t.content,
+          // Safe conversion: HybridTypes.MemoryTraceData.metadata (Record<string, unknown>)
+          // is cast to TraceMetadata which is the expected type for MemoryTrace.metadata
+          metadata: t.metadata as TraceMetadata | undefined
+        }));
+      },
+      async () => {
+        const workspace = await this.fileSystem.readWorkspace(workspaceId);
+        if (!workspace || !workspace.sessions[sessionId]) {
+          return [];
+        }
+        return Object.values(workspace.sessions[sessionId].memoryTraces);
+      }
+    );
+  }
+
+  /**
+   * Add state to session.
+   * Ensures the session exists before saving (creates it if needed).
+   */
+  async addState(workspaceId: string, sessionId: string, stateData: Partial<StateData>): Promise<StateData> {
+    const adapter = resolveAdapter(this.storageAdapterOrGetter);
+    if (adapter) {
+      // Ensure session exists before saving state (referential integrity)
+      const existingSession = await this.sessionDeps.getSession(workspaceId, sessionId);
+      let effectiveSessionId = sessionId;
+      if (!existingSession) {
+        const sessionIdToCreate = this.isReservedSessionId(sessionId) ? this.createSessionId() : sessionId;
+        const createdSession = await this.sessionDeps.addSession(workspaceId, {
+          id: sessionIdToCreate,
+          name: `Session ${new Date().toLocaleString()}`,
+          description: `Auto-created session for state storage`,
+          startTime: Date.now(),
+          isActive: true
+        });
+        effectiveSessionId = createdSession.id;
+      }
+
+      // Support both new 'state' property and legacy 'snapshot' property
+      const stateContent = stateData.state ||
+        (stateData as Partial<StateData> & { snapshot?: WorkspaceState }).snapshot ||
+        {};
+      const tags = this.extractTags(stateData, stateContent);
+
+      const hybridState: Omit<HybridTypes.StateData, 'id' | 'workspaceId' | 'sessionId'> = {
+        name: stateData.name || 'Untitled State',
+        created: stateData.created || Date.now(),
+        description: stateData.description,
+        tags,
+        content: stateContent
+      };
+
+      const stateId = await adapter.saveState(workspaceId, effectiveSessionId, hybridState);
+      await adapter.updateWorkspace(workspaceId, { lastAccessed: Date.now() });
+
+      return {
+        id: stateId,
+        workspaceId,
+        sessionId: effectiveSessionId,
+        name: hybridState.name,
+        description: hybridState.description,
+        created: hybridState.created,
+        tags,
+        state: this.coerceWorkspaceState(hybridState.content)
+      };
+    }
+
+    // Fall back to legacy implementation
+    const workspace = await this.fileSystem.readWorkspace(workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceId} not found`);
+    }
+
+    if (!workspace.sessions[sessionId]) {
+      throw new Error(`Session ${sessionId} not found in workspace ${workspaceId}`);
+    }
+
+    const stateId = stateData.id || `state_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+
+    // Support both new 'state' property and legacy 'snapshot' property
+    const stateContent = this.coerceWorkspaceState(
+      stateData.state ||
+      (stateData as Partial<StateData> & { snapshot?: WorkspaceState }).snapshot ||
+      {}
+    );
+
+    const state: StateData = {
+      id: stateId,
+      workspaceId,
+      sessionId,
+      name: stateData.name || 'Untitled State',
+      description: stateData.description,
+      created: stateData.created || Date.now(),
+      tags: this.extractTags(stateData, stateContent),
+      state: stateContent
+    };
+
+    workspace.sessions[sessionId].states[stateId] = state;
+    workspace.lastAccessed = Date.now();
+    await this.fileSystem.writeWorkspace(workspaceId, workspace);
+    await this.indexManager.updateWorkspaceInIndex(workspace);
+
+    return state;
+  }
+
+  /**
+   * Get state from session
+   */
+  async getState(workspaceId: string, sessionId: string, stateId: string): Promise<StateData | null> {
+    return withReadableBackend(
+      this.storageAdapterOrGetter,
+      async (adapter) => {
+        const state = await adapter.getState(stateId);
+        if (!state) {
+          return null;
+        }
+        return {
+          id: state.id,
+          workspaceId: state.workspaceId,
+          sessionId: state.sessionId,
+          name: state.name,
+          description: state.description,
+          created: state.created,
+          tags: state.tags,
+          state: this.coerceWorkspaceState(state.content)
+        };
+      },
+      async () => {
+        const workspace = await this.fileSystem.readWorkspace(workspaceId);
+        if (!workspace || !workspace.sessions[sessionId]) {
+          return null;
+        }
+        return workspace.sessions[sessionId].states[stateId] || null;
+      }
+    );
+  }
+
+  /**
+   * Get state by name or ID within a session (unified lookup).
+   * Tries ID lookup first, then falls back to name lookup (case-insensitive).
+   * @param workspaceId Workspace ID
+   * @param sessionId Session ID to search in
+   * @param identifier State name or ID
+   * @returns State data or null if not found
+   */
+  async getStateByNameOrId(workspaceId: string, sessionId: string, identifier: string): Promise<StateData | null> {
+    const byId = await this.getState(workspaceId, sessionId, identifier);
+    if (byId) {
+      return byId;
+    }
+
+    return withReadableBackend<StateData | null>(
+      this.storageAdapterOrGetter,
+      async (adapter) => {
+        const result = await adapter.getStates(workspaceId, sessionId, { pageSize: 100 });
+        const match = result.items.find(
+          state => state.name?.toLowerCase() === identifier.toLowerCase()
+        );
+        if (!match) {
+          return null;
+        }
+        return this.getState(workspaceId, sessionId, match.id);
+      },
+      async () => {
+        const workspace = await this.fileSystem.readWorkspace(workspaceId);
+        if (!workspace || !workspace.sessions[sessionId]) {
+          return null;
+        }
+        const states = Object.values(workspace.sessions[sessionId].states);
+        return states.find(
+          state => state.name?.toLowerCase() === identifier.toLowerCase()
+        ) || null;
+      }
+    );
+  }
+
+  /**
+   * Update an existing state's metadata or content. Only the fields present
+   * in `updates` are mutated; omitted fields are left unchanged.
+   *
+   * @param workspaceId - Parent workspace ID (used by legacy fallback lookup)
+   * @param sessionId - Parent session ID (used by legacy fallback lookup)
+   * @param stateId - State ID
+   * @param updates - Partial fields to mutate (name, description, tags, content)
+   */
+  async updateState(
+    workspaceId: string,
+    sessionId: string,
+    stateId: string,
+    updates: {
+      name?: string;
+      description?: string;
+      tags?: string[];
+      content?: unknown;
+    }
+  ): Promise<void> {
+    return withDualBackend(
+      this.storageAdapterOrGetter,
+      async (adapter) => {
+        await adapter.updateState(stateId, updates);
+        await adapter.updateWorkspace(workspaceId, { lastAccessed: Date.now() });
+      },
+      async () => {
+        const workspace = await this.fileSystem.readWorkspace(workspaceId);
+        if (!workspace || !workspace.sessions[sessionId] || !workspace.sessions[sessionId].states[stateId]) {
+          throw new Error(`State not found: ${stateId}`);
+        }
+        const existing = workspace.sessions[sessionId].states[stateId];
+        const next: StateData = { ...existing };
+        if (updates.name !== undefined) next.name = updates.name;
+        if (updates.description !== undefined) next.description = updates.description;
+        if (updates.tags !== undefined) next.tags = updates.tags;
+        if (updates.content !== undefined) {
+          next.state = this.coerceWorkspaceState(updates.content);
+        }
+        workspace.sessions[sessionId].states[stateId] = next;
+        workspace.lastAccessed = Date.now();
+        await this.fileSystem.writeWorkspace(workspaceId, workspace);
+        await this.indexManager.updateWorkspaceInIndex(workspace);
+      }
+    );
+  }
+
+  private coerceWorkspaceState(state: unknown): WorkspaceState {
+    return state as WorkspaceState;
+  }
+
+  private extractTags(stateData: Partial<StateData>, stateContent: unknown): string[] | undefined {
+    if (Array.isArray(stateData.tags)) {
+      return stateData.tags;
+    }
+
+    if (typeof stateContent !== 'object' || stateContent === null || Array.isArray(stateContent)) {
+      return undefined;
+    }
+
+    const workspaceState = stateContent as { state?: { metadata?: { tags?: unknown } } };
+    const tags = workspaceState.state?.metadata?.tags;
+    return Array.isArray(tags) ? tags.filter((tag): tag is string => typeof tag === 'string') : undefined;
+  }
+
+  private isReservedSessionId(sessionId: string): boolean {
+    return sessionId === 'default-session' || sessionId === '_workspace';
+  }
+
+  private createSessionId(): string {
+    return `session_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+  }
+}

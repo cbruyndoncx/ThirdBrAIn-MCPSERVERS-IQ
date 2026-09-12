@@ -1,0 +1,646 @@
+// Location: src/services/trace/ToolCallTraceService.ts
+// Captures tool call executions and saves them as memory traces
+// Used by: MCPConnectionManager via onToolResponse callback
+// Dependencies: MemoryService, SessionContextManager, WorkspaceService
+
+import { Plugin } from 'obsidian';
+import { MemoryService } from '../../agents/memoryManager/services/MemoryService';
+import { SessionContextManager } from '../SessionContextManager';
+import { WorkspaceService } from '../WorkspaceService';
+import { TraceMetadataBuilder } from '../memory/TraceMetadataBuilder';
+import { TraceContextMetadata, TraceOutcomeMetadata, RetrievalCandidate, RetrievalOutcomeMetadata } from '../../database/workspace-types';
+import { formatTraceContent } from './TraceContentFormatter';
+import { splitTopLevelSegments, tokenizeWithMeta } from '../../agents/toolManager/services/ToolCliNormalizer';
+import { generateUUID } from '../../utils/uuid';
+
+/** Max candidates persisted per retrieval, to bound trace size. */
+const RETRIEVAL_CANDIDATE_CAP = 25;
+
+/** Agent names (normalized) that own retrieval (search) tools. */
+const RETRIEVAL_AGENTS = new Set(['searchmanager', 'search', 'vaultlibrarian']);
+/** Tool/mode names (normalized) that perform relevance retrieval we learn from. */
+const RETRIEVAL_MODES = new Set(['content', 'searchcontent', 'memory', 'searchmemory']);
+
+function normalizeToolToken(value: string): string {
+  return value.replace(/[-_\s]/g, '').toLowerCase();
+}
+
+/**
+ * True when (agent, mode) is a relevance-retrieval tool whose returned
+ * candidates are worth capturing for the retrieval-adapter feedback log.
+ */
+function isRetrievalTool(agent: string, mode: string): boolean {
+  return RETRIEVAL_AGENTS.has(normalizeToolToken(agent)) && RETRIEVAL_MODES.has(normalizeToolToken(mode));
+}
+
+type ToolCallParams = unknown;
+type ToolCallResponse = unknown;
+
+/**
+ * Pull the workspace name/ID out of a tokenized `memory load-workspace ...`
+ * command.
+ *
+ * The argument is accepted BOTH positionally and as `--workspace <value>`, so
+ * reading token[2] unconditionally captured the literal string "--workspace"
+ * whenever the flag form was used. That handle then became the trace's
+ * workspace, producing a phantom `ws_--workspace` event store and a recurring
+ * "Workspace --workspace not found" on every flag-form call.
+ *
+ * `wasQuoted` distinguishes a real flag from a positional value whose text
+ * merely starts with "--".
+ */
+function extractWorkspaceHandleFromTokens(tokens: { value: string; wasQuoted: boolean }[]): string | undefined {
+  for (let index = 2; index < tokens.length; index++) {
+    const token = tokens[index];
+    const isFlag = !token.wasQuoted && token.value.startsWith('--');
+
+    if (!isFlag) {
+      // Positional form: `memory load-workspace "My Workspace"`.
+      return token.value;
+    }
+
+    const [flagName, inlineValue] = splitFlagToken(token.value);
+    if (flagName !== 'workspace' && flagName !== 'name') {
+      continue;
+    }
+
+    if (inlineValue !== undefined) {
+      return inlineValue;
+    }
+
+    const next = tokens[index + 1];
+    if (next && (next.wasQuoted || !next.value.startsWith('--'))) {
+      return next.value;
+    }
+  }
+
+  return undefined;
+}
+
+/** Split `--flag=value` into its parts; returns [flag] when there is no `=`. */
+function splitFlagToken(raw: string): [string, string | undefined] {
+  const withoutDashes = raw.replace(/^--/, '');
+  const equals = withoutDashes.indexOf('=');
+  if (equals === -1) {
+    return [withoutDashes.toLowerCase(), undefined];
+  }
+  return [withoutDashes.slice(0, equals).toLowerCase(), withoutDashes.slice(equals + 1)];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+export interface ToolCallCaptureData {
+  toolName: string;
+  params: ToolCallParams;
+  response: ToolCallResponse;
+  success: boolean;
+  executionTime: number;
+}
+
+/**
+ * ToolCallTraceService
+ *
+ * Captures tool call executions and persists them as memory traces within
+ * the appropriate workspace/session context. Provides searchable history
+ * of all tool interactions.
+ *
+ * Features:
+ * - Extracts agent/mode from tool names
+ * - Retrieves workspace/session context automatically
+ * - Transforms tool call data into WorkspaceMemoryTrace format
+ * - Extracts affected files from responses
+ * - Non-blocking error handling (traces are nice-to-have)
+ */
+export class ToolCallTraceService {
+  constructor(
+    private memoryService: MemoryService,
+    private sessionContextManager: SessionContextManager,
+    private workspaceService: WorkspaceService,
+    private plugin: Plugin
+  ) {}
+
+  /**
+   * Capture a tool call execution and save as memory trace
+   * This is the main entry point called by MCPConnectionManager
+   */
+  async captureToolCall(
+    toolName: string,
+    params: ToolCallParams,
+    response: ToolCallResponse,
+    success: boolean,
+    _executionTime: number
+  ): Promise<void> {
+    try {
+      // 1. Extract agent and mode from tool name
+      const { agent, mode } = this.parseToolName(toolName);
+      const paramsRecord = asRecord(params);
+      const responseRecord = asRecord(response);
+
+      // 2. Get session ID from params
+      const sessionId = this.extractSessionId(paramsRecord);
+      if (!sessionId) {
+        return;
+      }
+
+      // 3. Resolve workspace context from the session or explicit tool envelope
+      const workspaceId = await this.resolveWorkspaceId(paramsRecord, sessionId);
+      if (!workspaceId) {
+        return;
+      }
+      this.sessionContextManager.setWorkspaceContext(sessionId, { workspaceId });
+
+      // 4. Build trace content (human-readable description)
+      const traceContent = formatTraceContent({ agent, mode, params: paramsRecord, success });
+
+      // 5. Build trace metadata (structured data)
+      const relatedFiles = this.extractRelatedFiles(responseRecord, paramsRecord);
+      const traceMetadata = this.buildCanonicalMetadata({
+        toolName,
+        agent,
+        mode,
+        params: paramsRecord,
+        response: responseRecord,
+        success,
+        sessionId,
+        workspaceId,
+        relatedFiles
+      });
+
+      // 5b. Stamp active skill(s) for cross-workspace usage attribution (§9).
+      // Best-effort; flows into metadataJson via the TraceMetadata index
+      // signature, so it's zero-migration. Wrapped so a missing/failing lookup
+      // never aborts the trace.
+      try {
+        const activeSkills = this.sessionContextManager.getActiveSkills?.(sessionId) ?? [];
+        if (activeSkills.length > 0) {
+          (traceMetadata as Record<string, unknown>).activeSkills = activeSkills;
+        }
+      } catch {
+        /* skill attribution is best-effort — never block the trace */
+      }
+
+      // 6. Record the trace via MemoryService
+      await this.memoryService.recordActivityTrace({
+        workspaceId: workspaceId,
+        sessionId: sessionId,
+        type: 'tool_call',
+        content: traceContent,
+        timestamp: Date.now(),
+        metadata: traceMetadata
+      });
+
+    } catch (error) {
+      // Don't throw - tracing is a secondary operation that shouldn't break the main flow
+      console.error('[ToolCallTraceService] Failed to capture tool call:', error);
+    }
+  }
+
+  /**
+   * Parse tool name into agent and mode components
+   * Format: "agentName_modeName" or "agentName.modeName" -> { agent: "agentName", mode: "modeName" }
+   */
+  private parseToolName(toolName: string): { agent: string; mode: string } {
+    // Try dot separator first (e.g., "contentManager.createContent")
+    const dotIndex = toolName.indexOf('.');
+    if (dotIndex !== -1) {
+      return {
+        agent: toolName.substring(0, dotIndex),
+        mode: toolName.substring(dotIndex + 1)
+      };
+    }
+
+    // Fall back to underscore separator (e.g., "contentManager_createContent")
+    const lastUnderscore = toolName.lastIndexOf('_');
+    if (lastUnderscore === -1) {
+      return { agent: toolName, mode: 'unknown' };
+    }
+
+    return {
+      agent: toolName.substring(0, lastUnderscore),
+      mode: toolName.substring(lastUnderscore + 1)
+    };
+  }
+
+  /**
+   * Extract session ID from various possible locations in params
+   */
+  private extractSessionId(params: ToolCallParams): string | null {
+    const paramsRecord = asRecord(params);
+    // Try different locations where sessionId might be
+    if (typeof paramsRecord.sessionId === 'string') return paramsRecord.sessionId;
+    if (isRecord(paramsRecord.context) && typeof paramsRecord.context.sessionId === 'string') return paramsRecord.context.sessionId;
+    if (isRecord(paramsRecord.params) && typeof paramsRecord.params.sessionId === 'string') return paramsRecord.params.sessionId;
+
+    return null;
+  }
+
+  private async resolveWorkspaceId(params: ToolCallParams, sessionId: string): Promise<string | null> {
+    const paramsRecord = asRecord(params);
+    const workspaceContext = this.sessionContextManager.getWorkspaceContext(sessionId);
+    const explicitCandidate =
+      getString(paramsRecord.workspaceId) ||
+      getString(isRecord(paramsRecord.workspaceContext) ? paramsRecord.workspaceContext.workspaceId : undefined) ||
+      getString(isRecord(paramsRecord.context) ? paramsRecord.context.workspaceId : undefined);
+    const commandWorkspaceCandidate = this.extractWorkspaceHandleFromUseTools(paramsRecord);
+    const candidate =
+      (explicitCandidate && explicitCandidate !== 'default' ? explicitCandidate : undefined) ||
+      commandWorkspaceCandidate ||
+      explicitCandidate ||
+      workspaceContext?.workspaceId ||
+      'default';
+
+    if (!candidate) {
+      return null;
+    }
+
+    try {
+      const workspace = await this.workspaceService.getWorkspaceByNameOrId(candidate);
+      if (workspace) {
+        return workspace.id;
+      }
+    } catch {
+      // Fall through to the safe fallback below.
+    }
+
+    // Never file a trace under an unvalidated identifier. Writing to a
+    // workspace id that does not exist CREATES it as a phantom event store —
+    // that is how `ws_--workspace/` and `ws_Blog Testing/` appeared, the
+    // latter because the handle is the name the caller REQUESTED and
+    // getWorkspaceByNameOrId is exact-match, so every near-miss minted a new
+    // workspace directory. Fall back to context we know resolves.
+    return this.resolveKnownWorkspaceId(workspaceContext?.workspaceId);
+  }
+
+  /**
+   * Reduce to a workspace id that actually exists, or the global default.
+   */
+  private async resolveKnownWorkspaceId(contextWorkspaceId?: string): Promise<string> {
+    if (contextWorkspaceId) {
+      try {
+        const contextWorkspace = await this.workspaceService.getWorkspaceByNameOrId(contextWorkspaceId);
+        if (contextWorkspace) {
+          return contextWorkspace.id;
+        }
+      } catch {
+        // Ignore and fall back to the global default.
+      }
+    }
+
+    return 'default';
+  }
+
+  private extractWorkspaceHandleFromUseTools(params: Record<string, unknown>): string | undefined {
+    const toolString = getString(params.tool);
+    if (!toolString) {
+      return undefined;
+    }
+
+    for (const segment of splitTopLevelSegments(toolString)) {
+      const tokens = tokenizeWithMeta(segment);
+      if (tokens.length < 3) {
+        continue;
+      }
+
+      const agent = tokens[0].value.replace(/[-_\s]/g, '').toLowerCase();
+      const tool = tokens[1].value.replace(/[-_\s]/g, '').toLowerCase();
+      if ((agent === 'memory' || agent === 'memorymanager') &&
+          (tool === 'loadworkspace' || tool === 'createworkspace')) {
+        const handle = extractWorkspaceHandleFromTokens(tokens);
+        if (handle) {
+          return handle;
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  private buildCanonicalMetadata(options: {
+    toolName: string;
+    agent: string;
+    mode: string;
+    params: ToolCallParams;
+    response: ToolCallResponse;
+    success: boolean;
+    sessionId: string;
+    workspaceId: string;
+    relatedFiles: string[];
+  }): ReturnType<typeof TraceMetadataBuilder.create> {
+    const context = this.buildContextMetadata(options.workspaceId, options.sessionId, options.params);
+    const sanitizedParams = this.sanitizeParams(options.params);
+    const input =
+      sanitizedParams || options.relatedFiles.length > 0
+        ? {
+            arguments: sanitizedParams,
+            files: options.relatedFiles.length > 0 ? options.relatedFiles : undefined
+          }
+        : undefined;
+
+    const outcome = this.buildOutcomeMetadata(options.success, options.response);
+
+    // Phase 0 retrieval-feedback substrate: when a direct retrieval (search)
+    // call succeeds, persist the candidate set it returned. (Batched searches
+    // are handled per-sub-result in buildUseToolsBatchMetadata.)
+    if (options.success && isRetrievalTool(options.agent, options.mode)) {
+      const retrieval = this.buildRetrievalOutcome(asRecord(options.response));
+      if (retrieval) {
+        outcome.retrieval = retrieval;
+      }
+    }
+
+    const metadata = TraceMetadataBuilder.create({
+      tool: {
+        id: `${options.agent}_${options.mode}`,
+        agent: options.agent,
+        mode: options.mode
+      },
+      context,
+      input,
+      outcome
+    });
+    const batch = this.buildUseToolsBatchMetadata(options.agent, options.mode, options.params, options.response);
+    return batch ? { ...metadata, batch } : metadata;
+  }
+
+  private buildContextMetadata(
+    workspaceId: string,
+    sessionId: string,
+    params: ToolCallParams
+  ): TraceContextMetadata {
+    const paramsRecord = asRecord(params);
+    const contextSource = isRecord(paramsRecord.context) ? paramsRecord.context : {};
+
+    // Use new V2 format: memory, goal, constraints
+    // These come from the ToolContext provided via getTools/useTool
+    return {
+      workspaceId,
+      sessionId,
+      memory: getString(contextSource.memory) || getString(paramsRecord.memory) || '',
+      goal: getString(contextSource.goal) || getString(paramsRecord.goal) || '',
+      sessionName:
+        getString(contextSource.sessionName) ||
+        getString(contextSource.displaySessionId) ||
+        getString(paramsRecord.sessionName) ||
+        getString(paramsRecord._displaySessionId),
+      constraints: getString(contextSource.constraints) || getString(paramsRecord.constraints)
+    };
+  }
+
+  private sanitizeParams(params: ToolCallParams): unknown {
+    if (!isRecord(params)) {
+      return params;
+    }
+
+    const sanitized = { ...params };
+    delete sanitized.context;
+    delete sanitized.workspaceContext;
+    delete sanitized._displaySessionId;
+    return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+  }
+
+  private buildOutcomeMetadata(success: boolean, response: ToolCallResponse): TraceOutcomeMetadata {
+    if (success) {
+      return { success: true };
+    }
+
+    const responseRecord = asRecord(response);
+    const errorSource = responseRecord.error || (isRecord(responseRecord.result) ? responseRecord.result.error : undefined);
+    const errorRecord = isRecord(errorSource) ? errorSource : undefined;
+    return {
+      success: false,
+      error: {
+        type: getString(errorRecord?.type),
+        message:
+          getString(errorRecord?.message) || (typeof errorSource === 'string' ? errorSource : 'Unknown error'),
+        code:
+          typeof errorRecord?.code === 'string' || typeof errorRecord?.code === 'number'
+            ? errorRecord.code
+            : undefined
+      }
+    };
+  }
+
+  private buildUseToolsBatchMetadata(
+    agent: string,
+    mode: string,
+    params: ToolCallParams,
+    response: ToolCallResponse
+  ): { results: Array<Record<string, unknown>> } | undefined {
+    if (agent !== 'toolManager' || (mode !== 'useTools' && mode !== 'useTool')) {
+      return undefined;
+    }
+
+    const paramsRecord = asRecord(params);
+    const responseRecord = asRecord(response);
+    const responseResults = this.extractUseToolsResponseResults(responseRecord);
+    const toolString = getString(paramsRecord.tool);
+    const segments = toolString ? splitTopLevelSegments(toolString) : [];
+    const resultCount = Math.max(responseResults.length, segments.length);
+
+    if (resultCount === 0) {
+      return undefined;
+    }
+
+    const results: Array<Record<string, unknown>> = [];
+    for (let index = 0; index < resultCount; index += 1) {
+      const responseResult = responseResults[index];
+      const segmentTool = segments[index] ? this.extractSegmentTool(segments[index]) : undefined;
+      const resultAgent = getString(responseResult?.agent) || segmentTool?.agent;
+      const resultTool = getString(responseResult?.tool) || segmentTool?.tool;
+
+      if (!resultAgent || !resultTool) {
+        continue;
+      }
+
+      const compactResult: Record<string, unknown> = {
+        agent: resultAgent,
+        tool: resultTool
+      };
+
+      const success = typeof responseResult?.success === 'boolean'
+        ? responseResult.success
+        : typeof responseRecord.success === 'boolean'
+          ? responseRecord.success
+          : undefined;
+      if (success !== undefined) {
+        compactResult.success = success;
+      }
+
+      const compactParams = this.extractCompactResultParams(responseResult);
+      if (compactParams) {
+        compactResult.params = compactParams;
+      }
+
+      // Phase 0: capture the candidate set returned by a batched search tool.
+      if (success !== false && isRetrievalTool(resultAgent, resultTool)) {
+        const retrieval = this.buildRetrievalOutcome(responseResult);
+        if (retrieval) {
+          compactResult.groupId = retrieval.groupId;
+          compactResult.candidates = retrieval.candidates;
+        }
+      }
+
+      results.push(compactResult);
+    }
+
+    return results.length > 0 ? { results } : undefined;
+  }
+
+  private extractUseToolsResponseResults(response: Record<string, unknown>): Array<Record<string, unknown>> {
+    const data = asRecord(response.data);
+    if (Array.isArray(data.results)) {
+      return data.results.filter(isRecord);
+    }
+
+    if (getString(response.agent) && getString(response.tool)) {
+      return [response];
+    }
+
+    return [];
+  }
+
+  private extractSegmentTool(segment: string): { agent: string; tool: string } | undefined {
+    const tokens = tokenizeWithMeta(segment);
+    if (tokens.length < 2) {
+      return undefined;
+    }
+
+    return {
+      agent: tokens[0].value,
+      tool: tokens[1].value
+    };
+  }
+
+  private extractCompactResultParams(result: Record<string, unknown> | undefined): Record<string, string> | undefined {
+    const params = asRecord(result?.params);
+    const compact: Record<string, string> = {};
+    for (const key of ['path', 'filePath', 'query', 'name']) {
+      if (typeof params[key] === 'string') {
+        compact[key] = params[key];
+      }
+    }
+
+    return Object.keys(compact).length > 0 ? compact : undefined;
+  }
+
+  /**
+   * Build the retrieval-feedback substrate for a successful search response.
+   * Returns undefined when no candidates can be extracted (nothing to learn from).
+   */
+  private buildRetrievalOutcome(source: Record<string, unknown> | undefined): RetrievalOutcomeMetadata | undefined {
+    const candidates = this.extractRetrievalCandidates(source);
+    if (candidates.length === 0) {
+      return undefined;
+    }
+    return { groupId: generateUUID(), candidates };
+  }
+
+  /**
+   * Extract the candidate list a retrieval tool returned. Works across surfaces:
+   * note search (`filePath`), memory/state/trace search (`id`), conversation
+   * search (`pairId`). Scores are captured only when the tool exposes one.
+   */
+  private extractRetrievalCandidates(source: Record<string, unknown> | undefined): RetrievalCandidate[] {
+    if (!isRecord(source)) {
+      return [];
+    }
+
+    const items: unknown[] = [];
+    for (const key of ['results', 'matches']) {
+      if (Array.isArray(source[key])) {
+        items.push(...(source[key] as unknown[]));
+      }
+    }
+
+    const candidates: RetrievalCandidate[] = [];
+    const seen = new Set<string>();
+    for (const item of items) {
+      if (!isRecord(item)) {
+        continue;
+      }
+      const path =
+        getString(item.filePath) ||
+        getString(item.path) ||
+        getString(item.notePath) ||
+        getString(item.pairId) ||
+        getString(item.id);
+      if (!path || seen.has(path)) {
+        continue;
+      }
+      seen.add(path);
+
+      const candidate: RetrievalCandidate = { path };
+      const score = item.score ?? item.similarity ?? item.distance;
+      if (typeof score === 'number' && Number.isFinite(score)) {
+        candidate.score = score;
+      }
+      candidates.push(candidate);
+
+      if (candidates.length >= RETRIEVAL_CANDIDATE_CAP) {
+        break;
+      }
+    }
+    return candidates;
+  }
+
+  /**
+   * Extract file paths from response and params
+   * Looks in multiple locations to capture all affected files
+   */
+  private extractRelatedFiles(response: ToolCallResponse, params: ToolCallParams): string[] {
+    const responseRecord = asRecord(response);
+    const paramsRecord = asRecord(params);
+    const files: string[] = [];
+
+    // From params
+    if (typeof paramsRecord.filePath === 'string') files.push(paramsRecord.filePath);
+    if (isRecord(paramsRecord.params) && typeof paramsRecord.params.filePath === 'string') files.push(paramsRecord.params.filePath);
+    if (Array.isArray(paramsRecord.paths)) {
+      files.push(...paramsRecord.paths.filter((path): path is string => typeof path === 'string'));
+    }
+    if (isRecord(paramsRecord.params) && Array.isArray(paramsRecord.params.paths)) {
+      files.push(...paramsRecord.params.paths.filter((path): path is string => typeof path === 'string'));
+    }
+
+    // From batch operations
+    if (Array.isArray(paramsRecord.operations)) {
+      for (const op of paramsRecord.operations) {
+        if (!isRecord(op)) {
+          continue;
+        }
+
+        if (isRecord(op.params) && typeof op.params.filePath === 'string') files.push(op.params.filePath);
+        if (typeof op.path === 'string') files.push(op.path);
+      }
+    }
+
+    // From response
+    if (typeof responseRecord.filePath === 'string') files.push(responseRecord.filePath);
+    if (Array.isArray(responseRecord.files)) {
+      files.push(...responseRecord.files.filter((file): file is string => typeof file === 'string'));
+    }
+    if (Array.isArray(responseRecord.affectedFiles)) {
+      files.push(...responseRecord.affectedFiles.filter((file): file is string => typeof file === 'string'));
+    }
+    if (Array.isArray(responseRecord.createdFiles)) {
+      files.push(...responseRecord.createdFiles.filter((file): file is string => typeof file === 'string'));
+    }
+    if (Array.isArray(responseRecord.modifiedFiles)) {
+      files.push(...responseRecord.modifiedFiles.filter((file): file is string => typeof file === 'string'));
+    }
+
+    // Deduplicate and filter empty strings (ensure strings only)
+    return [...new Set(files.filter(f => typeof f === 'string' && f.trim()))];
+  }
+
+}

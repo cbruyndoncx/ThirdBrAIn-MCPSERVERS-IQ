@@ -1,0 +1,253 @@
+/**
+ * LLMProviderModal - Thin Orchestrator
+ *
+ * Modal for configuring LLM providers. Delegates to provider-specific
+ * modal components based on the provider type.
+ *
+ * SOLID Refactoring: Reduced from 1,178 lines to ~150 lines.
+ * Provider-specific logic extracted to:
+ * - NexusProviderModal (WebLLM/local GPU)
+ * - OllamaProviderModal (local server)
+ * - LMStudioProviderModal (local server)
+ * - GenericProviderModal (API-key providers)
+ */
+
+import { Modal, App } from 'obsidian';
+import { LLMProviderConfig } from '../types';
+import { LLMProviderManager } from '../services/llm/providers/ProviderManager';
+import { StaticModelsService } from '../services/StaticModelsService';
+import {
+  IProviderModal,
+  ProviderModalConfig,
+  ProviderModalDependencies,
+  OAuthModalConfig,
+  SecondaryOAuthProviderConfig,
+} from './llm-provider/types';
+import { NexusProviderModal } from './llm-provider/providers/NexusProviderModal';
+import { OllamaProviderModal } from './llm-provider/providers/OllamaProviderModal';
+import { LMStudioProviderModal } from './llm-provider/providers/LMStudioProviderModal';
+import { GenericProviderModal } from './llm-provider/providers/GenericProviderModal';
+
+/**
+ * Configuration for LLMProviderModal
+ * Kept for backward compatibility with existing callers
+ */
+export interface LLMProviderModalConfig {
+  providerId: string;
+  providerName: string;
+  keyFormat: string;
+  signupUrl: string;
+  config: LLMProviderConfig;
+  oauthConfig?: OAuthModalConfig;
+  secondaryOAuthProvider?: SecondaryOAuthProviderConfig;
+  onSave: (config: LLMProviderConfig) => Promise<void>;
+  /** If true, hide the API key input — provider uses OAuth exclusively */
+  oauthOnly?: boolean;
+}
+
+/**
+ * LLM Provider Configuration Modal
+ * Thin orchestrator that delegates to provider-specific modal components
+ */
+export class LLMProviderModal extends Modal {
+  private config: LLMProviderModalConfig;
+  private providerManager: LLMProviderManager;
+  private staticModelsService: StaticModelsService;
+
+  // Provider-specific modal component
+  private providerModal: IProviderModal | null = null;
+
+  // Auto-save state
+  private autoSaveTimeout: number | null = null;
+  private statusResetTimeout: number | null = null;
+  private saveStatusEl: HTMLElement | null = null;
+
+  constructor(app: App, config: LLMProviderModalConfig, providerManager: LLMProviderManager) {
+    super(app);
+    this.config = config;
+    this.providerManager = providerManager;
+    this.staticModelsService = StaticModelsService.getInstance();
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass('llm-provider-modal');
+    if (this.config.providerId === 'webllm') {
+      contentEl.addClass('llm-provider-modal-nexus');
+    }
+
+    // Modal title
+    contentEl.createEl('h1', { text: `Configure ${this.config.providerName}` });
+
+    // Provider content container
+    const providerContainer = contentEl.createDiv('provider-modal-content');
+
+    // Create provider-specific modal component
+    this.providerModal = this.createProviderModal();
+    this.providerModal.render(providerContainer);
+
+    // Footer with status and close button
+    this.createFooter(contentEl);
+  }
+
+  onClose(): void {
+    const { contentEl } = this;
+
+    // Clean up provider modal
+    if (this.providerModal) {
+      this.providerModal.destroy();
+      this.providerModal = null;
+    }
+
+    // Clean up auto-save timeout
+    if (this.autoSaveTimeout) {
+      window.clearTimeout(this.autoSaveTimeout);
+      this.autoSaveTimeout = null;
+    }
+    if (this.statusResetTimeout) {
+      window.clearTimeout(this.statusResetTimeout);
+      this.statusResetTimeout = null;
+    }
+
+    contentEl.empty();
+  }
+
+  /**
+   * Create the appropriate provider modal based on provider type
+   */
+  private createProviderModal(): IProviderModal {
+    const deps = this.createDependencies();
+    const modalConfig = this.createProviderConfig();
+
+    switch (this.config.providerId) {
+      case 'webllm':
+        return new NexusProviderModal(modalConfig, deps);
+
+      case 'ollama':
+        return new OllamaProviderModal(modalConfig, deps);
+
+      case 'lmstudio':
+        return new LMStudioProviderModal(modalConfig, deps);
+
+      default:
+        return new GenericProviderModal(modalConfig, deps);
+    }
+  }
+
+  /**
+   * Create dependencies for provider modals
+   */
+  private createDependencies(): ProviderModalDependencies {
+    return {
+      app: this.app,
+      vault: this.app.vault,
+      providerManager: this.providerManager,
+      staticModelsService: this.staticModelsService,
+    };
+  }
+
+  /**
+   * Create provider modal config
+   */
+  private createProviderConfig(): ProviderModalConfig {
+    return {
+      providerId: this.config.providerId,
+      providerName: this.config.providerName,
+      keyFormat: this.config.keyFormat,
+      signupUrl: this.config.signupUrl,
+      config: { ...this.config.config },
+      onConfigChange: (config: LLMProviderConfig) => this.handleConfigChange(config),
+      oauthConfig: this.config.oauthConfig,
+      secondaryOAuthProvider: this.config.secondaryOAuthProvider,
+      oauthOnly: this.config.oauthOnly,
+    };
+  }
+
+  /**
+   * Handle configuration changes from provider modals
+   */
+  private async handleConfigChange(config: LLMProviderConfig): Promise<void> {
+    this.config.config = config;
+
+    // OAuth connections must save immediately — debounce gets cancelled by onClose
+    if (config.oauth?.connected) {
+      if (this.autoSaveTimeout) {
+        window.clearTimeout(this.autoSaveTimeout);
+        this.autoSaveTimeout = null;
+      }
+      await this.persistConfig(config);
+    } else {
+      this.autoSave();
+    }
+  }
+
+  /**
+   * Auto-save with debouncing and visual feedback
+   */
+  private autoSave(): void {
+    if (this.autoSaveTimeout) {
+      window.clearTimeout(this.autoSaveTimeout);
+    }
+
+    this.showSaveStatus('Saving...');
+
+    this.autoSaveTimeout = window.setTimeout(() => {
+      // Get final config from provider modal
+      if (this.providerModal) {
+        this.config.config = this.providerModal.getConfig();
+      }
+
+      void this.persistConfig(this.config.config);
+    }, 500);
+  }
+
+  /**
+   * Persist provider settings and update the footer status from the real result.
+   */
+  private async persistConfig(config: LLMProviderConfig): Promise<void> {
+    if (this.statusResetTimeout) {
+      window.clearTimeout(this.statusResetTimeout);
+      this.statusResetTimeout = null;
+    }
+
+    this.showSaveStatus('Saving...');
+
+    try {
+      await this.config.onSave(config);
+      this.showSaveStatus('Saved');
+      this.statusResetTimeout = window.setTimeout(() => {
+        this.showSaveStatus('Ready');
+        this.statusResetTimeout = null;
+      }, 2000);
+    } catch {
+      this.showSaveStatus('Save failed');
+    }
+  }
+
+  /**
+   * Create footer with status and close button
+   */
+  private createFooter(contentEl: HTMLElement): void {
+    const footer = contentEl.createDiv('modal-status-container llm-provider-status-container');
+
+    // Save status indicator
+    this.saveStatusEl = footer.createDiv('save-status');
+    this.showSaveStatus('Ready');
+
+    // Close button
+    const buttonContainer = footer.createDiv('modal-button-container');
+    const closeBtn = buttonContainer.createEl('button', { text: 'Close', cls: 'mod-cta' });
+    closeBtn.addEventListener('click', () => this.close());
+  }
+
+  /**
+   * Show save status with visual feedback
+   */
+  private showSaveStatus(status: string): void {
+    if (this.saveStatusEl) {
+      this.saveStatusEl.textContent = status;
+      this.saveStatusEl.className = `save-status save-status-${status.toLowerCase()}`;
+    }
+  }
+}

@@ -1,0 +1,196 @@
+import { Plugin, Notice, Platform } from 'obsidian';
+import { Settings } from './settings';
+import { ServiceManager } from './core/ServiceManager';
+import { PluginLifecycleManager, type PluginLifecycleConfig } from './core/PluginLifecycleManager';
+import { BRAND_NAME } from './constants/branding';
+import { supportsMCPBridge } from './utils/platform';
+import { WasmEnsurer } from './utils/WasmEnsurer';
+import type { PluginServices } from './types/plugin/PluginTypes';
+
+// MCPConnector type for desktop-only dynamic import
+type MCPConnectorType = import('./connector').MCPConnector;
+
+export default class NexusPlugin extends Plugin {
+    public settings!: Settings;
+    private connector!: MCPConnectorType;
+    private serviceManager!: ServiceManager;
+    private lifecycleManager!: PluginLifecycleManager;
+
+    /**
+     * Get a service asynchronously
+     */
+    public async getService<T>(name: string, _timeoutMs?: number): Promise<T | null> {
+        if (!this.serviceManager) {
+            return null;
+        }
+        try {
+            return await this.serviceManager.getService<T>(name);
+        } catch (error) {
+            console.error(`[${BRAND_NAME}] Failed to get service ${name}:`, error);
+            return null;
+        }
+    }
+
+    // Get service if already initialized (non-blocking)
+    public getServiceIfReady<T>(name: string): T | null {
+        if (!this.serviceManager) {
+            return null;
+        }
+        return this.serviceManager.getServiceIfReady<T>(name);
+    }
+
+    // Service registry - for backward compatibility
+    public get services(): PluginServices {
+        const services: PluginServices = {};
+        if (!this.serviceManager) {
+            return services;
+        }
+        // Return only ready services for immediate access
+        // These are used by agent tools for activity recording and UI components
+        const serviceNames = ['memoryService', 'workspaceService', 'sessionService', 'conversationService', 'customPromptStorageService'];
+        for (const name of serviceNames) {
+            const service = this.serviceManager.getServiceIfReady(name);
+            if (service) {
+                services[name] = service;
+            }
+        }
+        return services;
+    }
+
+    onload(): void {
+        void this.loadPlugin();
+    }
+
+    private async loadPlugin(): Promise<void> {
+        try {
+            // Ensure sqlite3.wasm exists on every platform before the hybrid
+            // storage adapter tries to initialize SQLite-backed sync.
+            const wasmEnsurer = new WasmEnsurer(this);
+            const wasmReady = await wasmEnsurer.ensureWasmExists();
+            if (!wasmReady) {
+                console.warn(`[${BRAND_NAME}] SQLite WASM not available - some features may be limited`);
+            }
+
+            // Create service manager and settings
+            this.settings = new Settings(this);
+            this.serviceManager = new ServiceManager(this.app, this);
+
+            // MCP server and connector only work on desktop (requires Node.js)
+            // Use dynamic imports to avoid bundling Node.js dependencies on mobile
+            if (supportsMCPBridge()) {
+                try {
+                    // Dynamic import - only loads on desktop, avoids Node.js deps on mobile
+                    const { MCPConnector } = await import('./connector');
+
+                    // Initialize connector skeleton (no agents yet)
+                    this.connector = new MCPConnector(this.app, this);
+                } catch (error) {
+                    console.error(`[${BRAND_NAME}] Failed to initialize MCP connector:`, error);
+                    // Continue without MCP - chat still works
+                }
+            }
+
+            // Register OAuth providers (desktop only — needs local callback server)
+            if (Platform.isDesktop) {
+                try {
+                    const { OAuthService } = await import('./services/oauth/OAuthService');
+                    const { OpenRouterOAuthProvider } = await import('./services/oauth/providers/OpenRouterOAuthProvider');
+                    const { OpenAICodexOAuthProvider } = await import('./services/oauth/providers/OpenAICodexOAuthProvider');
+                    const { GithubCopilotOAuthProvider } = await import('./services/oauth/providers/GithubCopilotOAuthProvider');
+
+                    const oauthService = OAuthService.getInstance();
+                    oauthService.registerProvider(new OpenRouterOAuthProvider());
+                    oauthService.registerProvider(new OpenAICodexOAuthProvider());
+                    oauthService.registerProvider(new GithubCopilotOAuthProvider());
+                } catch (error) {
+                    console.error(`[${BRAND_NAME}] Failed to initialize OAuth providers:`, error);
+                    // Continue without OAuth — manual API key entry still works
+                }
+            }
+
+            // Create and initialize lifecycle manager
+            const lifecycleConfig: PluginLifecycleConfig = {
+                plugin: this,
+                app: this.app,
+                serviceManager: this.serviceManager,
+                settings: this.settings,
+                connector: this.connector, // May be undefined on mobile
+                manifest: this.manifest
+            };
+
+            this.lifecycleManager = new PluginLifecycleManager(lifecycleConfig);
+            await this.lifecycleManager.initialize();
+            this.scheduleLocalCliReconcile();
+
+        } catch (error) {
+            console.error(`[${BRAND_NAME}] Plugin loading failed:`, error);
+            new Notice(`${BRAND_NAME}: Plugin failed to load. Check console for details.`);
+            throw error;
+        }
+    }
+
+    /** Refresh an existing Nexus-owned CLI after a desktop plugin update. */
+    private scheduleLocalCliReconcile(): void {
+        if (!Platform.isDesktop) return;
+
+        let cancelled = false;
+        const timeoutId = window.setTimeout(() => {
+            void import('./services/cli/LocalCliInstaller')
+                .then(({ LocalCliInstaller }) => {
+                    if (!cancelled) new LocalCliInstaller().reconcile();
+                })
+                .catch((error: unknown) => {
+                    if (!cancelled) {
+                        console.error(`[${BRAND_NAME}] Failed to refresh the installed local CLI:`, error);
+                    }
+                });
+        }, 0);
+
+        this.register(() => {
+            cancelled = true;
+            window.clearTimeout(timeoutId);
+        });
+    }
+
+    onunload(): void {
+        // Free the MCP socket path here, synchronously, before anything below
+        // gets a chance to await. unloadPlugin() runs embedding shutdown, a
+        // state save and a SQLite close before it reaches the connector, which
+        // is tens of seconds — and Obsidian loads the replacement instance
+        // immediately, so by the time the old instance closed its listener it
+        // was unlinking the *new* instance's socket. See #337.
+        this.connector?.releaseIpcSocket();
+        void this.unloadPlugin();
+    }
+
+    private async unloadPlugin(): Promise<void> {
+        // Shutdown lifecycle manager first (handles UI cleanup)
+        if (this.lifecycleManager) {
+            await this.lifecycleManager.shutdown();
+        }
+
+        // Stop connector
+        if (this.connector) {
+            await this.connector.stop();
+        }
+
+        // Clean up OAuth singleton (cancels any in-flight flow, releases callback server)
+        if (Platform.isDesktop) {
+            try {
+                const { OAuthService } = await import('./services/oauth/OAuthService');
+                OAuthService.resetInstance();
+            } catch {
+                // OAuth may not have been loaded; ignore
+            }
+        }
+
+        // Service manager cleanup handled by lifecycle manager
+    }
+
+    /**
+     * Get service manager for direct access if needed
+     */
+    public getServiceContainer(): ServiceManager {
+        return this.serviceManager;
+    }
+}

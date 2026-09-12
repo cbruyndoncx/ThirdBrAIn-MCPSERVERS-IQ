@@ -1,0 +1,688 @@
+/**
+ * Export CLI-first tool schemas from the live ToolCliNormalizer path.
+ *
+ * Usage:
+ *   node scripts/generate-tool-schemas.mjs
+ *   node scripts/generate-tool-schemas.mjs --selector "storage"
+ *   node scripts/generate-tool-schemas.mjs --selector "storage move, content read"
+ *   node scripts/generate-tool-schemas.mjs --output docs/generated/storage-schemas.json
+ *   node scripts/generate-tool-schemas.mjs --output -
+ *   node scripts/generate-tool-schemas.mjs --release-version 5.17.2
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import Module from 'node:module';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.join(__dirname, '..');
+const obsidianMockPath = path.join(projectRoot, 'tests', 'mocks', 'obsidian', 'index.ts');
+const require = Module.createRequire(import.meta.url);
+
+const DEFAULT_OUTPUT = path.join('docs', 'generated', 'cli-first-tool-schemas.json');
+const DEFAULT_SCHEMAS_DIR = 'schemas';
+const DEFAULT_SELECTOR = '--help';
+const originalTsLoader = Module._extensions['.ts'];
+const originalLoad = Module._load;
+
+function parseArgs(argv) {
+  const options = {
+    output: DEFAULT_OUTPUT,
+    schemasDir: DEFAULT_SCHEMAS_DIR,
+    releaseVersion: undefined,
+    check: false,
+    selectors: [],
+    help: false
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    if (arg === '--help' || arg === '-h') {
+      options.help = true;
+      continue;
+    }
+
+    if (arg === '--check') {
+      options.check = true;
+      continue;
+    }
+
+    if (arg === '--output') {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error('Missing value after --output');
+      }
+      options.output = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--output=')) {
+      options.output = arg.slice('--output='.length);
+      continue;
+    }
+
+    if (arg === '--schemas-dir') {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error('Missing value after --schemas-dir');
+      }
+      options.schemasDir = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--schemas-dir=')) {
+      options.schemasDir = arg.slice('--schemas-dir='.length);
+      continue;
+    }
+
+    if (arg === '--release-version') {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error('Missing value after --release-version');
+      }
+      options.releaseVersion = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--release-version=')) {
+      options.releaseVersion = arg.slice('--release-version='.length);
+      continue;
+    }
+
+    if (arg === '--selector') {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error('Missing value after --selector');
+      }
+      options.selectors.push(value);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--selector=')) {
+      options.selectors.push(arg.slice('--selector='.length));
+      continue;
+    }
+
+    throw new Error(`Unknown argument: ${arg}`);
+  }
+
+  return options;
+}
+
+function printUsage() {
+  console.log([
+    'Export live CLI-first tool schemas from the runtime normalizer.',
+    '',
+    'Options:',
+    `  --output <path>      Output file path (default: ${DEFAULT_OUTPUT})`,
+    `  --selector <value>   CLI selector string, same shape as getTools (default: ${DEFAULT_SELECTOR})`,
+    `  --schemas-dir <path> Versioned schema root (default: ${DEFAULT_SCHEMAS_DIR})`,
+    '  --release-version    Generate CLI + MCP catalogs for a Nexus release',
+    '  --check              Fail if the latest committed bundle differs from runtime',
+    '  --help               Show this message',
+    '',
+    'Examples:',
+    '  node scripts/generate-tool-schemas.mjs',
+    '  node scripts/generate-tool-schemas.mjs --selector "storage"',
+    '  node scripts/generate-tool-schemas.mjs --selector "storage move, content read"',
+    '  node scripts/generate-tool-schemas.mjs --output docs/generated/task-tools.json --selector "task"',
+    '  node scripts/generate-tool-schemas.mjs --output - --selector "prompt generate-image"',
+    '  node scripts/generate-tool-schemas.mjs --release-version 5.17.2',
+    '  node scripts/generate-tool-schemas.mjs --check',
+  ].join('\n'));
+}
+
+function makeMockFn(implementation) {
+  let currentImpl = implementation || (() => undefined);
+  const fn = (...args) => currentImpl(...args);
+  fn.mockImplementation = (next) => {
+    currentImpl = next;
+    return fn;
+  };
+  fn.mockReturnValue = (value) => {
+    currentImpl = () => value;
+    return fn;
+  };
+  fn.mockResolvedValue = (value) => {
+    currentImpl = async () => value;
+    return fn;
+  };
+  fn.mockRejectedValue = (value) => {
+    currentImpl = async () => {
+      throw value;
+    };
+    return fn;
+  };
+  return fn;
+}
+
+function createMockElement(tagName = 'div') {
+  return {
+    tagName: String(tagName).toUpperCase(),
+    classList: {
+      add() {},
+      remove() {},
+      toggle() {},
+      contains() {
+        return false;
+      }
+    },
+    addClass() {},
+    removeClass() {},
+    hasClass() {
+      return false;
+    },
+    toggleClass() {},
+    setText(text) {
+      this.textContent = text;
+    },
+    createEl(tag) {
+      return createMockElement(tag);
+    },
+    createDiv() {
+      return createMockElement('div');
+    },
+    createSpan() {
+      return createMockElement('span');
+    },
+    empty() {},
+    remove() {},
+    appendChild() {},
+    removeChild() {},
+    addEventListener() {},
+    removeEventListener() {},
+    setAttribute() {},
+    getAttribute() {
+      return null;
+    },
+    removeAttribute() {},
+    querySelector() {
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+    parentElement: null,
+    style: {},
+    textContent: '',
+    innerHTML: '',
+    value: '',
+    rows: 0,
+    scrollTop: 0,
+    scrollHeight: 0,
+    focus() {}
+  };
+}
+
+function installGlobals() {
+  globalThis.jest = { fn: makeMockFn };
+  globalThis.document = {
+    createElement: createMockElement,
+    body: createMockElement('body')
+  };
+  globalThis.window = {
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    navigator: {
+      clipboard: {
+        async writeText() {},
+        async readText() {
+          return '';
+        }
+      }
+    }
+  };
+  try {
+    globalThis.navigator = globalThis.window.navigator;
+  } catch {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: globalThis.window.navigator
+    });
+  }
+  globalThis.performance = globalThis.performance || { now: () => Date.now() };
+}
+
+function installTypeScriptLoader() {
+  Module._extensions['.ts'] = function compileTypeScript(module, filename) {
+    const source = fs.readFileSync(filename, 'utf8');
+    const { outputText } = ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2020,
+        esModuleInterop: true,
+        allowSyntheticDefaultImports: true,
+        moduleResolution: ts.ModuleResolutionKind.NodeJs,
+        skipLibCheck: true
+      },
+      fileName: filename
+    });
+    module._compile(outputText, filename);
+  };
+}
+
+function installObsidianMock() {
+  Module._load = function patchedLoad(request, parent, isMain) {
+    if (request === 'obsidian') {
+      const base = originalLoad.call(this, obsidianMockPath, parent, isMain);
+      class Events {
+        on() {
+          return {};
+        }
+
+        off() {}
+
+        trigger() {}
+      }
+      return { ...base, Events };
+    }
+
+    return originalLoad.call(this, request, parent, isMain);
+  };
+}
+
+function restoreLoaders() {
+  if (originalTsLoader) {
+    Module._extensions['.ts'] = originalTsLoader;
+  } else {
+    delete Module._extensions['.ts'];
+  }
+  Module._load = originalLoad;
+}
+
+function createRuntime() {
+  const { App, Plugin } = require('obsidian');
+
+  const app = new App();
+  app.vault.getName = () => 'claudesidian-mcp';
+  app.vault.getRoot = () => ({ children: [] });
+  app.vault.getMarkdownFiles = () => [];
+  app.vault.getFiles = () => [];
+  app.vault.getAllLoadedFiles = () => [];
+  app.vault.getAbstractFileByPath = () => null;
+  app.vault.createFolder = async () => undefined;
+  app.vault.createBinary = async () => undefined;
+  app.vault.create = async () => undefined;
+  app.vault.adapter = {
+    exists: async () => false,
+    read: async () => '',
+    write: async () => undefined,
+    append: async () => undefined,
+    stat: async () => ({ mtime: Date.now(), ctime: Date.now(), size: 0 }),
+    mkdir: async () => undefined,
+    remove: async () => undefined,
+    rename: async () => undefined,
+    list: async () => ({ files: [], folders: [] }),
+    writeBinary: async () => undefined
+  };
+
+  app.workspace.onLayoutReady = (callback) => callback();
+  app.workspace.on = () => ({});
+  app.workspace.off = () => undefined;
+  app.workspace.getLeavesOfType = () => [];
+  app.workspace.getMostRecentLeaf = () => null;
+  app.workspace.getLeaf = () => null;
+  app.workspace.openLinkText = async () => undefined;
+  app.workspace.activeLeaf = null;
+  app.plugins = undefined;
+
+  const plugin = new Plugin(app, { id: 'nexus', name: 'Nexus', version: '0.0.0' });
+  plugin.loadData = async () => ({});
+  plugin.saveData = async () => undefined;
+  plugin.registerEvent = () => undefined;
+  plugin.registerDomEvent = () => undefined;
+  plugin.addStatusBarItem = () => createMockElement('div');
+
+  return { app, plugin };
+}
+
+function instantiateAgents() {
+  const { DEFAULT_LLM_PROVIDER_SETTINGS } = require(path.join(projectRoot, 'src', 'types', 'llm', 'ProviderTypes'));
+  const { ToolCliNormalizer } = require(path.join(projectRoot, 'src', 'agents', 'toolManager', 'services', 'ToolCliNormalizer'));
+  const { ContentManagerAgent } = require(path.join(projectRoot, 'src', 'agents', 'contentManager', 'contentManager'));
+  const { StorageManagerAgent } = require(path.join(projectRoot, 'src', 'agents', 'storageManager', 'storageManager'));
+  const { SearchManagerAgent } = require(path.join(projectRoot, 'src', 'agents', 'searchManager', 'searchManager'));
+  const { MemoryManagerAgent } = require(path.join(projectRoot, 'src', 'agents', 'memoryManager', 'memoryManager'));
+  const { PromptManagerAgent } = require(path.join(projectRoot, 'src', 'agents', 'promptManager', 'promptManager'));
+  const { CanvasManagerAgent } = require(path.join(projectRoot, 'src', 'agents', 'canvasManager', 'canvasManager'));
+  const { BaseManagerAgent } = require(path.join(projectRoot, 'src', 'agents', 'baseManager', 'baseManager'));
+  const { TaskManagerAgent } = require(path.join(projectRoot, 'src', 'agents', 'taskManager', 'taskManager'));
+  const { IngestManagerAgent } = require(path.join(projectRoot, 'src', 'agents', 'ingestManager', 'ingestManager'));
+  const { AgentManager } = require(path.join(projectRoot, 'src', 'services', 'AgentManager'));
+  const { ElevenLabsAgent } = require(path.join(projectRoot, 'src', 'agents', 'apps', 'elevenlabs', 'ElevenLabsAgent'));
+  const { ComposerAgent } = require(path.join(projectRoot, 'src', 'agents', 'apps', 'composer', 'ComposerAgent'));
+  const { WebToolsAgent } = require(path.join(projectRoot, 'src', 'agents', 'apps', 'webTools', 'WebToolsAgent'));
+  const { SkillsAgent } = require(path.join(projectRoot, 'src', 'agents', 'apps', 'skills', 'SkillsAgent'));
+  const { DataAnalysisAgent } = require(path.join(projectRoot, 'src', 'agents', 'apps', 'dataAnalysis', 'DataAnalysisAgent'));
+
+  const { app, plugin } = createRuntime();
+  const llmSettings = JSON.parse(JSON.stringify(DEFAULT_LLM_PROVIDER_SETTINGS));
+  llmSettings.providers.google.apiKey = 'mock-google-key';
+  llmSettings.providers.google.enabled = true;
+  llmSettings.providers.openai.apiKey = 'mock-openai-key';
+  llmSettings.providers.openai.enabled = true;
+  llmSettings.providers.openrouter.apiKey = 'mock-openrouter-key';
+  llmSettings.providers.openrouter.enabled = true;
+  llmSettings.defaultImageModel = {
+    provider: 'google',
+    model: 'gemini-3.1-flash-image'
+  };
+  llmSettings.defaultSpeechModel = {
+    provider: 'openai',
+    model: 'gpt-4o-mini-tts',
+    voice: 'marin',
+    source: 'user'
+  };
+
+  const settings = {
+    settings: {
+      llmProviders: llmSettings,
+      customPrompts: { prompts: [] }
+    }
+  };
+
+  const providerManager = {
+    getLLMService: () => ({}),
+    getSettings: () => llmSettings
+  };
+
+  const agentManager = new AgentManager(app, plugin, undefined);
+  const usageTracker = {};
+  const memoryService = {};
+  const workspaceService = {
+    listWorkspaces: async () => [],
+    getWorkspace: async () => null
+  };
+  const taskService = {
+    getWorkspaceSummary: async () => ({})
+  };
+
+  const agents = [
+    new ContentManagerAgent(app),
+    new StorageManagerAgent(app),
+    new SearchManagerAgent(app),
+    new MemoryManagerAgent(app, plugin, memoryService, workspaceService),
+    new PromptManagerAgent(settings, providerManager, agentManager, usageTracker, app, app.vault, null),
+    new CanvasManagerAgent(app),
+    // Registered in the plugin only when Bases is enabled in the vault
+    // (AgentInitializationService.initializeBaseManager), but its tools are part
+    // of the advertised catalog, so it is always exported here.
+    new BaseManagerAgent(app),
+    new TaskManagerAgent(app, plugin, taskService),
+    new IngestManagerAgent(app.vault, () => null),
+    new ElevenLabsAgent(),
+    new ComposerAgent(),
+    new WebToolsAgent(),
+    new SkillsAgent(),
+    // Desktop-only in the plugin (AppManager gates it behind isDesktop), but its
+    // tools are part of the advertised catalog, so it is always exported here.
+    new DataAnalysisAgent()
+  ];
+
+  for (const agent of agents) {
+    if (typeof agent.setApp === 'function') {
+      agent.setApp(app);
+    }
+    if (typeof agent.setVault === 'function') {
+      agent.setVault(app.vault);
+    }
+  }
+
+  const registry = new Map();
+  for (const agent of agents) {
+    registry.set(agent.name, agent);
+  }
+
+  return {
+    app,
+    agents,
+    registry,
+    normalizer: new ToolCliNormalizer(registry)
+  };
+}
+
+function collectSchemas(agents, registry, normalizer, selectorInput, generatedAt = new Date().toISOString()) {
+  const requests = normalizer.normalizeDiscoveryRequests({ tool: selectorInput });
+  const tools = [];
+
+  for (const request of requests) {
+    const agent = registry.get(request.agent);
+    if (!agent) {
+      throw new Error(`Agent "${request.agent}" not found`);
+    }
+
+    if (!request.tools || request.tools.length === 0) {
+      for (const tool of agent.getTools()) {
+        tools.push(normalizer.buildCliSchema(agent.name, tool));
+      }
+      continue;
+    }
+
+    for (const toolSlug of request.tools) {
+      const tool = agent.getTool(toolSlug);
+      if (!tool) {
+        throw new Error(`Tool "${toolSlug}" not found in agent "${agent.name}"`);
+      }
+      tools.push(normalizer.buildCliSchema(agent.name, tool));
+    }
+  }
+
+  tools.sort((left, right) => left.command.localeCompare(right.command));
+
+  const byAgent = {};
+  for (const tool of tools) {
+    byAgent[tool.agent] = (byAgent[tool.agent] || 0) + 1;
+  }
+
+  return {
+    schemaVersion: 1,
+    generatedAt,
+    selector: selectorInput,
+    toolCount: tools.length,
+    agentCount: Object.keys(byAgent).length,
+    agents: byAgent,
+    tools
+  };
+}
+
+function collectMcpSchemas(runtime, releaseVersion, generatedAt) {
+  const { ToolManagerAgent } = require(path.join(projectRoot, 'src', 'agents', 'toolManager', 'toolManager'));
+  const { buildToolManagerMcpCatalog } = require(path.join(
+    projectRoot,
+    'src',
+    'agents',
+    'toolManager',
+    'services',
+    'ToolManagerMcpCatalog'
+  ));
+  const toolManager = new ToolManagerAgent(
+    runtime.app,
+    runtime.registry,
+    { workspaces: [], customAgents: [], vaultRoot: [] }
+  );
+  const tools = buildToolManagerMcpCatalog(toolManager);
+
+  return {
+    schemaVersion: 1,
+    nexusVersion: releaseVersion,
+    generatedAt,
+    toolCount: tools.length,
+    tools,
+  };
+}
+
+function writeJson(filePath, payload) {
+  const resolved = path.resolve(process.cwd(), filePath);
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.writeFileSync(resolved, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  return resolved;
+}
+
+function writeReleaseBundle(options, runtime, cliPayload) {
+  const releaseVersion = options.releaseVersion;
+  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(releaseVersion)) {
+    throw new Error(`Invalid release version: ${releaseVersion}`);
+  }
+
+  const generatedAt = cliPayload.generatedAt;
+  cliPayload.nexusVersion = releaseVersion;
+  const mcpPayload = collectMcpSchemas(runtime, releaseVersion, generatedAt);
+  const releaseDir = path.join(options.schemasDir, releaseVersion);
+  const cliRelativePath = path.posix.join(releaseVersion, 'cli-tools.json');
+  const mcpRelativePath = path.posix.join(releaseVersion, 'mcp-tools.json');
+  const cliPath = writeJson(path.join(releaseDir, 'cli-tools.json'), cliPayload);
+  const mcpPath = writeJson(path.join(releaseDir, 'mcp-tools.json'), mcpPayload);
+
+  const manifestPath = path.join(options.schemasDir, 'manifest.json');
+  const resolvedManifest = path.resolve(process.cwd(), manifestPath);
+  const existing = fs.existsSync(resolvedManifest)
+    ? JSON.parse(fs.readFileSync(resolvedManifest, 'utf8'))
+    : { schemaVersion: 1, latest: releaseVersion, versions: {} };
+  const versions = {
+    ...(existing.versions || {}),
+    [releaseVersion]: {
+      cli: cliRelativePath,
+      mcp: mcpRelativePath,
+    },
+  };
+  const manifest = {
+    schemaVersion: 1,
+    latest: releaseVersion,
+    versions: Object.fromEntries(
+      Object.entries(versions).sort(([left], [right]) => left.localeCompare(right, undefined, { numeric: true }))
+    ),
+  };
+  writeJson(manifestPath, manifest);
+
+  // Compatibility aliases for callers that have not adopted the manifest yet.
+  writeJson('cli-first-tool-schemas.json', cliPayload);
+  writeJson('tool-schemas.json', mcpPayload);
+
+  console.log(JSON.stringify({
+    releaseVersion,
+    manifest: resolvedManifest,
+    cli: cliPath,
+    mcp: mcpPath,
+    cliToolCount: cliPayload.toolCount,
+    mcpToolCount: mcpPayload.toolCount,
+  }, null, 2));
+}
+
+function assertEqual(actual, expected, label) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label} is stale. Run npm run schemas:release after setting the package version.`);
+  }
+}
+
+function checkReleaseBundle(options, runtime, liveCliPayload) {
+  const packageVersion = JSON.parse(
+    fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')
+  ).version;
+  const schemasRoot = path.resolve(process.cwd(), options.schemasDir);
+  const manifest = JSON.parse(fs.readFileSync(path.join(schemasRoot, 'manifest.json'), 'utf8'));
+  if (manifest.latest !== packageVersion) {
+    throw new Error(
+      `Schema manifest latest (${manifest.latest}) does not match package version (${packageVersion})`
+    );
+  }
+  const entry = manifest.versions?.[packageVersion];
+  if (!entry) {
+    throw new Error(`Schema manifest has no entry for package version ${packageVersion}`);
+  }
+
+  const cli = JSON.parse(fs.readFileSync(path.join(schemasRoot, entry.cli), 'utf8'));
+  const mcp = JSON.parse(fs.readFileSync(path.join(schemasRoot, entry.mcp), 'utf8'));
+  const cliAlias = JSON.parse(fs.readFileSync(path.join(projectRoot, 'cli-first-tool-schemas.json'), 'utf8'));
+  const mcpAlias = JSON.parse(fs.readFileSync(path.join(projectRoot, 'tool-schemas.json'), 'utf8'));
+  const liveMcp = collectMcpSchemas(runtime, packageVersion, liveCliPayload.generatedAt);
+
+  if (cli.nexusVersion !== packageVersion || mcp.nexusVersion !== packageVersion) {
+    throw new Error(`Schema artifacts do not identify package version ${packageVersion}`);
+  }
+  assertEqual(cliAlias, cli, 'CLI compatibility catalog');
+  assertEqual(mcpAlias, mcp, 'MCP compatibility catalog');
+  assertEqual(cli.tools, liveCliPayload.tools, 'Versioned CLI catalog');
+  assertEqual(mcp.tools, liveMcp.tools, 'Versioned MCP catalog');
+  if (cli.toolCount !== cli.tools.length || mcp.toolCount !== mcp.tools.length) {
+    throw new Error('Schema artifact toolCount does not match its tools array');
+  }
+
+  console.log(JSON.stringify({
+    checkedVersion: packageVersion,
+    cliToolCount: cli.toolCount,
+    mcpToolCount: mcp.toolCount,
+  }, null, 2));
+}
+
+function writeOutput(outputPath, payload) {
+  const json = `${JSON.stringify(payload, null, 2)}\n`;
+  if (outputPath === '-') {
+    process.stdout.write(json);
+    return;
+  }
+
+  const resolvedOutput = path.resolve(process.cwd(), outputPath);
+  fs.mkdirSync(path.dirname(resolvedOutput), { recursive: true });
+  fs.writeFileSync(resolvedOutput, json, 'utf8');
+  console.log(JSON.stringify({
+    outPath: resolvedOutput,
+    toolCount: payload.toolCount,
+    agentCount: payload.agentCount,
+    agents: payload.agents
+  }, null, 2));
+}
+
+function main() {
+  const options = parseArgs(process.argv.slice(2));
+  if (options.help) {
+    printUsage();
+    return;
+  }
+
+  if (options.releaseVersion === 'package') {
+    options.releaseVersion = JSON.parse(
+      fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')
+    ).version;
+  }
+
+  const selectorInput = options.selectors.length > 0
+    ? options.selectors.join(', ')
+    : DEFAULT_SELECTOR;
+
+  installGlobals();
+  installTypeScriptLoader();
+  installObsidianMock();
+
+  try {
+    const runtime = instantiateAgents();
+    const generatedAt = new Date().toISOString();
+    const payload = collectSchemas(
+      runtime.agents,
+      runtime.registry,
+      runtime.normalizer,
+      options.releaseVersion ? DEFAULT_SELECTOR : selectorInput,
+      generatedAt,
+    );
+    if (options.check) {
+      checkReleaseBundle(options, runtime, payload);
+    } else if (options.releaseVersion) {
+      writeReleaseBundle(options, runtime, payload);
+    } else {
+      writeOutput(options.output, payload);
+    }
+  } finally {
+    restoreLoaders();
+  }
+}
+
+main();

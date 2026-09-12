@@ -1,0 +1,450 @@
+/**
+ * Location: /src/core/PluginLifecycleManager.ts
+ *
+ * Plugin Lifecycle Manager - Handles plugin initialization, startup, and shutdown logic
+ *
+ * This service extracts complex lifecycle management from the main plugin class,
+ * coordinating service initialization, background tasks, and cleanup procedures.
+ * Used by main.ts to manage the plugin's lifecycle phases in a structured way.
+ */
+
+import { Plugin, Platform, App, PluginManifest } from 'obsidian';
+import { ServiceManager } from './ServiceManager';
+import { Settings } from '../settings';
+import { ServiceRegistrar } from './services/ServiceRegistrar';
+import { MaintenanceCommandManager } from './commands/MaintenanceCommandManager';
+import { InlineEditCommandManager } from './commands/InlineEditCommandManager';
+import { ReadAloudCommandManager } from './commands/ReadAloudCommandManager';
+import { ChatUIManager } from './ui/ChatUIManager';
+import { TaskBoardUIManager } from './ui/TaskBoardUIManager';
+import { BackgroundProcessor } from './background/BackgroundProcessor';
+import { SettingsTabManager } from './settings/SettingsTabManager';
+import { EmbeddingManager } from '../services/embeddings/EmbeddingManager';
+import { VaultIngestionManager } from './ingest/VaultIngestionManager';
+import type { ServiceCreationContext } from './services/ServiceDefinitions';
+import type { HybridStorageAdapter } from '../database/adapters/HybridStorageAdapter';
+import type { ChatTraceService } from '../services/chat/ChatTraceService';
+
+// Type-only import to avoid bundling Node.js dependencies on mobile
+type MCPConnectorType = import('../connector').MCPConnector;
+
+// Interface for services with storage state management
+interface StateManager {
+    saveState(): Promise<void>;
+}
+
+/**
+ * Extended Plugin interface with required service methods
+ * Used for proper typing when passing plugin to child managers
+ */
+interface PluginWithServices extends Plugin {
+    settings?: Settings;
+    getService<T>(name: string, timeoutMs?: number): Promise<T | null>;
+    embeddingManager?: EmbeddingManager;
+}
+
+/**
+ * Type guard to check if a Plugin has the required service methods
+ */
+function isPluginWithServices(plugin: Plugin): plugin is PluginWithServices {
+    return typeof (plugin as PluginWithServices).getService === 'function';
+}
+
+export interface PluginLifecycleConfig {
+    plugin: Plugin;
+    app: App;
+    serviceManager: ServiceManager;
+    settings: Settings;
+    connector?: MCPConnectorType; // Optional - undefined on mobile
+    manifest: PluginManifest;
+}
+
+/**
+ * Plugin Lifecycle Manager - coordinates plugin initialization and shutdown
+ */
+export class PluginLifecycleManager {
+    private config: PluginLifecycleConfig;
+    private isInitialized = false;
+    private startTime: number = Date.now();
+    private serviceRegistrar: ServiceRegistrar;
+    private commandManager: MaintenanceCommandManager;
+    private chatUIManager: ChatUIManager;
+    private taskBoardUIManager: TaskBoardUIManager;
+    private backgroundProcessor: BackgroundProcessor;
+    private settingsTabManager: SettingsTabManager;
+    private inlineEditCommandManager: InlineEditCommandManager;
+    private readAloudCommandManager: ReadAloudCommandManager;
+    private vaultIngestionManager: VaultIngestionManager;
+    private embeddingManager: EmbeddingManager | null = null;
+
+    // Pending timer handles for cleanup on shutdown
+    private pendingTimers: number[] = [];
+
+    constructor(config: PluginLifecycleConfig) {
+        this.config = config;
+
+        // Create service registrar with proper context
+        const serviceContext: ServiceCreationContext = {
+            plugin: config.plugin,
+            app: config.app,
+            serviceManager: config.serviceManager,
+            settings: config.settings,
+            connector: config.connector as NonNullable<ServiceCreationContext['connector']> | undefined,
+            manifest: config.manifest
+        };
+        this.serviceRegistrar = new ServiceRegistrar(serviceContext);
+
+        // Create command manager
+        this.commandManager = new MaintenanceCommandManager({
+            plugin: config.plugin as unknown as import('./commands/CommandDefinitions').CommandContext['plugin'],
+            serviceManager: config.serviceManager,
+            getService: (name, timeoutMs) => this.serviceRegistrar.getService(name, timeoutMs),
+            isInitialized: () => this.isInitialized
+        });
+
+        // Create chat UI manager
+        this.chatUIManager = new ChatUIManager({
+            plugin: config.plugin,
+            app: config.app,
+            settings: config.settings,
+            getService: (name, timeoutMs) => this.serviceRegistrar.getService(name, timeoutMs)
+        });
+
+        this.taskBoardUIManager = new TaskBoardUIManager({
+            plugin: config.plugin,
+            app: config.app
+        });
+
+        // Create background processor
+        this.backgroundProcessor = new BackgroundProcessor({
+            plugin: config.plugin,
+            settings: config.settings,
+            serviceManager: config.serviceManager,
+            getService: (name, timeoutMs) => this.serviceRegistrar.getService(name, timeoutMs),
+            waitForService: (name, timeoutMs) => this.serviceRegistrar.waitForService(name, timeoutMs),
+            isInitialized: () => this.isInitialized
+        });
+
+        // Create settings tab manager
+        this.settingsTabManager = new SettingsTabManager({
+            plugin: config.plugin,
+            app: config.app,
+            settings: config.settings,
+            serviceManager: config.serviceManager,
+            connector: config.connector,
+            lifecycleManager: this,
+            backgroundProcessor: this.backgroundProcessor
+        });
+
+        // Create inline edit command manager
+        // The plugin is guaranteed to have getService method by main.ts initialization
+        if (!isPluginWithServices(config.plugin)) {
+            throw new Error('Plugin must implement getService method for InlineEditCommandManager');
+        }
+        this.inlineEditCommandManager = new InlineEditCommandManager({
+            plugin: config.plugin,
+            app: config.app,
+            getService: (name, timeoutMs) => this.serviceRegistrar.getService(name, timeoutMs)
+        });
+
+        this.readAloudCommandManager = new ReadAloudCommandManager({
+            plugin: config.plugin,
+            app: config.app
+        });
+
+        this.vaultIngestionManager = new VaultIngestionManager({
+            plugin: config.plugin,
+            app: config.app,
+            getService: (name, timeoutMs) => this.serviceRegistrar.getService(name, timeoutMs)
+        });
+    }
+
+    /**
+     * Initialize plugin - called from onload()
+     */
+    async initialize(): Promise<void> {
+        try {
+            // PHASE 1: Foundation - Service container and settings already created by main.ts
+
+            // PHASE 2: Register core services (no initialization yet)
+            this.serviceRegistrar.registerCoreServices();
+
+            // PHASE 3: Register ChatView EARLY so Obsidian can restore it during layout restoration
+            await this.chatUIManager.registerViewEarly();
+            await this.taskBoardUIManager.registerViewEarly();
+
+            // PHASE 4: Start background initialization via window.setTimeout(0)
+            const bgInitTimer = window.setTimeout(() => {
+                this.startBackgroundInitialization().catch(error => {
+                    console.error('[PluginLifecycleManager] Background initialization failed:', error);
+                });
+            }, 0);
+            this.pendingTimers.push(bgInitTimer);
+
+        } catch (error) {
+            console.error('[PluginLifecycleManager] Critical initialization failure:', error);
+            this.enableFallbackMode();
+        }
+    }
+
+    /**
+     * Background initialization - runs after onload() completes
+     */
+    private async startBackgroundInitialization(): Promise<void> {
+        try {
+            await this.config.settings.loadSettings();
+            await this.serviceRegistrar.initializeDataDirectories();
+            await this.serviceRegistrar.initializeBusinessServices();
+            this.serviceRegistrar.preInitializeUICriticalServices();
+            this.backgroundProcessor.validateSearchFunctionality();
+
+            // Start MCP server AFTER services are ready (registers agents)
+            // Only on desktop - connector is undefined on mobile
+            if (this.config.connector) {
+                try {
+                    await this.config.connector.start();
+                } catch {
+                    // MCP connector start failed - non-fatal
+                }
+            }
+
+            // Initialize ChatService AFTER agents are registered (so tools are available)
+            try {
+                await this.serviceRegistrar.initializeChatService();
+            } catch (error) {
+                console.error('[PluginLifecycleManager] ChatService init failed:', error);
+            }
+
+            await this.chatUIManager.registerChatUI();
+            await this.taskBoardUIManager.registerTaskBoardUI();
+
+            // Initialize settings tab AFTER business services are ready
+            // This prevents race condition where settings tab tries to access agents before services are initialized
+            this.settingsTabManager.initializeSettingsTab();
+
+            // Defer SQLite/embedding initialization - WASM loading is CPU-intensive (~2s)
+            // Uses a fixed timeout from onload rather than onLayoutReady (which is unreliable, can take 13+s)
+            // 3 second delay gives Obsidian enough time to finish loading screen
+            if (!Platform.isMobile) {
+                const sqliteTimer = window.setTimeout(() => {
+                    void (async () => {
+                        try {
+                            const adapter = await this.config.serviceManager?.getService<HybridStorageAdapter>('hybridStorageAdapter');
+                            if (adapter) {
+                                await this.initializeEmbeddingsWhenReady(adapter);
+                            } else {
+                                // Falling through silently here is indistinguishable from
+                                // "embeddings are still starting up" — this timer is the only
+                                // thing that ever constructs EmbeddingManager, so if the
+                                // adapter is missing they never initialize and nothing says
+                                // why. That absence of a signal reads as a slow boot, which
+                                // is precisely how it gets misdiagnosed. Say it out loud.
+                                console.error(
+                                    '[PluginLifecycleManager] hybridStorageAdapter unavailable after startup delay; ' +
+                                    'embeddings will not initialize for this session'
+                                );
+                            }
+                        } catch (err) {
+                            console.error('[PluginLifecycleManager] Background SQLite initialization failed:', err);
+                        }
+                    })();
+                }, 3000); // 3s from background init start - Obsidian loading screen is gone by then
+                this.pendingTimers.push(sqliteTimer);
+            }
+
+            // Register all maintenance commands
+            this.commandManager.registerMaintenanceCommands();
+
+            // Register inline edit commands and context menu
+            this.inlineEditCommandManager.registerCommands();
+
+            // Register read-aloud commands and context menus
+            this.readAloudCommandManager.registerCommands();
+
+            // Register vault-level ingestion triggers
+            this.vaultIngestionManager.register();
+
+            // Update settings tab with loaded services
+            this.backgroundProcessor.updateSettingsTabServices();
+
+            // Mark as fully initialized
+            this.isInitialized = true;
+
+            // Start background startup processing after everything is ready
+            this.backgroundProcessor.startBackgroundStartupProcessing();
+
+        } catch (error) {
+            console.error('[PluginLifecycleManager] Background initialization failed:', error);
+        }
+    }
+
+    /**
+     * Enable fallback mode with minimal functionality
+     */
+    private enableFallbackMode(): void {
+        try {
+            this.commandManager.registerTroubleshootCommand();
+        } catch (error) {
+            console.error('[PluginLifecycleManager] Fallback mode setup failed:', error);
+        }
+    }
+
+    /**
+     * Get service helper method
+     */
+    private async getService<T>(name: string, timeoutMs = 10000): Promise<T | null> {
+        if (!this.config.serviceManager) {
+            return null;
+        }
+
+        void timeoutMs;
+
+        // Try to get service (will initialize if needed)
+        try {
+            return await this.config.serviceManager.getService<T>(name);
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Reload configuration for all services after settings change
+     */
+    reloadConfiguration(): void {
+        // Configuration reloading handled by individual services
+    }
+
+    /**
+     * Get initialization status
+     */
+    getInitializationStatus(): { isInitialized: boolean; startTime: number } {
+        return {
+            isInitialized: this.isInitialized,
+            startTime: this.startTime
+        };
+    }
+
+    /**
+     * Initialize embeddings when storage adapter becomes ready (called from background).
+     * Must wait for the adapter's SQLite cache to finish initializing before
+     * creating EmbeddingManager, since background indexing queries SQLite.
+     */
+    private async initializeEmbeddingsWhenReady(storageAdapter: HybridStorageAdapter): Promise<void> {
+        try {
+            const ready = await storageAdapter.waitForQueryReady();
+            if (!ready) {
+                console.warn('[PluginLifecycleManager] Storage adapter failed to initialize; skipping embeddings');
+                return;
+            }
+            console.warn('[PluginLifecycleManager] Storage adapter ready, initializing embeddings...');
+            const enableEmbeddings = this.config.settings.settings.enableEmbeddings ?? true;
+            this.embeddingManager = new EmbeddingManager(
+                this.config.app,
+                this.config.plugin,
+                storageAdapter.cache,
+                enableEmbeddings,
+                storageAdapter.messages
+            );
+            this.embeddingManager.initialize();
+            (this.config.plugin as PluginWithServices).embeddingManager = this.embeddingManager;
+
+            // "Nexus: Rebuild cache" DROPs conversation_embeddings and clears
+            // embedding_backfill_state, and the JSONL replay does not restore
+            // them — the same hazard the notes index subscribes for. Without
+            // this a mid-session rebuild leaves chat search dead until the next
+            // plugin load. registerEvent so the ref is dropped on unload.
+            //
+            // Only the mid-session rebuild needs the signal: the startup rebuild
+            // runs before embeddings exist, and initialize()'s own background
+            // pass (conversations first) already covers that case.
+            const manager = this.embeddingManager;
+            this.config.plugin.registerEvent(
+                storageAdapter.onCacheRebuilt(() => {
+                    void manager.reindexAfterCacheRebuild();
+                })
+            );
+
+            // Wire embedding service into ChatTraceService
+            const embeddingService = this.embeddingManager.getService();
+            if (embeddingService) {
+                const chatTraceService = await this.serviceRegistrar.getService<ChatTraceService>('chatTraceService');
+                if (chatTraceService && typeof chatTraceService.setEmbeddingService === 'function') {
+                    chatTraceService.setEmbeddingService(embeddingService);
+                }
+            }
+        } catch (error) {
+            console.error('[PluginLifecycleManager] Background embedding initialization failed:', error);
+        }
+    }
+
+    /**
+     * Shutdown and cleanup
+     */
+    async shutdown(): Promise<void> {
+        try {
+            // Cancel any pending timers that haven't fired yet
+            for (const timer of this.pendingTimers) {
+                window.clearTimeout(timer);
+            }
+            this.pendingTimers = [];
+
+            // Clean up ServiceRegistrar's pending timers
+            this.serviceRegistrar.shutdown();
+
+            // Shutdown embedding system first (before database closes)
+            if (this.embeddingManager) {
+                try {
+                    await this.embeddingManager.shutdown();
+                } catch (error) {
+                    void error;
+                }
+            }
+
+            // Save processed files state before cleanup
+            const stateManager = this.config.serviceManager?.getServiceIfReady<StateManager>('stateManager');
+            if (stateManager && typeof stateManager.saveState === 'function') {
+                await stateManager.saveState();
+            }
+
+            // Detach the notes index BEFORE the database it writes through is
+            // closed. Its metadataCache/vault subscriptions are raw `on()`
+            // registrations that survive unload, and a bulk import keeps them
+            // firing for tens of seconds — every one of those flushes lands on
+            // a closed connection as "Database not initialized".
+            const notesIndex = this.config.serviceManager?.getServiceIfReady<{ cleanup?: () => void }>('notesIndex');
+            if (notesIndex && typeof notesIndex.cleanup === 'function') {
+                try {
+                    notesIndex.cleanup();
+                } catch (error) {
+                    void error;
+                }
+            }
+
+            // Close HybridStorageAdapter to properly shut down SQLite
+            const storageAdapter = this.config.serviceManager?.getServiceIfReady<HybridStorageAdapter>('hybridStorageAdapter');
+            if (storageAdapter && typeof storageAdapter.close === 'function') {
+                try {
+                    await storageAdapter.close();
+                } catch (error) {
+                    void error;
+                }
+            }
+
+            // Cleanup settings tab accordions
+            this.settingsTabManager.cleanup();
+
+            // Cleanup service manager (handles all service cleanup)
+            if (this.config.serviceManager) {
+                await this.config.serviceManager.stop();
+            }
+
+            // Stop the MCP connector
+            if (this.config.connector) {
+                await this.config.connector.stop();
+            }
+
+        } catch (error) {
+            console.error('[PluginLifecycleManager] Error during cleanup:', error);
+        }
+    }
+}

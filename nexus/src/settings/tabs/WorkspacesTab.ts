@@ -1,0 +1,896 @@
+/**
+ * WorkspacesTab - Workspace list and detail view (coordinator)
+ *
+ * Owns state and navigation. Delegates rendering to:
+ * - WorkspaceListRenderer (list view)
+ * - WorkspaceDetailRenderer (detail, project, task views)
+ * - ProjectsManagerView (project/task state and CRUD)
+ * - WorkflowEditorRenderer (workflow editor)
+ * - FilePickerRenderer (file picker)
+ */
+
+import { App, Notice, Component } from 'obsidian';
+import { SettingsRouter } from '../SettingsRouter';
+import { BreadcrumbNav, BreadcrumbNavItem } from '../components/BreadcrumbNav';
+import { ConfirmModal } from '../components/ConfirmModal';
+import { WorkflowEditorRenderer, Workflow } from '../../components/workspace/WorkflowEditorRenderer';
+import { FilePickerRenderer } from '../../components/workspace/FilePickerRenderer';
+import { WorkspaceListRenderer } from '../../components/workspace/WorkspaceListRenderer';
+import { WorkspaceDetailRenderer, DetailCallbacks } from '../../components/workspace/WorkspaceDetailRenderer';
+import { ProjectsManagerView } from '../../components/workspace/ProjectsManagerView';
+import { StatesSectionService, StateSummary } from '../../components/workspace/StatesSectionRenderer';
+import { ProjectWorkspace } from '../../database/workspace-types';
+import { WorkspaceService, type WorkspaceChangeEvent } from '../../services/WorkspaceService';
+import { CustomPromptStorageService } from '../../agents/promptManager/services/CustomPromptStorageService';
+import { CustomPrompt } from '../../types/mcp/CustomPromptTypes';
+import { v4 as uuidv4 } from '../../utils/uuid';
+import type { ServiceManager } from '../../core/ServiceManager';
+import type { WorkflowRunService } from '../../services/workflows/WorkflowRunService';
+import type { ProjectMetadata } from '../../database/repositories/interfaces/IProjectRepository';
+import type { ExternalSyncEvent, HybridStorageAdapter } from '../../database/adapters/HybridStorageAdapter';
+import type { MemoryService } from '../../agents/memoryManager/services/MemoryService';
+
+export interface WorkspacesTabServices {
+    app: App;
+    component: Component;
+    workspaceService?: WorkspaceService;
+    customPromptStorage?: CustomPromptStorageService;
+    prefetchedWorkspaces?: ProjectWorkspace[] | null;
+    serviceManager?: ServiceManager;
+}
+
+type WorkspacesView = 'list' | 'detail' | 'workflow' | 'filepicker' | 'projects' | 'project-detail' | 'task-detail';
+
+export class WorkspacesTab {
+    private container: HTMLElement;
+    private router: SettingsRouter;
+    private services: WorkspacesTabServices;
+    private workspaces: ProjectWorkspace[] = [];
+    private currentWorkspace: Partial<ProjectWorkspace> | null = null;
+    private isDraftWorkspace = false;
+    private currentWorkflowIndex = -1;
+    private currentFileIndex = -1;
+    private currentView: WorkspacesView = 'list';
+    private workspaceChangeService?: WorkspaceService;
+
+    // Renderers
+    private listRenderer: WorkspaceListRenderer;
+    private detailRenderer: WorkspaceDetailRenderer;
+    private projectsManager: ProjectsManagerView;
+    private workflowRenderer?: WorkflowEditorRenderer;
+    private filePickerRenderer?: FilePickerRenderer;
+
+    // Auto-save debounce
+    private saveTimeout?: number;
+
+    // Loading state
+    private isLoading = true;
+
+    constructor(
+        container: HTMLElement,
+        router: SettingsRouter,
+        services: WorkspacesTabServices
+    ) {
+        this.container = container;
+        this.router = router;
+        this.services = services;
+        this.listRenderer = new WorkspaceListRenderer();
+        this.detailRenderer = new WorkspaceDetailRenderer(services.component);
+        this.projectsManager = new ProjectsManagerView(
+            this.detailRenderer,
+            services.serviceManager,
+            {
+                getCurrentWorkspace: () => this.currentWorkspace,
+                onNavigateList: () => this.showWorkspaceList(),
+                onNavigateDetail: () => this.showWorkspaceDetail(),
+                onNavigateProjectDetail: () => this.showProjectDetailView(),
+                onNavigateTaskDetail: () => this.showTaskDetailView(),
+                onRender: () => this.render(),
+                buildDetailCallbacks: () => this.buildDetailCallbacks(),
+                getApp: () => this.services.app,
+                getComponent: () => this.services.component
+            }
+        );
+
+        if (Array.isArray(services.prefetchedWorkspaces)) {
+            this.workspaces = services.prefetchedWorkspaces;
+            this.isLoading = false;
+            this.render();
+        } else {
+            this.render();
+            void this.loadWorkspaces().then(() => {
+                this.isLoading = false;
+                this.render();
+            });
+        }
+
+        // Refresh the list / active detail when Obsidian Sync lands remote
+        // workspace or task JSONL changes from another device.
+        this.subscribeToExternalSync();
+        this.subscribeToWorkspaceChanges(this.services.workspaceService);
+    }
+
+    /**
+     * Subscribe to the HybridStorageAdapter `external-sync` event so the
+     * workspace list, active workspace detail, and projects pane stay
+     * current when remote edits arrive. Uses `services.component.registerEvent`
+     * for automatic cleanup when the tab's owning component unloads.
+     */
+    private subscribeToExternalSync(): void {
+        const component = this.services.component;
+        const serviceManager = this.services.serviceManager;
+        if (!component || !serviceManager) {
+            return;
+        }
+
+        // getServiceIfReady is sync; tolerate a not-yet-ready adapter —
+        // it just means no subscription (the tab will still reflect the
+        // initial load).
+        const adapter = serviceManager.getServiceIfReady<HybridStorageAdapter>('hybridStorageAdapter');
+        if (!adapter || typeof adapter.onExternalSync !== 'function') {
+            return;
+        }
+
+        const ref = adapter.onExternalSync((event) => {
+            void this.handleExternalSync(event);
+        });
+        component.registerEvent(ref);
+    }
+
+    private subscribeToWorkspaceChanges(workspaceService?: WorkspaceService): void {
+        const component = this.services.component;
+        if (!component || !workspaceService || this.workspaceChangeService === workspaceService) {
+            return;
+        }
+
+        const ref = workspaceService.onWorkspaceChange((event) => {
+            void this.handleWorkspaceChange(event);
+        });
+        component.registerEvent(ref);
+        this.workspaceChangeService = workspaceService;
+    }
+
+    /**
+     * Re-query and re-render whatever is currently visible. Specifically:
+     * - Any workspace changed → reload list and re-render current view.
+     * - Tasks for the currently-viewed workspace changed → refreshProjects.
+     */
+    private async handleExternalSync(event: ExternalSyncEvent): Promise<void> {
+        const workspaceChanges = event.modified.filter((m) => m.category === 'workspaces');
+        const taskChanges = event.modified.filter((m) => m.category === 'tasks');
+
+        if (workspaceChanges.length > 0) {
+            try {
+                // If the user is editing a workspace detail form, avoid
+                // destroying unsaved inputs with a full re-render.
+                const isEditingDetail = this.currentView === 'detail' && !!this.currentWorkspace?.id;
+                const editedWorkspaceModified = isEditingDetail &&
+                    workspaceChanges.some((m) => m.businessId === this.currentWorkspace!.id);
+
+                await this.loadWorkspaces();
+
+                if (isEditingDetail) {
+                    // The user has a detail form open.  If the externally-
+                    // modified workspace is NOT the one being edited we can
+                    // silently refresh the backing list — the detail view
+                    // stays untouched.  If it IS the edited workspace we
+                    // still skip the re-render to preserve dirty form state;
+                    // the user will pick up the remote changes next time
+                    // they navigate away and back.
+                    if (!editedWorkspaceModified) {
+                        // List data refreshed; no visual change needed.
+                    }
+                    // else: edited workspace was modified externally — keep
+                    // the user's unsaved edits intact.
+                } else {
+                    this.render();
+                }
+            } catch (error) {
+                console.error('[WorkspacesTab] Failed to refresh workspaces on external-sync:', error);
+            }
+        }
+
+        const currentWorkspaceId = this.currentWorkspace?.id;
+        if (
+            taskChanges.length > 0 &&
+            currentWorkspaceId &&
+            (this.currentView === 'projects' || this.currentView === 'project-detail' || this.currentView === 'task-detail') &&
+            taskChanges.some((m) => m.businessId === currentWorkspaceId)
+        ) {
+            try {
+                await this.projectsManager.refreshProjects();
+            } catch (error) {
+                console.error('[WorkspacesTab] Failed to refresh projects on external-sync:', error);
+            }
+        }
+    }
+
+    private async handleWorkspaceChange(event: WorkspaceChangeEvent): Promise<void> {
+        try {
+            await this.loadWorkspaces();
+
+            if (
+                event.action === 'deleted' &&
+                this.currentWorkspace?.id === event.workspaceId
+            ) {
+                this.currentWorkspace = null;
+                this.isDraftWorkspace = false;
+                this.currentView = 'list';
+                this.router.back();
+                return;
+            }
+
+            if (
+                this.currentView === 'detail' &&
+                !this.isDraftWorkspace &&
+                this.currentWorkspace?.id === event.workspaceId
+            ) {
+                const updatedWorkspace = this.workspaces.find(w => w.id === event.workspaceId);
+                if (updatedWorkspace) {
+                    this.currentWorkspace = { ...updatedWorkspace };
+                    this.render();
+                }
+                return;
+            }
+
+            if (this.currentView === 'list') {
+                this.render();
+            }
+        } catch (error) {
+            console.error('[WorkspacesTab] Failed to refresh workspaces on workspace-change:', error);
+        }
+    }
+
+    private async loadWorkspaces(): Promise<void> {
+        let workspaceService = this.services.workspaceService;
+
+        if (this.services.serviceManager) {
+            const timeout = <T>(ms: number) => new Promise<T | undefined>(r => window.setTimeout(() => r(undefined), ms));
+            try {
+                const [service, adapter] = await Promise.all([
+                    Promise.race([
+                        this.services.serviceManager.getService<WorkspaceService>('workspaceService'),
+                        timeout<WorkspaceService>(10000)
+                    ]),
+                    Promise.race([
+                        this.services.serviceManager.getService<HybridStorageAdapter>('hybridStorageAdapter'),
+                        timeout<HybridStorageAdapter>(10000)
+                    ])
+                ]);
+                if (service) {
+                    workspaceService = service;
+                    this.services.workspaceService = workspaceService;
+                    this.subscribeToWorkspaceChanges(workspaceService);
+                }
+                if (adapter && typeof adapter.waitForQueryReady === 'function') {
+                    await adapter.waitForQueryReady();
+                }
+            } catch {
+                // Service unavailable
+            }
+        }
+
+        if (!workspaceService) return;
+
+        try {
+            this.workspaces = await workspaceService.getAllWorkspaces();
+        } catch (error) {
+            console.error('[WorkspacesTab] Failed to load workspaces:', error);
+            this.workspaces = [];
+        }
+    }
+
+    render(): void {
+        this.container.empty();
+
+        if (this.currentView === 'workflow') {
+            this.renderWorkflowEditor();
+            return;
+        }
+
+        if (this.currentView === 'filepicker') {
+            this.renderFilePicker();
+            return;
+        }
+
+        if (this.currentView === 'projects') {
+            this.projectsManager.renderProjects(this.container);
+            return;
+        }
+
+        if (this.currentView === 'project-detail') {
+            this.projectsManager.renderProjectDetail(this.container);
+            return;
+        }
+
+        if (this.currentView === 'task-detail') {
+            this.projectsManager.renderTaskDetail(this.container);
+            return;
+        }
+
+        const state = this.router.getState();
+
+        if (state.view === 'detail' && state.detailId) {
+            this.currentView = 'detail';
+            const workspace = this.workspaces.find(w => w.id === state.detailId);
+            if (workspace) {
+                this.isDraftWorkspace = false;
+                this.currentWorkspace = { ...workspace };
+                this.detailRenderer.renderDetail(
+                    this.container,
+                    this.currentWorkspace,
+                    this.workspaces,
+                    this.buildDetailCallbacks()
+                );
+                return;
+            }
+        }
+
+        if (this.currentView === 'detail' && this.currentWorkspace && this.isDraftWorkspace) {
+            this.detailRenderer.renderDetail(
+                this.container,
+                this.currentWorkspace,
+                this.workspaces,
+                this.buildDetailCallbacks()
+            );
+            return;
+        }
+
+        // Default to list view
+        this.currentView = 'list';
+        this.projectsManager.resetState();
+
+        this.listRenderer.render(
+            this.container,
+            this.workspaces,
+            this.isLoading,
+            !!this.services.workspaceService,
+            {
+                onCreateNew: () => this.createNewWorkspace(),
+                onEdit: (id) => this.router.showDetail(id),
+                onToggle: async (id, enabled) => {
+                    const workspace = this.workspaces.find(w => w.id === id);
+                    if (workspace && this.services.workspaceService) {
+                        await this.services.workspaceService.updateWorkspace(id, { isActive: enabled });
+                        workspace.isActive = enabled;
+                    }
+                },
+                onDelete: async (id, name) => {
+                    if (!this.services.workspaceService) return;
+
+                    const confirmed = await this.confirmDeleteWorkspace(name);
+                    if (!confirmed) return;
+
+                    try {
+                        await this.services.workspaceService.deleteWorkspace(id);
+                        this.workspaces = this.workspaces.filter(w => w.id !== id);
+                        await this.loadWorkspaces();
+                        this.listRenderer.updateItems(this.workspaces);
+                        new Notice('Workspace deleted');
+                    } catch (error) {
+                        console.error('[WorkspacesTab] Failed to delete workspace:', error);
+                        new Notice('Failed to delete workspace');
+                    }
+                }
+            }
+        );
+    }
+
+    private buildDetailCallbacks(): DetailCallbacks {
+        return {
+            onNavigateList: () => this.showWorkspaceList(),
+            onNavigateDetail: () => this.showWorkspaceDetail(),
+            onNavigateProjects: () => { void this.openProjectsPage(); },
+            onNavigateProjectDetail: () => { void this.openNewProjectAndRender(); },
+            onSaveWorkspace: () => this.saveCurrentWorkspace(),
+            onDeleteWorkspace: () => this.deleteCurrentWorkspace(),
+            onOpenWorkflowEditor: (index) => this.openWorkflowEditor(index),
+            onRunWorkflow: (index) => { void this.runWorkflow(index); },
+            onOpenFilePicker: (index) => this.openFilePicker(index),
+            onRefreshDetail: () => this.refreshDetail(),
+            getAvailableAgents: () => this.getAvailableAgents(),
+            getTaskService: () => this.projectsManager.getTaskService(),
+            onRefreshProjects: () => this.projectsManager.refreshProjects(),
+            onOpenProjectDetail: (project) => { void this.openProjectDetailAndRender(project); },
+            onToggleProjectArchive: (project) => this.toggleProjectArchive(project),
+            safeRegisterDomEvent: (el, eventName, handler) => this.safeRegisterDomEvent(el, eventName, handler),
+            getStatesService: () => this.getStatesService(),
+            getApp: () => this.services.app
+        };
+    }
+
+    /**
+     * Build the StatesSectionService implementation by composing MemoryService
+     * (read + update path) and HybridStorageAdapter (delete path).
+     *
+     * Backend contracts (issue #215, backend-coder confirmed):
+     * - Read: MemoryService.getStates(workspaceId) returns workspace-scoped
+     *   states across all sessions, with full snapshot under `item.state`.
+     *   Archive flag lives at `item.state.state.metadata.isArchived`.
+     * - Update: MemoryService.updateState(workspaceId, sessionId, stateId,
+     *   {name?, description?, tags?, state?}) routes through the adapter via
+     *   state_updated JSONL events + SQLite patch.
+     * - Archive: same updateState call with a full snapshot whose
+     *   `state.metadata.isArchived` is toggled.
+     * - Delete: HybridStorageAdapter.deleteState(stateId) directly.
+     */
+    private async getStatesService(): Promise<StatesSectionService | null> {
+        if (!this.services.serviceManager) return null;
+
+        try {
+            const [memoryService, adapter] = await Promise.all([
+                this.services.serviceManager.getService<MemoryService>('memoryService'),
+                this.services.serviceManager.getService<HybridStorageAdapter>('hybridStorageAdapter')
+            ]);
+            if (!memoryService || !adapter) return null;
+
+            const readArchiveFlag = (item: { state?: { state?: { metadata?: Record<string, unknown> } } }): boolean | undefined => {
+                const flag = item.state?.state?.metadata?.isArchived;
+                return typeof flag === 'boolean' ? flag : undefined;
+            };
+
+            return {
+                listStates: async (workspaceId, includeArchived) => {
+                    // includeArchived is pushed into SQL (issue #219); the
+                    // filter below still runs because rows migrated from a
+                    // pre-v16 cache report their flag as undefined and are
+                    // returned either way.
+                    const result = await memoryService.getStates(workspaceId, undefined, {
+                        includeArchived: includeArchived === true
+                    });
+                    const items: StateSummary[] = result.items.map(item => ({
+                        id: item.id,
+                        name: item.name,
+                        description: item.description,
+                        sessionId: item.sessionId,
+                        workspaceId: item.workspaceId,
+                        created: item.created,
+                        tags: item.tags,
+                        isArchived: readArchiveFlag(item)
+                    }));
+                    return includeArchived
+                        ? items
+                        : items.filter(item => !item.isArchived);
+                },
+                updateState: async (workspaceId, sessionId, stateId, patch) => {
+                    await memoryService.updateState(workspaceId, sessionId, stateId, patch);
+                },
+                archiveState: async (workspaceId, sessionId, stateId, restore) => {
+                    const existing = await memoryService.getState(workspaceId, sessionId, stateId);
+                    if (!existing) {
+                        throw new Error('State not found');
+                    }
+                    const nextInner = {
+                        workspace: existing.state?.workspace,
+                        recentTraces: existing.state?.recentTraces ?? [],
+                        contextFiles: existing.state?.contextFiles ?? [],
+                        metadata: {
+                            ...(existing.state?.metadata ?? {}),
+                            isArchived: !restore
+                        }
+                    };
+                    await memoryService.updateState(workspaceId, sessionId, stateId, {
+                        state: { ...existing, state: nextInner }
+                    });
+                },
+                deleteState: async (_workspaceId, _sessionId, stateId) => {
+                    await adapter.deleteState(stateId);
+                }
+            };
+        } catch (error) {
+            console.error('[WorkspacesTab] Failed to resolve states service:', error);
+            return null;
+        }
+    }
+
+    // --- Navigation ---
+
+    private showWorkspaceList(): void {
+        this.currentView = 'list';
+        this.router.back();
+    }
+
+    private showWorkspaceDetail(): void {
+        if (!this.currentWorkspace?.id) {
+            this.showWorkspaceList();
+            return;
+        }
+        this.currentView = 'detail';
+        this.router.showDetail(this.currentWorkspace.id);
+    }
+
+    // --- Workspace CRUD ---
+
+    private createNewWorkspace(): void {
+        this.currentWorkspace = {
+            id: uuidv4(),
+            name: '',
+            description: '',
+            rootFolder: '/',
+            isActive: true,
+            context: {
+                purpose: '',
+                workflows: [],
+                keyFiles: [],
+                preferences: ''
+            },
+            created: Date.now(),
+            lastAccessed: Date.now()
+        };
+        this.isDraftWorkspace = true;
+        this.currentView = 'detail';
+        this.render();
+    }
+
+    private async saveCurrentWorkspace(): Promise<ProjectWorkspace | null> {
+        if (!this.currentWorkspace || !this.services.workspaceService) return null;
+
+        try {
+            const existingIndex = this.workspaces.findIndex(w => w.id === this.currentWorkspace?.id);
+            const workspaceId = this.currentWorkspace.id;
+            if (!workspaceId) {
+                return null;
+            }
+
+            if (existingIndex >= 0) {
+                await this.services.workspaceService.updateWorkspace(
+                    workspaceId,
+                    this.currentWorkspace
+                );
+                this.workspaces[existingIndex] = this.currentWorkspace as ProjectWorkspace;
+                this.isDraftWorkspace = false;
+                return this.currentWorkspace as ProjectWorkspace;
+            } else {
+                const created = await this.services.workspaceService.createWorkspace(this.currentWorkspace);
+                this.workspaces.push(created);
+                this.currentWorkspace = created;
+                this.isDraftWorkspace = false;
+                return created;
+            }
+        } catch (error) {
+            console.error('[WorkspacesTab] Failed to save workspace:', error);
+            new Notice('Failed to save workspace');
+            return null;
+        }
+    }
+
+    private async deleteCurrentWorkspace(): Promise<void> {
+        if (!this.currentWorkspace?.id || !this.services.workspaceService) return;
+
+        const confirmed = await this.confirmDeleteWorkspace();
+        if (!confirmed) return;
+
+        try {
+            await this.services.workspaceService.deleteWorkspace(this.currentWorkspace.id);
+            await this.loadWorkspaces();
+            this.currentWorkspace = null;
+            this.isDraftWorkspace = false;
+            this.router.back();
+            new Notice('Workspace deleted');
+        } catch (error) {
+            console.error('[WorkspacesTab] Failed to delete workspace:', error);
+            new Notice('Failed to delete workspace');
+        }
+    }
+
+    private confirmDeleteWorkspace(workspaceName = this.currentWorkspace?.name || 'Workspace'): Promise<boolean> {
+        return ConfirmModal.confirm(this.services.app, {
+            variant: 'delete',
+            title: 'Delete workspace?',
+            body: `Delete workspace "${workspaceName}"? This cannot be undone.`
+        });
+    }
+
+    // --- Projects (delegated to ProjectsManagerView) ---
+
+    private async openProjectsPage(): Promise<void> {
+        const success = await this.projectsManager.openProjectsPage();
+        if (success) {
+            this.currentView = 'projects';
+            this.render();
+        }
+    }
+
+    private async openProjectDetailAndRender(project: ProjectMetadata): Promise<void> {
+        await this.projectsManager.openProjectDetail(project);
+        this.currentView = 'project-detail';
+        this.render();
+    }
+
+    private async openNewProjectAndRender(): Promise<void> {
+        const success = await this.projectsManager.openNewProject();
+        if (success) {
+            this.currentView = 'project-detail';
+            this.render();
+        }
+    }
+
+    /** Switch to the project-detail view (task-detail back-navigation). */
+    private showProjectDetailView(): void {
+        this.currentView = 'project-detail';
+        this.render();
+    }
+
+    /** Switch to the task-detail view (opening a task or jumping via a dep row). */
+    private showTaskDetailView(): void {
+        this.currentView = 'task-detail';
+        this.render();
+    }
+
+    private async toggleProjectArchive(project: ProjectMetadata): Promise<void> {
+        const taskService = await this.projectsManager.getTaskService();
+        if (!taskService) {
+            new Notice('Task service is not available yet');
+            return;
+        }
+
+        const nextStatus: ProjectMetadata['status'] = project.status === 'archived' ? 'active' : 'archived';
+
+        try {
+            await taskService.updateProject(project.id, { status: nextStatus });
+            await this.projectsManager.refreshProjects();
+            this.render();
+            new Notice(nextStatus === 'archived' ? 'Project archived' : 'Project restored');
+        } catch (error) {
+            console.error('[WorkspacesTab] Failed to toggle project archive:', error);
+            new Notice('Failed to update project');
+        }
+    }
+
+    // --- Workflow and file picker (already delegated to existing renderers) ---
+
+    private renderWorkflowEditor(): void {
+        this.container.empty();
+
+        if (!this.currentWorkspace || !this.currentWorkspace.context) {
+            this.currentView = 'detail';
+            this.render();
+            return;
+        }
+
+        this.renderBreadcrumbs([
+            { label: 'Workspaces', onClick: () => this.showWorkspaceList() },
+            { label: this.currentWorkspace.name || 'Workspace', onClick: () => this.showWorkspaceDetail() },
+            { label: 'Workflow' }
+        ]);
+
+        const contentContainer = this.container.createDiv('nexus-settings-page-content');
+
+        const workflows = this.currentWorkspace.context.workflows || [];
+        const isNew = this.currentWorkflowIndex >= workflows.length || this.currentWorkflowIndex < 0;
+        const workflow: Workflow = isNew
+            ? { id: '', name: '', when: '', steps: '' }
+            : workflows[this.currentWorkflowIndex];
+
+        this.workflowRenderer = new WorkflowEditorRenderer(
+            this.getAvailableAgents(),
+            (savedWorkflow) => { void this.saveWorkflow(savedWorkflow); },
+            () => {
+                this.currentView = 'detail';
+                this.render();
+            },
+            async (workflowToRun) => { await this.runWorkflowFromEditor(workflowToRun); },
+            this.services.component
+        );
+
+        this.workflowRenderer.render(contentContainer, workflow, isNew, { showBackButton: false });
+    }
+
+    private renderFilePicker(): void {
+        this.container.empty();
+
+        this.renderBreadcrumbs([
+            { label: 'Workspaces', onClick: () => this.showWorkspaceList() },
+            { label: this.currentWorkspace?.name || 'Workspace', onClick: () => this.showWorkspaceDetail() },
+            { label: 'Key Files' }
+        ]);
+
+        const contentContainer = this.container.createDiv('nexus-settings-page-content');
+
+        const currentPath = this.currentWorkspace?.context?.keyFiles?.[this.currentFileIndex] || '';
+        const workspaceRoot = this.currentWorkspace?.rootFolder || '/';
+
+        this.filePickerRenderer = new FilePickerRenderer(
+            this.services.app,
+            (path) => {
+                if (this.currentWorkspace?.context?.keyFiles) {
+                    this.currentWorkspace.context.keyFiles[this.currentFileIndex] = path;
+                    this.debouncedSave();
+                }
+                this.currentView = 'detail';
+                this.render();
+            },
+            () => {
+                this.currentView = 'detail';
+                this.render();
+            },
+            currentPath,
+            workspaceRoot,
+            undefined,
+            this.services.component,
+            false
+        );
+
+        this.filePickerRenderer.render(contentContainer);
+    }
+
+    private openWorkflowEditor(index?: number): void {
+        this.currentWorkflowIndex = index ?? -1;
+        this.currentView = 'workflow';
+        this.renderWorkflowEditor();
+    }
+
+    private openFilePicker(index: number): void {
+        this.currentFileIndex = index;
+        this.currentView = 'filepicker';
+        this.renderFilePicker();
+    }
+
+    // --- Workflow CRUD ---
+
+    private async saveWorkflow(workflow: Workflow, options?: {
+        returnToDetail?: boolean;
+        runAfterSave?: boolean;
+    }): Promise<void> {
+        const persistedWorkflow = await this.persistWorkflow(workflow);
+        if (!persistedWorkflow) return;
+
+        if (options?.runAfterSave) {
+            try {
+                await this.executeWorkflow(persistedWorkflow.id);
+                new Notice('Workflow run started');
+            } catch (error) {
+                console.error('[WorkspacesTab] Failed to run workflow:', error);
+                new Notice('Failed to run workflow');
+            }
+        }
+
+        if (options?.returnToDetail === false) {
+            this.currentView = 'workflow';
+            this.renderWorkflowEditor();
+            return;
+        }
+
+        this.currentView = 'detail';
+        this.render();
+        new Notice('Workflow saved');
+    }
+
+    private async runWorkflow(index: number): Promise<void> {
+        const workflow = this.currentWorkspace?.context?.workflows?.[index];
+        if (!workflow?.id) {
+            new Notice('Save this workflow before running it');
+            return;
+        }
+
+        const savedWorkspace = await this.saveCurrentWorkspace();
+        if (!savedWorkspace) return;
+
+        this.currentWorkspace = { ...savedWorkspace };
+
+        try {
+            await this.executeWorkflow(workflow.id);
+            new Notice('Workflow run started');
+        } catch (error) {
+            console.error('[WorkspacesTab] Failed to run workflow:', error);
+            new Notice('Failed to run workflow');
+        }
+    }
+
+    private async runWorkflowFromEditor(workflow: Workflow): Promise<void> {
+        await this.saveWorkflow(workflow, { runAfterSave: true, returnToDetail: false });
+    }
+
+    private async persistWorkflow(workflow: Workflow): Promise<Workflow | null> {
+        if (!this.currentWorkspace) return null;
+
+        if (!this.currentWorkspace.context) {
+            this.currentWorkspace.context = { purpose: '', workflows: [], keyFiles: [], preferences: '' };
+        }
+
+        if (!this.currentWorkspace.context.workflows) {
+            this.currentWorkspace.context.workflows = [];
+        }
+
+        const normalizedWorkflow: Workflow = {
+            ...workflow,
+            id: workflow.id || uuidv4(),
+            promptName: workflow.promptId
+                ? this.getAvailableAgents().find(prompt => prompt.id === workflow.promptId)?.name || workflow.promptName
+                : undefined
+        };
+
+        const existingIndex = this.currentWorkspace.context.workflows.findIndex(item => item.id === normalizedWorkflow.id);
+
+        if (existingIndex >= 0) {
+            this.currentWorkspace.context.workflows[existingIndex] = normalizedWorkflow;
+            this.currentWorkflowIndex = existingIndex;
+        } else if (this.currentWorkflowIndex >= 0 && this.currentWorkflowIndex < this.currentWorkspace.context.workflows.length) {
+            this.currentWorkspace.context.workflows[this.currentWorkflowIndex] = normalizedWorkflow;
+        } else {
+            this.currentWorkspace.context.workflows.push(normalizedWorkflow);
+            this.currentWorkflowIndex = this.currentWorkspace.context.workflows.length - 1;
+        }
+
+        const savedWorkspace = await this.saveCurrentWorkspace();
+        if (!savedWorkspace) return null;
+
+        this.currentWorkspace = { ...savedWorkspace };
+        const savedWorkflow = savedWorkspace.context?.workflows?.find(item => item.id === normalizedWorkflow.id);
+        if (!savedWorkflow) return normalizedWorkflow;
+
+        this.currentWorkflowIndex = savedWorkspace.context?.workflows?.findIndex(item => item.id === normalizedWorkflow.id) ?? this.currentWorkflowIndex;
+        return savedWorkflow;
+    }
+
+    private async executeWorkflow(workflowId: string): Promise<void> {
+        if (!this.currentWorkspace?.id) {
+            throw new Error('Workspace must be saved before running a workflow');
+        }
+
+        const workflowRunService = await this.getWorkflowRunService();
+        if (!workflowRunService) {
+            throw new Error('Workflow run service is not available');
+        }
+
+        await workflowRunService.start({
+            workspaceId: this.currentWorkspace.id,
+            workflowId,
+            runTrigger: 'manual',
+            scheduledFor: Date.now(),
+            openInChat: true
+        });
+    }
+
+    // --- Helper methods ---
+
+    private getAvailableAgents(): CustomPrompt[] {
+        if (!this.services.customPromptStorage) return [];
+        return this.services.customPromptStorage.getAllPrompts();
+    }
+
+    private renderBreadcrumbs(items: BreadcrumbNavItem[]): void {
+        new BreadcrumbNav(this.container, items, this.services.component);
+    }
+
+    private refreshDetail(): void {
+        if (this.currentView === 'detail') {
+            this.render();
+        }
+    }
+
+    private safeRegisterDomEvent<K extends keyof HTMLElementEventMap>(
+        element: HTMLElement,
+        eventName: K,
+        handler: (event: HTMLElementEventMap[K]) => void
+    ): void {
+        if (this.services.component) {
+            this.services.component.registerDomEvent(element, eventName, handler);
+        } else {
+            element.addEventListener(eventName, handler as EventListener);
+        }
+    }
+
+    private async getWorkflowRunService(): Promise<WorkflowRunService | null> {
+        if (!this.services.serviceManager) return null;
+
+        try {
+            return await this.services.serviceManager.getService<WorkflowRunService>('workflowRunService');
+        } catch {
+            return null;
+        }
+    }
+
+    private debouncedSave(): void {
+        if (this.saveTimeout) window.clearTimeout(this.saveTimeout);
+        this.saveTimeout = window.setTimeout(() => {
+            void this.saveCurrentWorkspace();
+        }, 500);
+    }
+
+    destroy(): void {
+        if (this.saveTimeout) window.clearTimeout(this.saveTimeout);
+        this.detailRenderer.destroyForm();
+    }
+}
+

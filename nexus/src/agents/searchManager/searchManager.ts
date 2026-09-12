@@ -1,0 +1,290 @@
+import { App, Plugin } from 'obsidian';
+import { BaseAgent } from '../baseAgent';
+import {
+  SearchContentTool,
+  SearchDirectoryTool,
+  SearchMemoryTool,
+  QueryNotesTool
+} from './tools';
+import type { SQLiteCacheManager } from '../../database/storage/SQLiteCacheManager';
+import { MemorySettings, DEFAULT_MEMORY_SETTINGS } from '../../types';
+import { MemoryService } from "../memoryManager/services/MemoryService";
+import { WorkspaceService } from '../../services/WorkspaceService';
+import { IStorageAdapter } from '../../database/interfaces/IStorageAdapter';
+import { EmbeddingService } from '../../services/embeddings/EmbeddingService';
+import { getNexusPlugin } from '../../utils/pluginLocator';
+import { ServiceManager } from '../../core/ServiceManager';
+import type { StorageAdapterResolver } from './services/ServiceAccessors';
+
+const noop = (): void => {
+  return;
+};
+
+const noopAsync = async (): Promise<void> => Promise.resolve();
+
+const createFallbackElement = (): HTMLDivElement => createDiv();
+
+const createFallbackCommand = () => ({ id: '', name: '', callback: noop });
+
+const returnZero = (): number => 0;
+
+const returnEmptyObject = (): Promise<Record<string, never>> => Promise.resolve({});
+
+const returnComponent = <T>(component: T): T => component;
+
+/**
+ * Interface for accessing NexusPlugin services
+ * Represents the plugin structure needed by SearchManager for service access
+ */
+interface NexusPluginWithServices extends Plugin {
+  settings?: {
+    settings?: {
+      memory?: MemorySettings;
+    };
+  };
+  getServiceContainer?(): ServiceManager;
+}
+
+/**
+ * Agent for searching and navigating content
+ * Environment-agnostic: provides comprehensive search capabilities across any storage system
+ */
+export class SearchManagerAgent extends BaseAgent {
+  public app: App;
+  private memoryService: MemoryService | null = null;
+  private workspaceService: WorkspaceService | null = null;
+  private storageAdapterResolver: (() => IStorageAdapter | undefined) | null = null;
+  private embeddingService: EmbeddingService | null = null;
+  private searchContentTool: SearchContentTool | null = null;
+  private settings: MemorySettings;
+
+  /**
+   * Create a new SearchManagerAgent
+   * @param app Obsidian app instance
+   * @param enableVectorModes Whether to enable vector-based tools (legacy parameter)
+   * @param memoryService Optional injected memory service
+   * @param workspaceService Optional injected workspace service
+   * @param storageAdapter Optional storage adapter or lazy resolver
+   */
+  constructor(
+    app: App,
+    _enableVectorModes = false,
+    memoryService?: MemoryService | null,
+    workspaceService?: WorkspaceService | null,
+    storageAdapter?: StorageAdapterResolver | null
+  ) {
+    super(
+      'searchManager',
+      'Search operations for content and memory',
+      '1.0.0'
+    );
+
+    this.app = app;
+
+    // Initialize with default settings
+    this.settings = { ...DEFAULT_MEMORY_SETTINGS };
+
+    // Use injected services if provided
+    this.memoryService = memoryService || null;
+    this.workspaceService = workspaceService || null;
+    this.setStorageAdapterResolver(storageAdapter);
+
+    let plugin: NexusPluginWithServices | null = null;
+    try {
+      if (app.plugins) {
+        plugin = getNexusPlugin<NexusPluginWithServices>(app);
+        if (plugin) {
+          const memorySettings = plugin.settings?.settings?.memory;
+          if (memorySettings) {
+            this.settings = memorySettings;
+          }
+
+          const serviceContainer = plugin.getServiceContainer?.();
+          if (serviceContainer) {
+            if (!this.memoryService) {
+              this.memoryService = serviceContainer.getServiceIfReady<MemoryService>('memoryService');
+            }
+            if (!this.workspaceService) {
+              this.workspaceService = serviceContainer.getServiceIfReady<WorkspaceService>('workspaceService');
+            }
+            if (!this.storageAdapterResolver) {
+              this.storageAdapterResolver = () => serviceContainer.getServiceIfReady<IStorageAdapter>('hybridStorageAdapter') || undefined;
+            }
+            if (!this.embeddingService) {
+              this.embeddingService = serviceContainer.getServiceIfReady<EmbeddingService>('embeddingService');
+            }
+          }
+        }
+      }
+    } catch {
+      noop();
+    }
+
+    // Get plugin reference for tools that need it
+    let pluginRef: Plugin | null = null;
+    try {
+      if (app.plugins) {
+        pluginRef = getNexusPlugin(app);
+      }
+    } catch {
+      noop();
+    }
+
+    // Create minimal plugin fallback if plugin not found
+    // Tools accept Plugin interface which only requires app property
+    const pluginOrFallback: Plugin = pluginRef || this.createMinimalPlugin(app);
+
+    // Register ContentSearchTool (fuzzy + keyword + semantic search)
+    this.searchContentTool = new SearchContentTool(pluginOrFallback);
+    // Wire up EmbeddingService for semantic search if available
+    if (this.embeddingService) {
+      this.searchContentTool.setEmbeddingService(this.embeddingService);
+    }
+    this.registerTool(this.searchContentTool);
+
+    // Register focused search tools - lazy loaded
+    this.registerLazyTool({
+      slug: 'directory', name: 'Search Directory',
+      description: 'FOCUSED directory search with REQUIRED paths parameter. Search for files and/or folders within specific directory paths using fuzzy matching and optional workspace context. Requires: query (search terms) and paths (directory paths to search - cannot be empty).',
+      version: '2.0.0',
+      factory: () => new SearchDirectoryTool(
+        pluginOrFallback,
+        this.workspaceService || undefined
+      ),
+    });
+
+    this.registerLazyTool({
+      slug: 'memory', name: 'Search Memory',
+      description: 'Search workspace memory for past conversations, tool execution history, and workspace state snapshots.\n\nTWO MODES:\n- Discovery (default): Search all memory across a workspace. Best for finding past discussions, tool usage, or workspace context.\n- Scoped (provide sessionId or sessionName): Search within a specific session and get surrounding message context around each match. Best for recovering what happened in a particular session.\n\nTIPS:\n- Use natural language queries for conversations (e.g., "how did we implement auth?").\n- Use specific terms for tool history (e.g., agent or tool names).\n- Narrow results with memoryTypes if you know what you need.\n- Use sessionName + windowSize to get full context around a named session match.\n\nREQUIRES: query. Optional: workspaceId accepts the workspace name from load-workspace; omit it to search the global workspace.',
+      version: '2.1.0',
+      factory: () => new SearchMemoryTool(
+        pluginOrFallback,
+        this.memoryService || undefined,
+        this.workspaceService || undefined,
+        this.storageAdapterResolver || undefined
+      ),
+    });
+
+    this.registerLazyTool({
+      slug: 'queryNotes', name: 'Query Notes',
+      description: 'Run a read-only SQL SELECT over the notes index — your vault\'s notes + frontmatter as a queryable database. Filter by arbitrary frontmatter properties, compute aggregates, and sort/group, all in SQL (SQLite does the work; there is no separate query language).\n\nTABLES:\n- notes(n): id, path, basename, folder, ext, title, ctime, mtime, size, tags_json, links_json, frontmatter_json (ctime/mtime are epoch ms).\n- note_properties(p): note_id, key, key_raw, value_text, value_num, value_type, position — one row per frontmatter property (per list element). This is the INDEXED filter path.\n\nPATTERNS:\n- Filter by a property: ... WHERE EXISTS (SELECT 1 FROM note_properties p WHERE p.note_id = n.id AND p.key = \'status\' AND p.value_text = \'active\').\n- Dates/numbers: compare p.value_num (dates stored as epoch ms).\n- Project a value: SELECT json_extract(n.frontmatter_json, \'$.status\') AS status FROM notes n.\n\nOnly a single SELECT/WITH statement is allowed. Pass describe=true to get live columns + the distinct property keys present in the vault.',
+      version: '1.0.0',
+      factory: () => new QueryNotesTool(
+        () => this.resolveSqliteCache()
+      ),
+    });
+  }
+
+  /** Resolve the shared SQLite cache from the storage adapter, for QueryNotesTool. */
+  private resolveSqliteCache(): SQLiteCacheManager | undefined {
+    const adapter = this.storageAdapterResolver?.();
+    const provider = adapter as unknown as { getSqliteCache?: () => SQLiteCacheManager } | undefined;
+    return typeof provider?.getSqliteCache === 'function' ? provider.getSqliteCache() : undefined;
+  }
+
+  private setStorageAdapterResolver(storageAdapter?: StorageAdapterResolver | null): void {
+    if (!storageAdapter) {
+      this.storageAdapterResolver = null;
+      return;
+    }
+
+    this.storageAdapterResolver = typeof storageAdapter === 'function'
+      ? storageAdapter
+      : () => storageAdapter;
+  }
+
+
+  /**
+   * Create a minimal Plugin interface for tools when actual plugin is unavailable
+   * This satisfies the Plugin interface requirements with stub implementations
+   *
+   * Uses 'as unknown as Plugin' because we're creating a stub object that only implements
+   * the subset of Plugin methods actually used by the tools (primarily app property).
+   * The Plugin class is abstract and cannot be instantiated directly.
+   */
+  private createMinimalPlugin(app: App): Plugin {
+    // Create a minimal object that satisfies what tools actually use from Plugin
+    // Tools primarily access plugin.app, so we provide that and stub the rest
+    return {
+      app,
+      manifest: {
+        id: 'search-manager-fallback',
+        name: 'SearchManager Fallback',
+        version: '1.0.0',
+        minAppVersion: '0.0.0',
+        description: 'Fallback plugin interface',
+        author: 'System',
+        isDesktopOnly: false
+      },
+      // Stub implementations for Plugin methods
+      onload: noop,
+      addCommand: createFallbackCommand,
+      removeCommand: noop,
+      addRibbonIcon: createFallbackElement,
+      loadData: returnEmptyObject,
+      saveData: noopAsync,
+      registerView: noop,
+      registerHoverLinkSource: noop,
+      registerExtensions: noop,
+      registerMarkdownPostProcessor: noop,
+      registerMarkdownCodeBlockProcessor: noop,
+      registerEditorExtension: noop,
+      registerObsidianProtocolHandler: noop,
+      registerEditorSuggest: noop,
+      onExternalSettingsChange: noop,
+      addStatusBarItem: createFallbackElement,
+      addSettingTab: noop,
+      registerDomEvent: noop,
+      registerScopeEvent: noop,
+      registerInterval: returnZero,
+      register: noop,
+      onUserEnable: noop,
+      // Component methods (Plugin extends Component)
+      load: noop,
+      unload: noop,
+      addChild: returnComponent,
+      removeChild: noop,
+      registerEvent: noop
+    } as unknown as Plugin;
+  }
+
+  /**
+   * Update the agent settings
+   * @param settings New memory settings
+   */
+  updateSettings(settings: MemorySettings): void {
+    this.settings = settings;
+  }
+
+  /**
+   * Initialize the SearchManagerAgent
+   * This is called after the agent is registered with the agent manager
+   */
+  async initialize(): Promise<void> {
+    await super.initialize();
+
+    // Initialize search service in background - non-blocking
+    this.initializeSearchService().catch(() => undefined);
+  }
+
+  /**
+   * Initialize the search service
+   */
+  initializeSearchService(): Promise<void> {
+    // Search service initialization for JSON-based storage
+    return Promise.resolve();
+  }
+
+
+  /**
+   * Clean up resources when the agent is unloaded
+   */
+  onunload(): void {
+    try {
+      // Call parent class onunload if it exists
+      super.onunload?.();
+    } catch {
+      return;
+    }
+  }
+}

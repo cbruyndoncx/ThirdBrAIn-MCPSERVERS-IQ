@@ -1,0 +1,710 @@
+/**
+ * ProvidersTab - LLM providers configuration
+ *
+ * Features:
+ * - Grouped provider list (Local vs Cloud)
+ * - Status badges (configured/not configured)
+ * - Detail view opens LLMProviderModal
+ * - Auto-save on all changes
+ *
+ * Note: Default provider/model/thinking settings moved to DefaultsTab
+ */
+
+import { App, Notice, Setting } from 'obsidian';
+import { SettingsRouter } from '../SettingsRouter';
+import { ConfirmModal } from '../components/ConfirmModal';
+import { LLMProviderSettings, LLMProviderConfig } from '../../types/llm/ProviderTypes';
+import { LLMProviderModal, LLMProviderModalConfig } from '../../components/LLMProviderModal';
+import { LLMProviderManager } from '../../services/llm/providers/ProviderManager';
+import { Settings } from '../../settings';
+import { CardItem } from '../../components/CardManager';
+import { SearchableCardManager, CardGroup } from '../../components/SearchableCardManager';
+import { LLMSettingsNotifier } from '../../services/llm/LLMSettingsNotifier';
+import { isDesktop, supportsLocalLLM, MOBILE_COMPATIBLE_PROVIDERS, isProviderComingSoon } from '../../utils/platform';
+import type { OAuthModalConfig, SecondaryOAuthProviderConfig } from '../../components/llm-provider/types';
+import { OAuthService } from '../../services/oauth/OAuthService';
+import { ClaudeCodeAuthService } from '../../services/external/ClaudeCodeAuthService';
+import { GeminiCliAuthService } from '../../services/external/GeminiCliAuthService';
+import { BRAND_NAME } from '../../constants/branding';
+
+/**
+ * Provider display configuration
+ */
+interface ProviderDisplayConfig {
+    name: string;
+    keyFormat: string;
+    signupUrl: string;
+    category: 'local' | 'cloud';
+    oauthConfig?: OAuthModalConfig;
+}
+
+/**
+ * CardItem-compatible representation of a provider for SearchableCardManager
+ */
+interface ProviderCardItem extends CardItem {
+    providerId: string;
+    category: 'local' | 'cloud';
+    comingSoon: boolean;
+}
+
+export interface ProvidersTabServices {
+    app: App;
+    settings: Settings;
+    llmProviderSettings?: LLMProviderSettings;
+}
+
+export class ProvidersTab {
+    private container: HTMLElement;
+    private router: SettingsRouter;
+    private services: ProvidersTabServices;
+    private providerManager: LLMProviderManager;
+
+    // Provider configurations
+    private readonly providerConfigs: Record<string, ProviderDisplayConfig> = {
+        // ═══════════════════════════════════════════════════════════════════════
+        // NEXUS/WEBLLM (Re-enabled Dec 2025)
+        // Local LLM inference via WebGPU - Nexus models are fine-tuned on toolset
+        // ═══════════════════════════════════════════════════════════════════════
+        webllm: {
+            name: 'Nexus (Local)',
+            keyFormat: 'No API key required',
+            signupUrl: '',
+            category: 'local'
+        },
+        // Local providers
+        ollama: {
+            name: 'Ollama',
+            keyFormat: 'http://127.0.0.1:11434',
+            signupUrl: 'https://ollama.com/download',
+            category: 'local'
+        },
+        lmstudio: {
+            name: 'LM Studio',
+            keyFormat: 'http://127.0.0.1:1234',
+            signupUrl: 'https://lmstudio.ai',
+            category: 'local'
+        },
+        // Cloud providers
+        openai: {
+            name: 'OpenAI',
+            keyFormat: 'sk-proj-...',
+            signupUrl: 'https://platform.openai.com/api-keys',
+            category: 'cloud'
+        },
+        anthropic: {
+            name: 'Anthropic',
+            keyFormat: 'sk-ant-...',
+            signupUrl: 'https://console.anthropic.com/login',
+            category: 'cloud'
+        },
+        'anthropic-claude-code': {
+            name: 'Claude Code',
+            keyFormat: 'Local Claude Code login required',
+            signupUrl: 'https://claude.ai/download',
+            category: 'cloud'
+        },
+        google: {
+            name: 'Google AI',
+            keyFormat: 'AIza...',
+            signupUrl: 'https://aistudio.google.com/app/apikey',
+            category: 'cloud'
+        },
+        'google-gemini-cli': {
+            name: 'Antigravity CLI',
+            keyFormat: 'Local Antigravity CLI Google login required',
+            // TODO: set to the authoritative Antigravity CLI docs/install URL once published (TBD).
+            // Dropped the deprecated google-gemini/gemini-cli link rather than guess an agy URL.
+            signupUrl: '',
+            category: 'cloud'
+        },
+        mistral: {
+            name: 'Mistral AI',
+            keyFormat: 'msak_...',
+            signupUrl: 'https://console.mistral.ai/api-keys',
+            category: 'cloud'
+        },
+        groq: {
+            name: 'Groq',
+            keyFormat: 'gsk_...',
+            signupUrl: 'https://console.groq.com/keys',
+            category: 'cloud'
+        },
+        deepseek: {
+            name: 'DeepSeek',
+            keyFormat: 'sk-...',
+            signupUrl: 'https://platform.deepseek.com/api_keys',
+            category: 'cloud'
+        },
+        deepgram: {
+            name: 'Deepgram',
+            keyFormat: 'dg_...',
+            signupUrl: 'https://console.deepgram.com/project/api-keys',
+            category: 'cloud'
+        },
+        assemblyai: {
+            name: 'AssemblyAI',
+            keyFormat: '...API key...',
+            signupUrl: 'https://www.assemblyai.com/dashboard/api-keys',
+            category: 'cloud'
+        },
+        openrouter: {
+            name: 'OpenRouter',
+            keyFormat: 'sk-or-...',
+            signupUrl: 'https://openrouter.ai/keys',
+            category: 'cloud'
+        },
+        requesty: {
+            name: 'Requesty',
+            keyFormat: 'req_...',
+            signupUrl: 'https://requesty.com/api-keys',
+            category: 'cloud'
+        },
+        perplexity: {
+            name: 'Perplexity',
+            keyFormat: 'pplx-...',
+            signupUrl: 'https://www.perplexity.ai/settings/api',
+            category: 'cloud'
+        },
+        'openai-codex': {
+            name: 'ChatGPT (Codex)',
+            keyFormat: 'OAuth sign-in required',
+            signupUrl: 'https://chatgpt.com',
+            category: 'cloud'
+        },
+        'github-copilot': {
+            name: 'GitHub Copilot',
+            keyFormat: 'Device flow sign-in required',
+            signupUrl: 'https://github.com/features/copilot',
+            category: 'cloud'
+        }
+    };
+
+    constructor(
+        container: HTMLElement,
+        router: SettingsRouter,
+        services: ProvidersTabServices
+    ) {
+        this.container = container;
+        this.router = router;
+        this.services = services;
+
+        // Initialize provider manager with vault for local provider support
+        if (this.services.llmProviderSettings) {
+            this.providerManager = new LLMProviderManager(this.services.llmProviderSettings, this.services.app.vault);
+        } else {
+            this.providerManager = new LLMProviderManager({
+                providers: {},
+                defaultModel: { provider: '', model: '' }
+            }, this.services.app.vault);
+        }
+
+        // Attach OAuth configs to providers that support it (desktop only)
+        if (isDesktop()) {
+            this.attachOAuthConfigs();
+        }
+
+        this.render();
+    }
+
+    /**
+     * Attach OAuth configurations to providers that support OAuth connect.
+     * Only called on desktop where the OAuth callback server can run.
+     */
+    private attachOAuthConfigs(): void {
+        const oauthService = OAuthService.getInstance();
+
+        // OpenRouter OAuth
+        if (oauthService.hasProvider('openrouter')) {
+            this.providerConfigs.openrouter.oauthConfig = {
+                providerLabel: 'OpenRouter',
+                preAuthFields: [
+                    {
+                        key: 'key_label',
+                        label: 'Key label',
+                        defaultValue: BRAND_NAME,
+                        required: false,
+                    },
+                    {
+                        key: 'credit_limit',
+                        label: 'Credit limit (optional)',
+                        placeholder: 'Leave blank for unlimited',
+                        required: false,
+                    },
+                ],
+                startFlow: (params) => this.startOAuthFlow('openrouter', params),
+            };
+        }
+
+        // OpenAI Codex OAuth (experimental) — attaches to 'openai-codex' provider card,
+        // NOT 'openai', so tokens are stored under providers['openai-codex'] where
+        // AdapterRegistry.initializeCodexAdapter() reads them.
+        if (oauthService.hasProvider('openai-codex')) {
+            this.providerConfigs['openai-codex'] = {
+                ...this.providerConfigs['openai-codex'],
+                oauthConfig: {
+                    providerLabel: 'ChatGPT',
+                    startFlow: (params) => this.startOAuthFlow('openai-codex', params),
+                },
+            };
+        }
+
+        // GitHub Copilot (experimental) — uses device flow, bypasses OAuthService.startFlow()
+        if (oauthService.hasProvider('github-copilot')) {
+            this.providerConfigs['github-copilot'] = {
+                ...this.providerConfigs['github-copilot'],
+                oauthConfig: {
+                    providerLabel: 'GitHub Copilot',
+                    experimental: true,
+                    experimentalWarning: 'This connects via an undocumented GitHub Copilot proxy. Requires an active GitHub Copilot subscription.',
+                    startFlow: (_params, onDeviceCode) => this.startGithubCopilotDeviceFlow(onDeviceCode),
+                },
+            };
+        }
+    }
+
+    /**
+     * Start an OAuth flow for a given provider via OAuthService
+     */
+    private async startOAuthFlow(
+        providerId: string,
+        params: Record<string, string>,
+    ): Promise<{ success: boolean; apiKey?: string; refreshToken?: string; expiresAt?: number; metadata?: Record<string, string>; error?: string }> {
+        try {
+            const oauthService = OAuthService.getInstance();
+            // Cancel any stuck flow before starting a new one (e.g., user dismissed modal while connecting)
+            if (oauthService.getState() !== 'idle') {
+                oauthService.cancelFlow();
+            }
+            const result = await oauthService.startFlow(providerId, params);
+            return {
+                success: true,
+                apiKey: result.apiKey,
+                refreshToken: result.refreshToken,
+                expiresAt: result.expiresAt,
+                metadata: result.metadata,
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'OAuth flow failed',
+            };
+        }
+    }
+
+    /**
+     * Start a local Claude Code subscription login flow.
+     * Reuses the OAuth-style banner UI even though auth is handled by the local CLI.
+     */
+    private async startClaudeCodeConnectFlow(): Promise<{ success: boolean; apiKey?: string; metadata?: Record<string, string>; error?: string }> {
+        const authService = new ClaudeCodeAuthService(this.services.app);
+        return await authService.connectSubscriptionLogin();
+    }
+
+    /**
+     * Check Gemini CLI auth status. The plugin does not initiate auth —
+     * users must authenticate externally via `gemini` in their terminal.
+     */
+    private async startGeminiCliConnectFlow(): Promise<{ success: boolean; apiKey?: string; metadata?: Record<string, string>; error?: string }> {
+        const authService = new GeminiCliAuthService(this.services.app);
+        return await authService.checkAuth();
+    }
+
+    /**
+     * Start a GitHub Copilot device authorization flow.
+     * Bypasses OAuthService.startFlow() since device flow has no redirect callback.
+     */
+    private async startGithubCopilotDeviceFlow(
+        onDeviceCode?: (userCode: string, verificationUri: string) => void
+    ): Promise<{ success: boolean; apiKey?: string; error?: string }> {
+        try {
+            const { GithubCopilotOAuthProvider } = await import('../../services/oauth/providers/GithubCopilotOAuthProvider');
+            const provider = new GithubCopilotOAuthProvider();
+            const result = await provider.startDeviceFlow(onDeviceCode);
+            return {
+                success: true,
+                apiKey: result.apiKey,
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'GitHub Copilot device flow failed',
+            };
+        }
+    }
+
+    /**
+     * Get current LLM settings
+     */
+    private getSettings(): LLMProviderSettings {
+        return this.services.llmProviderSettings || {
+            providers: {},
+            defaultModel: { provider: '', model: '' }
+        };
+    }
+
+    /**
+     * Save settings and notify subscribers
+     */
+    private async saveSettings(): Promise<void> {
+        if (this.services.settings && this.services.llmProviderSettings) {
+            this.services.settings.settings.llmProviders = this.services.llmProviderSettings;
+            await this.services.settings.saveSettings();
+
+            // Notify all subscribers of the settings change
+            LLMSettingsNotifier.notify(this.services.llmProviderSettings);
+        }
+    }
+
+    private async persistSecondaryProviderConfig(
+        settings: LLMProviderSettings,
+        providerId: string,
+        updatedConfig: LLMProviderConfig
+    ): Promise<void> {
+        try {
+            settings.providers[providerId] = updatedConfig;
+            await this.saveSettings();
+        } catch (error) {
+            console.error(`[ProvidersTab] Failed to save secondary provider config for ${providerId}:`, error);
+            new Notice('Failed to save provider settings. Please try again.');
+            throw error;
+        }
+    }
+
+    private async persistProviderConfig(
+        settings: LLMProviderSettings,
+        providerId: string,
+        updatedConfig: LLMProviderConfig,
+        displayName: string
+    ): Promise<void> {
+        try {
+            settings.providers[providerId] = updatedConfig;
+
+            // Handle Ollama model update
+            if (providerId === 'ollama' && '__ollamaModel' in updatedConfig) {
+                const ollamaModel = (updatedConfig as LLMProviderConfig & { __ollamaModel: string }).__ollamaModel;
+                if (ollamaModel) {
+                    delete (updatedConfig as LLMProviderConfig & { __ollamaModel?: string }).__ollamaModel;
+                    if (settings.defaultModel.provider === 'ollama') {
+                        settings.defaultModel.model = ollamaModel;
+                    }
+                }
+            }
+
+            await this.saveSettings();
+            this.render();
+            new Notice(`${displayName} settings saved`);
+        } catch (error) {
+            console.error(`[ProvidersTab] Failed to save provider config for ${providerId}:`, error);
+            new Notice(`Failed to save ${displayName} settings. Please try again.`);
+            throw error;
+        }
+    }
+
+    /**
+     * Main render method
+     */
+    render(): void {
+        this.container.empty();
+
+        // Opt-in secure key storage, then the provider groups.
+        this.renderSecuritySection();
+        this.renderProviders();
+    }
+
+    /**
+     * Render the opt-in toggle that moves API keys into Obsidian's device-local
+     * secretStorage and out of the synced data.json. Disabled (with an
+     * explanatory note) when secretStorage is unavailable (Obsidian < 1.11.4).
+     */
+    private renderSecuritySection(): void {
+        const settings = this.services.settings;
+        const available = settings.isSecretStorageAvailable();
+        const enabled = settings.settings.secureApiKeyStorage === true;
+
+        new Setting(this.container)
+            .setName('Store API keys in secure storage')
+            .setDesc(available
+                ? 'Keep API keys in Obsidian’s device-local secure storage instead of the synced settings file. Keys never sync, so you’ll re-enter them once on each device.'
+                : 'Requires Obsidian 1.11.4 or later. On this version, API keys are stored in the settings file.')
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(enabled)
+                    .setDisabled(!available)
+                    .onChange((value) => {
+                        void this.handleSecureStorageToggle(value);
+                    });
+            });
+    }
+
+    /**
+     * Confirm the security-toggle change, apply it, then re-render. A cancelled
+     * confirm re-renders with the unchanged value, resetting the toggle.
+     */
+    private async handleSecureStorageToggle(enable: boolean): Promise<void> {
+        const app = this.services.app;
+        const confirmed = enable
+            ? await ConfirmModal.confirm(app, {
+                variant: 'archive',
+                title: 'Move API keys to secure storage?',
+                body: 'Your API keys will be moved into Obsidian’s device-local secure storage and removed from the synced settings file. You’ll need to re-enter each key once on your other devices.',
+                ctaLabel: 'Move keys'
+            })
+            : await ConfirmModal.confirm(app, {
+                variant: 'remove',
+                title: 'Disable secure storage?',
+                body: 'Your API keys will be written back into the synced settings file and removed from secure storage. They will sync across your devices again.',
+                ctaLabel: 'Disable'
+            });
+
+        if (!confirmed) {
+            this.render();
+            return;
+        }
+
+        try {
+            await this.services.settings.setSecureApiKeyStorage(enable);
+            new Notice(enable ? 'API keys moved to secure storage' : 'Secure storage disabled');
+        } catch (error) {
+            console.error('Failed to update secure key storage:', error);
+            new Notice('Failed to update secure key storage');
+        }
+        this.render();
+    }
+
+    /**
+     * Build ProviderCardItem from provider ID and current settings
+     */
+    private buildProviderCardItem(providerId: string, settings: LLMProviderSettings): ProviderCardItem | null {
+        const displayConfig = this.providerConfigs[providerId];
+        if (!displayConfig) return null;
+
+        const providerConfig = settings.providers[providerId] || {
+            apiKey: '',
+            enabled: false
+        };
+
+        const comingSoon = isProviderComingSoon(providerId);
+        const isConfigured = comingSoon ? false : this.isProviderConfigured(providerId, providerConfig);
+
+        return {
+            id: providerId,
+            name: displayConfig.name,
+            description: comingSoon ? 'Coming Soon' : (isConfigured ? 'Configured' : 'Not configured'),
+            isEnabled: comingSoon ? false : providerConfig.enabled,
+            cssClass: comingSoon ? 'provider-coming-soon' : undefined,
+            providerId,
+            category: displayConfig.category,
+            comingSoon
+        };
+    }
+
+    /**
+     * Render providers using SearchableCardManager with groups
+     */
+    private renderProviders(): void {
+        const settings = this.getSettings();
+
+        // Mobile: Only fetch-based providers
+        if (!isDesktop()) {
+            this.container.createEl('p', {
+                cls: 'setting-item-description',
+                text: 'On mobile, only fetch-based providers are supported. Configure local providers and SDK-based providers on desktop.'
+            });
+
+            const items = [...MOBILE_COMPATIBLE_PROVIDERS]
+                .map(id => this.buildProviderCardItem(id, settings))
+                .filter((item): item is ProviderCardItem => item !== null);
+
+            new SearchableCardManager<ProviderCardItem>({
+                containerEl: this.container,
+                cardManagerConfig: {
+                    title: 'Mobile Providers',
+                    emptyStateText: 'No providers available.',
+                    showToggle: true,
+                    onToggle: async (item, enabled) => {
+                        if (item.comingSoon) return;
+                        settings.providers[item.providerId] = {
+                            ...(settings.providers[item.providerId] || { apiKey: '' }),
+                            enabled
+                        };
+                        await this.saveSettings();
+                        this.render();
+                    },
+                    onEdit: (item) => {
+                        if (item.comingSoon) return;
+                        const displayConfig = this.providerConfigs[item.providerId];
+                        const providerConfig = settings.providers[item.providerId] || { apiKey: '', enabled: false };
+                        if (displayConfig) {
+                            this.openProviderModal(item.providerId, displayConfig, providerConfig);
+                        }
+                    }
+                },
+                items,
+                search: {
+                    placeholder: 'Search providers...'
+                }
+            });
+            return;
+        }
+
+        // Desktop: Build groups
+        const groups: CardGroup<ProviderCardItem>[] = [];
+
+        if (supportsLocalLLM()) {
+            const localItems = ['webllm', 'ollama', 'lmstudio']
+                .map(id => this.buildProviderCardItem(id, settings))
+                .filter((item): item is ProviderCardItem => item !== null);
+
+            groups.push({ title: 'LOCAL PROVIDERS', items: localItems });
+        }
+
+        const cloudIds = ['openai', 'anthropic', 'google', 'mistral', 'groq', 'deepseek', 'deepgram', 'assemblyai', 'openrouter', 'requesty', 'perplexity', 'github-copilot'];
+        const cloudItems = cloudIds
+            .map(id => this.buildProviderCardItem(id, settings))
+            .filter((item): item is ProviderCardItem => item !== null);
+
+        groups.push({ title: 'CLOUD PROVIDERS', items: cloudItems });
+
+        new SearchableCardManager<ProviderCardItem>({
+            containerEl: this.container,
+            cardManagerConfig: {
+                title: 'Providers',
+                emptyStateText: 'No providers available.',
+                showToggle: true,
+                onToggle: async (item, enabled) => {
+                    if (item.comingSoon) return;
+                    settings.providers[item.providerId] = {
+                        ...(settings.providers[item.providerId] || { apiKey: '' }),
+                        enabled
+                    };
+                    await this.saveSettings();
+                    this.render();
+                },
+                onEdit: (item) => {
+                    if (item.comingSoon) return;
+                    const displayConfig = this.providerConfigs[item.providerId];
+                    const providerConfig = settings.providers[item.providerId] || { apiKey: '', enabled: false };
+                    if (displayConfig) {
+                        this.openProviderModal(item.providerId, displayConfig, providerConfig);
+                    }
+                }
+            },
+            groups,
+            search: {
+                placeholder: 'Search providers...'
+            }
+        });
+    }
+
+    /**
+     * Check if a provider is configured
+     */
+    private isProviderConfigured(providerId: string, config: LLMProviderConfig): boolean {
+        if (!config.enabled) return false;
+        // WebLLM doesn't need an API key
+        if (providerId === 'webllm') return true;
+        if (providerId === 'anthropic-claude-code') return !!config.oauth?.connected;
+        if (providerId === 'google-gemini-cli') return !!config.oauth?.connected;
+        if (providerId === 'github-copilot') return !!(config.oauth?.connected && config.apiKey);
+        // Other providers need an API key
+        return !!config.apiKey;
+    }
+
+    /**
+     * Open provider configuration modal
+     */
+    private openProviderModal(
+        providerId: string,
+        displayConfig: ProviderDisplayConfig,
+        providerConfig: LLMProviderConfig
+    ): void {
+        const settings = this.getSettings();
+
+        // Build secondary OAuth provider config for OpenAI (Codex sub-section)
+        let secondaryOAuthProvider: SecondaryOAuthProviderConfig | undefined;
+        if (providerId === 'openai') {
+            const codexDisplay = this.providerConfigs['openai-codex'];
+            if (codexDisplay?.oauthConfig) {
+                const codexConfig = settings.providers['openai-codex'] || {
+                    apiKey: '',
+                    enabled: false,
+                };
+                secondaryOAuthProvider = {
+                    providerId: 'openai-codex',
+                    providerLabel: 'ChatGPT (Codex)',
+                    description: 'Connect your ChatGPT Plus/Pro account to use GPT-5 models via OAuth.',
+                    config: { ...codexConfig },
+                    oauthConfig: codexDisplay.oauthConfig,
+                    onConfigChange: async (updatedCodexConfig: LLMProviderConfig) => {
+                        await this.persistSecondaryProviderConfig(settings, 'openai-codex', updatedCodexConfig);
+                    },
+                };
+            }
+        } else if (providerId === 'anthropic') {
+            const claudeCodeConfig = settings.providers['anthropic-claude-code'] || {
+                apiKey: '',
+                enabled: false,
+            };
+
+            secondaryOAuthProvider = {
+                providerId: 'anthropic-claude-code',
+                providerLabel: 'Claude Code',
+                description: 'Use Claude models through the desktop CLI. Authenticate by running `claude auth login` in your terminal first.',
+                config: { ...claudeCodeConfig },
+                oauthConfig: {
+                    providerLabel: 'Claude Code',
+                    startFlow: () => this.startClaudeCodeConnectFlow(),
+                },
+                onConfigChange: async (updatedClaudeCodeConfig: LLMProviderConfig) => {
+                    await this.persistSecondaryProviderConfig(settings, 'anthropic-claude-code', updatedClaudeCodeConfig);
+                },
+                statusOnly: true,
+                statusHint: 'run `claude auth login` in your terminal',
+            };
+        } else if (providerId === 'google') {
+            const geminiCliConfig = settings.providers['google-gemini-cli'] || {
+                apiKey: '',
+                enabled: false,
+            };
+
+            secondaryOAuthProvider = {
+                providerId: 'google-gemini-cli',
+                providerLabel: 'Antigravity CLI',
+                description: 'Use Gemini models through the Antigravity CLI. Install the Antigravity CLI, then run `agy` once in your terminal to complete Google browser sign-in. (There is no `agy auth` command.)',
+                config: { ...geminiCliConfig },
+                oauthConfig: {
+                    providerLabel: 'Antigravity CLI',
+                    startFlow: () => this.startGeminiCliConnectFlow(),
+                },
+                onConfigChange: async (updatedGeminiCliConfig: LLMProviderConfig) => {
+                    await this.persistSecondaryProviderConfig(settings, 'google-gemini-cli', updatedGeminiCliConfig);
+                },
+                statusOnly: true,
+                statusHint: 'run `agy` once in your terminal to sign in (no `agy auth` command)',
+            };
+        }
+
+        const modalConfig: LLMProviderModalConfig = {
+            providerId,
+            providerName: displayConfig.name,
+            keyFormat: displayConfig.keyFormat,
+            signupUrl: displayConfig.signupUrl,
+            config: { ...providerConfig },
+            oauthConfig: displayConfig.oauthConfig,
+            secondaryOAuthProvider,
+            oauthOnly: providerId === 'github-copilot',
+            onSave: async (updatedConfig: LLMProviderConfig) => {
+                await this.persistProviderConfig(settings, providerId, updatedConfig, displayConfig.name);
+            }
+        };
+
+        new LLMProviderModal(this.services.app, modalConfig, this.providerManager).open();
+    }
+
+    /**
+     * Cleanup
+     */
+    destroy(): void {
+        // No resources to clean up
+    }
+}

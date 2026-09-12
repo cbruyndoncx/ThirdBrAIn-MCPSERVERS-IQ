@@ -1,0 +1,339 @@
+/**
+ * OpenAIAdapter characterization tests.
+ *
+ * Pin current behavior of the Responses API adapter (non-streaming generate,
+ * SSE streaming, error mapping, API-key handling) ahead of shared-code
+ * extraction. Mocks at the requestUrl seam; no live network calls.
+ */
+import { __setRequestUrlMock } from '../mocks/obsidian';
+
+jest.mock('../../src/utils/platform', () => ({
+  ...jest.requireActual('../../src/utils/platform'),
+  hasNodeRuntime: () => false,
+}));
+
+import { OpenAIAdapter } from '../../src/services/llm/adapters/openai/OpenAIAdapter';
+import { LLMProviderError } from '../../src/services/llm/adapters/types';
+import {
+  jsonResponse,
+  sseResponse,
+  sse,
+  collect,
+  concatContent,
+  captureError,
+  CapturedRequest
+} from './helpers/llmAdapterTestHarness';
+
+describe('OpenAIAdapter', () => {
+  let consoleErrorSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+  });
+
+  // Astra rejects sampling parameters that normal chat settings supply.
+  it.each([false, true])('omits Astra sampling parameters (stream=%s)', async (stream) => {
+    const requests: CapturedRequest[] = [];
+    __setRequestUrlMock(async (request) => {
+      requests.push(request);
+      return stream
+        ? sseResponse(sse({ type: 'response.completed', response: { id: 'resp_astra' } }))
+        : jsonResponse(200, { output: [{ type: 'message', content: [{ type: 'output_text', text: 'OK' }] }] });
+    });
+    const adapter = new OpenAIAdapter('sk-test');
+    const options = { model: 'gpt-6-astra', temperature: 0.7, topP: 0.9, enableThinking: true, thinkingEffort: 'low' as const };
+    if (stream) await collect(adapter.generateStreamAsync('hi', options));
+    else await adapter.generateUncached('hi', options);
+    const body = JSON.parse(requests[0].body ?? '{}');
+    expect(requests[0].url).toContain('/responses');
+    expect(body.model).toBe('gpt-6-astra');
+    expect(body).not.toHaveProperty('temperature');
+    expect(body).not.toHaveProperty('top_p');
+    expect(body.reasoning).toEqual({ effort: 'low', summary: 'auto' });
+  });
+
+  describe('non-streaming generate', () => {
+    it('parses Responses API output into text, usage, and responseId metadata', async () => {
+      const requests: CapturedRequest[] = [];
+      __setRequestUrlMock(async (request) => {
+        requests.push(request);
+        return jsonResponse(200, {
+          id: 'resp_123',
+          output: [
+            {
+              type: 'message',
+              content: [
+                { type: 'output_text', text: 'Hello' },
+                { type: 'output_text', text: ' world' }
+              ]
+            }
+          ],
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 }
+        });
+      });
+
+      const adapter = new OpenAIAdapter('sk-test');
+      const result = await adapter.generateUncached('hi', { systemPrompt: 'Be brief' });
+
+      expect(result.text).toBe('Hello world');
+      expect(result.model).toBe('gpt-5.6-sol');
+      expect(result.provider).toBe('openai');
+      expect(result.finishReason).toBe('stop');
+      expect(result.usage).toEqual({ promptTokens: 10, completionTokens: 5, totalTokens: 15 });
+      expect(result.metadata?.responseId).toBe('resp_123');
+
+      expect(requests[0].url).toBe('https://api.openai.com/v1/responses');
+      expect(requests[0].headers?.['Authorization']).toBe('Bearer sk-test');
+      const body = JSON.parse(requests[0].body ?? '{}');
+      expect(body.input).toBe('hi');
+      expect(body.instructions).toBe('Be brief');
+      expect(body.stream).toBe(false);
+    });
+
+    it('requests reasoning and exposes non-streaming reasoning summaries', async () => {
+      const requests: CapturedRequest[] = [];
+      __setRequestUrlMock(async (request) => {
+        requests.push(request);
+        return jsonResponse(200, {
+          id: 'resp_reasoning',
+          output: [
+            { type: 'reasoning', id: 'rs_1', summary: [{ type: 'summary_text', text: 'Checked the constraints' }] },
+            { type: 'message', content: [{ type: 'output_text', text: 'Answer' }] }
+          ]
+        });
+      });
+
+      const result = await new OpenAIAdapter('sk-test').generateUncached('hi', {
+        enableThinking: true,
+        thinkingEffort: 'high'
+      });
+
+      const body = JSON.parse(requests[0].body ?? '{}');
+      expect(body.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+      expect(body.include).toContain('reasoning.encrypted_content');
+      expect(result.metadata?.thinking).toBe('Checked the constraints');
+    });
+
+    it('throws when the Responses API returns no output items', async () => {
+      __setRequestUrlMock(async () => jsonResponse(200, { id: 'resp_1', output: [] }));
+
+      const adapter = new OpenAIAdapter('sk-test');
+      const error = await captureError(adapter.generateUncached('hi')) as LLMProviderError;
+
+      expect(error).toBeInstanceOf(LLMProviderError);
+      expect(error.code).toBe('UNKNOWN_ERROR');
+      expect(error.message).toBe('generation failed: No output from OpenAI Responses API');
+    });
+
+    it('rejects tools on the non-streaming path', async () => {
+      const adapter = new OpenAIAdapter('sk-test');
+      const error = await captureError(adapter.generateUncached('hi', {
+        tools: [{ type: 'function', function: { name: 't', description: 'd', parameters: {} } }]
+      })) as LLMProviderError;
+
+      expect(error).toBeInstanceOf(LLMProviderError);
+      expect(error.code).toBe('UNKNOWN_ERROR');
+      expect(error.message).toBe('generation failed: Tool execution requires streaming. Use generateStreamAsync() instead.');
+    });
+  });
+
+  describe('SSE streaming', () => {
+    it('yields text deltas and a final chunk with usage, tool calls, and responseId', async () => {
+      __setRequestUrlMock(async () => sseResponse(sse(
+        { type: 'response.created', response: { id: 'resp_abc' } },
+        { type: 'response.output_text.delta', delta: 'Hello' },
+        { type: 'response.output_text.delta', delta: ' world' },
+        {
+          type: 'response.output_item.done',
+          output_index: 0,
+          item: { type: 'function_call', call_id: 'call_1', name: 'search', arguments: '{"q":"x"}' }
+        },
+        {
+          type: 'response.completed',
+          response: { id: 'resp_abc', usage: { input_tokens: 12, output_tokens: 4, total_tokens: 16 } }
+        }
+      )));
+
+      const adapter = new OpenAIAdapter('sk-test');
+      const chunks = await collect(adapter.generateStreamAsync('hi'));
+
+      expect(concatContent(chunks)).toBe('Hello world');
+      const final = chunks[chunks.length - 1];
+      expect(final.complete).toBe(true);
+      expect(final.usage).toEqual({ promptTokens: 12, completionTokens: 4, totalTokens: 16 });
+      expect(final.toolCalls).toEqual([
+        { id: 'call_1', type: 'function', function: { name: 'search', arguments: '{"q":"x"}' } }
+      ]);
+      expect(final.toolCallsReady).toBe(true);
+      expect(final.metadata).toEqual({ responseId: 'resp_abc' });
+    });
+
+    it('yields reasoning summary deltas with reasoningId and encrypted content', async () => {
+      __setRequestUrlMock(async () => sseResponse(sse(
+        { type: 'response.output_item.added', item: { type: 'reasoning', id: 'rs_1' } },
+        { type: 'response.reasoning_summary_text.delta', delta: 'thinking...', item_id: 'rs_1' },
+        { type: 'response.output_item.done', item: { type: 'reasoning', id: 'rs_1', encrypted_content: 'enc123' } },
+        { type: 'response.completed', response: { id: 'resp_r' } }
+      )));
+
+      const adapter = new OpenAIAdapter('sk-test');
+      const chunks = await collect(adapter.generateStreamAsync('hi'));
+
+      const reasoningChunks = chunks.filter(chunk => chunk.reasoning !== undefined);
+      expect(reasoningChunks[0]).toMatchObject({ reasoning: '', reasoningComplete: false, reasoningId: 'rs_1' });
+      expect(reasoningChunks[1]).toMatchObject({ reasoning: 'thinking...', reasoningComplete: false, reasoningId: 'rs_1' });
+      expect(reasoningChunks[2]).toMatchObject({
+        reasoning: '',
+        reasoningComplete: true,
+        reasoningId: 'rs_1',
+        reasoningEncryptedContent: 'enc123'
+      });
+    });
+
+    it('yields raw reasoning_text events when the API makes them available', async () => {
+      __setRequestUrlMock(async () => sseResponse(sse(
+        { type: 'response.output_item.added', item: { type: 'reasoning', id: 'rs_raw' } },
+        { type: 'response.reasoning_text.delta', delta: 'raw thought', item_id: 'rs_raw' },
+        { type: 'response.reasoning_text.done', text: 'raw thought', item_id: 'rs_raw' },
+        { type: 'response.completed', response: { id: 'resp_r' } }
+      )));
+
+      const chunks = await collect(new OpenAIAdapter('sk-test').generateStreamAsync('hi'));
+
+      expect(chunks.find(chunk => chunk.reasoning === 'raw thought')).toMatchObject({
+        reasoningComplete: false,
+        reasoningId: 'rs_raw'
+      });
+      expect(chunks.some(chunk => chunk.reasoningComplete === true)).toBe(true);
+    });
+
+    it('converts Chat Completions tools to flat Responses API tools in the request body', async () => {
+      const requests: CapturedRequest[] = [];
+      __setRequestUrlMock(async (request) => {
+        requests.push(request);
+        return sseResponse(sse({ type: 'response.completed', response: { id: 'resp_1' } }));
+      });
+
+      const adapter = new OpenAIAdapter('sk-test');
+      await collect(adapter.generateStreamAsync('hi', {
+        tools: [{
+          type: 'function',
+          function: { name: 'search', description: 'Search', parameters: { type: 'object', properties: {} } }
+        }]
+      }));
+
+      const body = JSON.parse(requests[0].body ?? '{}');
+      expect(body.stream).toBe(true);
+      expect(body.tools).toEqual([{
+        type: 'function',
+        name: 'search',
+        description: 'Search',
+        parameters: { type: 'object', properties: {} },
+        strict: null
+      }]);
+    });
+
+    it('throws on a response.failed event delivered over HTTP 200', async () => {
+      // The Responses stream reports fatal failures as data frames on an already
+      // successful connection. Unhandled, the stream just ended (issue #336).
+      __setRequestUrlMock(async () => sseResponse(sse(
+        { type: 'response.output_text.delta', delta: 'partial' },
+        {
+          type: 'response.failed',
+          response: { id: 'resp_1', status: 'failed', error: { code: 'server_error', message: 'The server had an error' } }
+        }
+      )));
+
+      const adapter = new OpenAIAdapter('sk-test');
+      const seen: string[] = [];
+      const error = await captureError((async () => {
+        for await (const chunk of adapter.generateStreamAsync('hi')) {
+          if (chunk.complete) {
+            throw new Error('stream must not report success after an error frame');
+          }
+          seen.push(chunk.content);
+        }
+      })()) as LLMProviderError;
+
+      expect(error).toBeInstanceOf(LLMProviderError);
+      expect(error.code).toBe('PROVIDER_STREAM_ERROR');
+      expect(error.provider).toBe('openai');
+      expect(error.message).toBe('The server had an error');
+      expect(seen.join('')).toBe('partial');
+    });
+
+    it('throws on a stream-level error event delivered over HTTP 200', async () => {
+      __setRequestUrlMock(async () => sseResponse(sse(
+        { type: 'error', code: 'rate_limit_exceeded', message: 'Rate limit reached' }
+      )));
+
+      const adapter = new OpenAIAdapter('sk-test');
+      const error = await captureError(collect(adapter.generateStreamAsync('hi'))) as LLMProviderError;
+
+      expect(error).toBeInstanceOf(LLMProviderError);
+      expect(error.code).toBe('PROVIDER_STREAM_ERROR');
+      expect(error.message).toBe('Rate limit reached');
+    });
+
+    it('maps a streaming 401 to LLMProviderError AUTHENTICATION_ERROR', async () => {
+      __setRequestUrlMock(async () => jsonResponse(401, { error: { message: 'Invalid API key' } }));
+
+      const adapter = new OpenAIAdapter('sk-bad');
+      const error = await captureError(collect(adapter.generateStreamAsync('hi'))) as LLMProviderError;
+
+      expect(error).toBeInstanceOf(LLMProviderError);
+      expect(error.code).toBe('AUTHENTICATION_ERROR');
+      expect(error.provider).toBe('openai');
+    });
+  });
+
+  describe('error mapping (non-streaming)', () => {
+    it.each([
+      [401, 'AUTHENTICATION_ERROR', 'Invalid API key'],
+      [429, 'RATE_LIMIT_ERROR', 'Rate limit exceeded'],
+      [500, 'SERVER_ERROR', 'Internal error']
+    ])('maps HTTP %i to %s', async (status, code, providerMessage) => {
+      __setRequestUrlMock(async () => jsonResponse(status, { error: { message: providerMessage } }));
+
+      const adapter = new OpenAIAdapter('sk-test');
+      const error = await captureError(adapter.generateUncached('hi')) as LLMProviderError;
+
+      expect(error).toBeInstanceOf(LLMProviderError);
+      expect(error.code).toBe(code);
+      expect(error.provider).toBe('openai');
+      expect(error.message).toBe(`generation failed: ${providerMessage}`);
+    });
+  });
+
+  describe('config / API key handling', () => {
+    it('masks the API key and reports NOT_SET when missing', () => {
+      expect(new OpenAIAdapter('sk-test-1234').getApiKey()).toBe('***1234');
+      expect(new OpenAIAdapter('').getApiKey()).toBe('NOT_SET');
+    });
+
+    it('isAvailable is false without an API key and true with one (registry-backed listModels)', async () => {
+      await expect(new OpenAIAdapter('').isAvailable()).resolves.toBe(false);
+      await expect(new OpenAIAdapter('sk-test').isAvailable()).resolves.toBe(true);
+    });
+
+    it('still sends requests with an empty Bearer token (no client-side key guard)', async () => {
+      const requests: CapturedRequest[] = [];
+      __setRequestUrlMock(async (request) => {
+        requests.push(request);
+        return jsonResponse(200, {
+          id: 'resp_1',
+          output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }]
+        });
+      });
+
+      const adapter = new OpenAIAdapter('');
+      await adapter.generateUncached('hi');
+
+      expect(requests[0].headers?.['Authorization']).toBe('Bearer ');
+    });
+  });
+});

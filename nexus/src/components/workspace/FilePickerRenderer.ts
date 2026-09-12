@@ -1,0 +1,432 @@
+import { App, TFile, TFolder, setIcon, ButtonComponent, TextComponent, Modal, Component, normalizePath } from 'obsidian';
+
+const DEBOUNCE_MS = 150;
+
+/**
+ * FilePickerRenderer - Folder tree with lazy loading and checkboxes
+ *
+ * Features:
+ * - Lazy loading: only loads folder children when expanded
+ * - Search filter: filters tree to matching files/folders
+ * - Multi-select: checkboxes for selecting multiple files
+ * - Workspace-aware: respects workspace rootFolder
+ */
+export class FilePickerRenderer {
+  private selectedFiles: Set<string>;
+  private expandedFolders: Set<string> = new Set();
+  private treeContainer?: HTMLElement;
+  private searchComponent?: TextComponent;
+  private searchQuery = '';
+  private searchTimeout?: number;
+  private rootPath: string;
+  private title: string;
+
+  constructor(
+    private app: App,
+    private onSelect: (filePath: string) => void,
+    private onCancel: () => void,
+    initialSelection?: string,
+    workspaceRootFolder?: string,
+    title?: string,
+    private component?: Component,
+    private showBackButton = true
+  ) {
+    // Support single or multiple initial selection
+    this.selectedFiles = new Set(initialSelection ? [initialSelection] : []);
+
+    // Use workspace root folder or vault root
+    this.rootPath = FilePickerRenderer.normalizeRootPath(workspaceRootFolder);
+
+    this.title = title || 'Select Files';
+  }
+
+  /**
+   * Normalize a configured workspace root folder into a vault-relative path.
+   *
+   * Workspace settings store roots in several shapes ('/blog-test', 'blog-test/',
+   * backslashes on Windows). `getAbstractFileByPath()` only accepts a
+   * vault-relative path with no leading or trailing slash, so a stored
+   * '/blog-test' silently resolved to null and the root folder was ignored.
+   * Returns '/' for the vault root (handled separately via `vault.getRoot()`).
+   */
+  private static normalizeRootPath(rootFolder?: string): string {
+    const trimmed = (rootFolder ?? '').trim();
+    if (!trimmed) return '/';
+
+    const normalized = normalizePath(trimmed).replace(/^\/+|\/+$/g, '');
+    return normalized === '' ? '/' : normalized;
+  }
+
+  /**
+   * Safely register a DOM event - uses Component.registerDomEvent if available,
+   * otherwise falls back to plain addEventListener (cleanup handled by DOM removal)
+   */
+  private safeRegisterDomEvent<K extends keyof HTMLElementEventMap>(
+    el: HTMLElement,
+    type: K,
+    handler: (ev: HTMLElementEventMap[K]) => void
+  ): void {
+    if (this.component) {
+      this.component.registerDomEvent(el, type, handler);
+    } else {
+      // Fallback: Modal/parent container handles cleanup when removed
+      el.addEventListener(type, handler);
+    }
+  }
+
+  /**
+   * Render the file picker view
+   */
+  render(container: HTMLElement): void {
+    container.empty();
+
+    // Header
+    const header = container.createDiv('nexus-file-picker-header');
+
+    const leftSection = header.createDiv('nexus-file-picker-left');
+    if (this.showBackButton) {
+      new ButtonComponent(leftSection)
+        .setButtonText('Back')
+        .onClick(() => this.onCancel());
+    }
+    leftSection.createEl('h3', { text: this.title });
+
+    const actions = header.createDiv('nexus-file-picker-actions');
+    new ButtonComponent(actions)
+      .setButtonText('Done')
+      .setCta()
+      .onClick(() => this.handleDone());
+
+    // Search input
+    const searchField = container.createDiv('nexus-form-field');
+    this.searchComponent = new TextComponent(searchField);
+    this.searchComponent.setPlaceholder('Filter files and folders...');
+    this.searchComponent.onChange((value) => {
+      this.debouncedSearch(value);
+    });
+
+    // Tree container
+    this.treeContainer = container.createDiv('ws-tree');
+
+    // Render root
+    this.renderRoot();
+  }
+
+  /**
+   * Debounced search to prevent excessive re-renders
+   */
+  private debouncedSearch(query: string): void {
+    if (this.searchTimeout) {
+      window.clearTimeout(this.searchTimeout);
+    }
+    this.searchTimeout = window.setTimeout(() => {
+      this.searchQuery = query.toLowerCase().trim();
+      // When searching, auto-expand folders that have matches
+      if (this.searchQuery) {
+        this.expandFoldersWithMatches();
+      }
+      this.renderRoot();
+    }, DEBOUNCE_MS);
+  }
+
+  /**
+   * Expand all folders that contain matching files
+   */
+  private expandFoldersWithMatches(): void {
+    if (!this.searchQuery) return;
+
+    const rootFolder = this.getRootFolder();
+    if (!rootFolder) return;
+
+    this.expandedFolders.clear();
+    this.findAndExpandMatchingFolders(rootFolder);
+  }
+
+  /**
+   * Recursively find folders with matching children and expand them
+   */
+  private findAndExpandMatchingFolders(folder: TFolder): boolean {
+    let hasMatch = false;
+
+    for (const child of folder.children) {
+      if (child instanceof TFolder) {
+        // Check if folder name matches
+        if (child.name.toLowerCase().includes(this.searchQuery)) {
+          hasMatch = true;
+        }
+        // Recursively check children
+        if (this.findAndExpandMatchingFolders(child)) {
+          hasMatch = true;
+        }
+      } else if (child instanceof TFile) {
+        if (child.name.toLowerCase().includes(this.searchQuery)) {
+          hasMatch = true;
+        }
+      }
+    }
+
+    if (hasMatch) {
+      this.expandedFolders.add(folder.path);
+    }
+
+    return hasMatch;
+  }
+
+  /**
+   * Check if item matches search query
+   */
+  private matchesSearch(name: string): boolean {
+    if (!this.searchQuery) return true;
+    return name.toLowerCase().includes(this.searchQuery);
+  }
+
+  /**
+   * Check if folder contains any matching items (for filtering)
+   */
+  private folderHasMatches(folder: TFolder): boolean {
+    if (!this.searchQuery) return true;
+
+    for (const child of folder.children) {
+      if (child instanceof TFolder) {
+        if (this.matchesSearch(child.name) || this.folderHasMatches(child)) {
+          return true;
+        }
+      } else if (child instanceof TFile) {
+        if (this.matchesSearch(child.name)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Get the root folder
+   */
+  private getRootFolder(): TFolder | null {
+    if (this.rootPath === '/') {
+      return this.app.vault.getRoot();
+    } else {
+      const abstractFile = this.app.vault.getAbstractFileByPath(this.rootPath);
+      return abstractFile instanceof TFolder ? abstractFile : null;
+    }
+  }
+
+  /**
+   * Render the root folder(s)
+   */
+  private renderRoot(): void {
+    if (!this.treeContainer) return;
+    this.treeContainer.empty();
+
+    const rootFolder = this.getRootFolder();
+
+    if (!rootFolder) {
+      this.treeContainer.createDiv({
+        text: 'Folder not found',
+        cls: 'nexus-file-picker-empty'
+      });
+      return;
+    }
+
+    // Render children of root (don't show root itself)
+    const hasVisibleItems = this.renderFolderChildren(rootFolder, this.treeContainer, 0);
+
+    if (!hasVisibleItems && this.searchQuery) {
+      this.treeContainer.createDiv({
+        text: 'No matching files found',
+        cls: 'nexus-file-picker-empty'
+      });
+    }
+  }
+
+  /**
+   * Render children of a folder
+   * Returns true if any items were rendered
+   */
+  private renderFolderChildren(folder: TFolder, container: HTMLElement, depth: number): boolean {
+    // Sort: folders first, then files, alphabetically
+    const children = [...folder.children].sort((a, b) => {
+      const aIsFolder = a instanceof TFolder;
+      const bIsFolder = b instanceof TFolder;
+      if (aIsFolder && !bIsFolder) return -1;
+      if (!aIsFolder && bIsFolder) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    let renderedCount = 0;
+
+    for (const child of children) {
+      if (child instanceof TFolder) {
+        // Show folder if it matches or has matching children
+        if (this.matchesSearch(child.name) || this.folderHasMatches(child)) {
+          this.renderFolderRow(child, container, depth);
+          renderedCount++;
+        }
+      } else if (child instanceof TFile) {
+        // Show file if it matches search
+        if (this.matchesSearch(child.name)) {
+          this.renderFileRow(child, container, depth);
+          renderedCount++;
+        }
+      }
+    }
+
+    // Empty folder message (only when not searching)
+    if (renderedCount === 0 && !this.searchQuery) {
+      const empty = container.createDiv({ cls: 'ws-tree-empty' });
+      empty.dataset.depth = String(depth + 1);
+      empty.textContent = 'Empty folder';
+    }
+
+    return renderedCount > 0;
+  }
+
+  /**
+   * Render a folder row with expand/collapse
+   */
+  private renderFolderRow(folder: TFolder, container: HTMLElement, depth: number): void {
+    const isExpanded = this.expandedFolders.has(folder.path);
+
+    const row = container.createDiv({ cls: 'ws-tree-row is-folder' });
+    row.dataset.depth = String(depth);
+
+    // Folder icon (changes based on expanded state)
+    const iconEl = row.createSpan({ cls: 'ws-tree-icon' });
+    setIcon(iconEl, isExpanded ? 'folder-open' : 'folder');
+
+    // Folder name
+    row.createSpan({ text: folder.name, cls: 'ws-tree-name' });
+
+    // Click to expand/collapse
+    const clickHandler = () => {
+      if (isExpanded) {
+        this.expandedFolders.delete(folder.path);
+      } else {
+        this.expandedFolders.add(folder.path);
+      }
+      this.renderRoot(); // Re-render tree
+    };
+    this.safeRegisterDomEvent(row, 'click', clickHandler);
+
+    // Render children if expanded
+    if (isExpanded) {
+      const childrenContainer = container.createDiv({ cls: 'ws-tree-children' });
+      this.renderFolderChildren(folder, childrenContainer, depth + 1);
+    }
+  }
+
+  /**
+   * Render a file row with checkbox
+   */
+  private renderFileRow(file: TFile, container: HTMLElement, depth: number): void {
+    const isSelected = this.selectedFiles.has(file.path);
+
+    const row = container.createDiv({ cls: 'ws-tree-row is-file' });
+    row.dataset.depth = String(depth);
+
+    // Checkbox — backs the real `selectedFiles: Set<string>` multi-select.
+    const checkbox = row.createEl('input', { type: 'checkbox', cls: 'ws-tree-checkbox' });
+    checkbox.checked = isSelected;
+    const changeHandler = (e: Event) => {
+      e.stopPropagation();
+      if (checkbox.checked) {
+        this.selectedFiles.add(file.path);
+      } else {
+        this.selectedFiles.delete(file.path);
+      }
+    };
+    this.safeRegisterDomEvent(checkbox, 'change', changeHandler);
+
+    // File icon
+    const iconEl = row.createSpan({ cls: 'ws-tree-icon' });
+    setIcon(iconEl, 'file-text');
+
+    // File name
+    row.createSpan({ text: file.name, cls: 'ws-tree-name' });
+
+    // Click row to toggle checkbox
+    const rowClickHandler = (e: MouseEvent) => {
+      if (e.target !== checkbox) {
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event('change'));
+      }
+    };
+    this.safeRegisterDomEvent(row, 'click', rowClickHandler);
+  }
+
+  /**
+   * Handle done - return first selected file (for single selection mode)
+   */
+  private handleDone(): void {
+    const selected = Array.from(this.selectedFiles);
+    if (selected.length > 0) {
+      // For now, return first selected file (maintains compatibility)
+      this.onSelect(selected[0]);
+    } else {
+      this.onCancel();
+    }
+  }
+
+  /**
+   * Get all selected file paths
+   */
+  getSelectedPaths(): string[] {
+    return Array.from(this.selectedFiles);
+  }
+
+  /**
+   * Get currently selected file path (first one, for compatibility)
+   */
+  getSelectedPath(): string {
+    const paths = this.getSelectedPaths();
+    return paths.length > 0 ? paths[0] : '';
+  }
+
+  /**
+   * Open file picker in a modal - reusable anywhere
+   * @param app Obsidian App instance
+   * @param options Configuration options
+   * @returns Promise with selected file paths (empty array if cancelled)
+   */
+  static openModal(
+    app: App,
+    options: {
+      title?: string;
+      rootFolder?: string;
+      initialSelection?: string[];
+      excludePaths?: string[];
+    } = {}
+  ): Promise<string[]> {
+    return new Promise((resolve) => {
+      const modal = new Modal(app);
+      modal.titleEl.setText(options.title || 'Select Files');
+      modal.modalEl.addClass('file-picker-modal');
+      const excludePaths = options.excludePaths;
+
+      const pickerInstance = new FilePickerRenderer(
+        app,
+        () => {
+          // Done callback - return all selected paths
+          const paths = pickerInstance.getSelectedPaths();
+          const filtered = excludePaths
+            ? paths.filter(p => !excludePaths.includes(p))
+            : paths;
+          resolve(filtered);
+          modal.close();
+        },
+        () => {
+          // Cancel callback
+          resolve([]);
+          modal.close();
+        },
+        options.initialSelection?.join(','),
+        options.rootFolder || '/'
+        // Note: No component passed - modal handles its own lifecycle
+      );
+
+      pickerInstance.render(modal.contentEl);
+      modal.open();
+    });
+  }
+}

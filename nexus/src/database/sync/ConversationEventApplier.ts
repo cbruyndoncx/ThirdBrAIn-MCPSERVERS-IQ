@@ -1,0 +1,222 @@
+/**
+ * Location: src/database/sync/ConversationEventApplier.ts
+ *
+ * Applies conversation-related events to SQLite cache.
+ * Handles: conversation, message events.
+ */
+
+import {
+  ConversationEvent,
+  ConversationCreatedEvent,
+  ConversationUpdatedEvent,
+  ConversationDeletedEvent,
+  MessageEvent,
+  MessageUpdatedEvent,
+  MessageDeletedEvent,
+} from '../interfaces/StorageEvents';
+import { ISQLiteCacheManager } from './SyncCoordinator';
+
+export class ConversationEventApplier {
+  private sqliteCache: ISQLiteCacheManager;
+
+  constructor(sqliteCache: ISQLiteCacheManager) {
+    this.sqliteCache = sqliteCache;
+  }
+
+  /**
+   * Apply a conversation-related event to SQLite cache.
+   */
+  async apply(event: ConversationEvent): Promise<void> {
+    switch (event.type) {
+      case 'metadata':
+        await this.applyConversationCreated(event);
+        break;
+      case 'conversation_updated':
+        await this.applyConversationUpdated(event);
+        break;
+      case 'conversation_deleted':
+        await this.applyConversationDeleted(event);
+        break;
+      case 'message':
+        await this.applyMessageAdded(event);
+        break;
+      case 'message_updated':
+        await this.applyMessageUpdated(event);
+        break;
+      case 'message_deleted':
+        await this.applyMessageDeleted(event);
+        break;
+      // Legacy branch events - no longer used in unified model (branches ARE conversations)
+      // Skip silently to handle any old JSONL files with these events
+      case 'branch_created':
+      case 'branch_message':
+      case 'branch_message_updated':
+      case 'branch_updated':
+        break;
+    }
+  }
+
+  private async applyConversationCreated(event: ConversationCreatedEvent): Promise<void> {
+    // Skip invalid conversation events
+    if (!event.data?.id) {
+      return;
+    }
+
+    const settings = event.data.settings;
+    const chatSettings = settings?.chatSettings;
+    const workspaceId = settings?.workspaceId ?? chatSettings?.workspaceId ?? null;
+    const sessionId = settings?.sessionId ?? chatSettings?.sessionId ?? null;
+    const workflowId = settings?.workflowId ?? null;
+    const runTrigger = settings?.runTrigger ?? null;
+    const scheduledFor = settings?.scheduledFor ?? null;
+    const runKey = settings?.runKey ?? null;
+
+    await this.sqliteCache.run(
+      `INSERT OR REPLACE INTO conversations
+       (id, title, created, updated, vaultName, messageCount, metadataJson, workspaceId, sessionId, workflowId, runTrigger, scheduledFor, runKey)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        event.data.id,
+        event.data.title ?? 'Untitled',
+        event.data.created ?? Date.now(),
+        event.data.created ?? Date.now(),
+        event.data.vault ?? '',
+        0,
+        settings ? JSON.stringify(settings) : null,
+        workspaceId,
+        sessionId,
+        workflowId,
+        runTrigger,
+        scheduledFor,
+        runKey
+      ]
+    );
+  }
+
+  private async applyConversationUpdated(event: ConversationUpdatedEvent): Promise<void> {
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    if (event.data.title !== undefined) { updates.push('title = ?'); values.push(event.data.title); }
+    if (event.data.updated !== undefined) { updates.push('updated = ?'); values.push(event.data.updated); }
+    if (event.data.settings !== undefined) {
+      const settings = event.data.settings;
+      const chatSettings = settings?.chatSettings;
+      updates.push('metadataJson = ?');
+      values.push(JSON.stringify(settings));
+      updates.push('workspaceId = ?');
+      values.push(settings?.workspaceId ?? chatSettings?.workspaceId ?? null);
+      updates.push('sessionId = ?');
+      values.push(settings?.sessionId ?? chatSettings?.sessionId ?? null);
+      updates.push('workflowId = ?');
+      values.push(settings?.workflowId ?? null);
+      updates.push('runTrigger = ?');
+      values.push(settings?.runTrigger ?? null);
+      updates.push('scheduledFor = ?');
+      values.push(settings?.scheduledFor ?? null);
+      updates.push('runKey = ?');
+      values.push(settings?.runKey ?? null);
+    }
+
+    if (updates.length > 0) {
+      values.push(event.conversationId);
+      await this.sqliteCache.run(
+        `UPDATE conversations SET ${updates.join(', ')} WHERE id = ?`,
+        values
+      );
+    }
+  }
+
+  private async applyConversationDeleted(event: ConversationDeletedEvent): Promise<void> {
+    // Delete messages first (cascade), then conversation
+    await this.sqliteCache.run(
+      `DELETE FROM messages WHERE conversationId = ?`,
+      [event.conversationId]
+    );
+    await this.sqliteCache.run(
+      `DELETE FROM conversations WHERE id = ?`,
+      [event.conversationId]
+    );
+  }
+
+  private async applyMessageAdded(event: MessageEvent): Promise<void> {
+    // Skip invalid message events
+    if (!event.data?.id || !event.conversationId) {
+      return;
+    }
+
+    await this.sqliteCache.run(
+      `INSERT OR REPLACE INTO messages
+       (id, conversationId, role, content, timestamp, state, toolCallsJson, toolCallId, reasoningContent, sequenceNumber, alternativesJson, activeAlternativeIndex)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        event.data.id,
+        event.conversationId,
+        event.data.role ?? 'user',
+        event.data.content ?? '',
+        event.timestamp ?? Date.now(),
+        event.data.state ?? 'complete',
+        event.data.tool_calls ? JSON.stringify(event.data.tool_calls) : null,
+        event.data.tool_call_id ?? null,
+        event.data.reasoning ?? null,
+        event.data.sequenceNumber ?? 0,
+        event.data.alternatives ? JSON.stringify(event.data.alternatives) : null,
+        event.data.activeAlternativeIndex ?? 0
+      ]
+    );
+
+    // Update message count
+    await this.sqliteCache.run(
+      `UPDATE conversations SET messageCount = messageCount + 1, updated = ? WHERE id = ?`,
+      [event.timestamp ?? Date.now(), event.conversationId]
+    );
+  }
+
+  private async applyMessageUpdated(event: MessageUpdatedEvent): Promise<void> {
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    if (event.data.content !== undefined) { updates.push('content = ?'); values.push(event.data.content); }
+    if (event.data.state !== undefined) { updates.push('state = ?'); values.push(event.data.state); }
+    if (event.data.reasoning !== undefined) { updates.push('reasoningContent = ?'); values.push(event.data.reasoning); }
+    if (event.data.tool_calls !== undefined) {
+      updates.push('toolCallsJson = ?');
+      values.push(event.data.tool_calls ? JSON.stringify(event.data.tool_calls) : null);
+    }
+    if (event.data.tool_call_id !== undefined) {
+      updates.push('toolCallId = ?');
+      values.push(event.data.tool_call_id);
+    }
+    if (event.data.alternatives !== undefined) {
+      updates.push('alternativesJson = ?');
+      values.push(event.data.alternatives ? JSON.stringify(event.data.alternatives) : null);
+    }
+    if (event.data.activeAlternativeIndex !== undefined) {
+      updates.push('activeAlternativeIndex = ?');
+      values.push(event.data.activeAlternativeIndex);
+    }
+
+    if (updates.length > 0) {
+      values.push(event.messageId);
+      await this.sqliteCache.run(
+        `UPDATE messages SET ${updates.join(', ')} WHERE id = ?`,
+        values
+      );
+    }
+  }
+
+  private async applyMessageDeleted(event: MessageDeletedEvent): Promise<void> {
+    await this.sqliteCache.run(
+      `DELETE FROM messages WHERE id = ? AND conversationId = ?`,
+      [event.messageId, event.conversationId]
+    );
+
+    await this.sqliteCache.run(
+      `UPDATE conversations
+       SET messageCount = CASE WHEN messageCount > 0 THEN messageCount - 1 ELSE 0 END,
+           updated = ?
+       WHERE id = ?`,
+      [event.timestamp ?? Date.now(), event.conversationId]
+    );
+  }
+}

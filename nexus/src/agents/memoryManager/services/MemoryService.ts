@@ -1,0 +1,821 @@
+// Location: src/agents/memoryManager/services/MemoryService.ts
+// Agent-specific memory management service that delegates to WorkspaceService or IStorageAdapter
+// Used by: MemoryManager agent tools for memory operations
+// Dependencies: WorkspaceService (legacy) or IStorageAdapter (new) for all data access
+
+import { Plugin } from 'obsidian';
+import { GLOBAL_WORKSPACE_ID, WorkspaceService } from '../../../services/WorkspaceService';
+import { IStorageAdapter } from '../../../database/interfaces/IStorageAdapter';
+import {
+  WorkspaceMemoryTrace,
+  WorkspaceSession,
+  WorkspaceState
+} from '../../../database/workspace-types';
+import { MemoryTraceData, SessionMetadata, StateMetadata } from '../../../types/storage/HybridStorageTypes';
+import { PaginatedResult, PaginationParams, calculatePaginationMetadata } from '../../../types/pagination/PaginationTypes';
+import type { StateListOptions } from '../../../database/repositories/interfaces/IStateRepository';
+import { normalizeLegacyTraceMetadata } from '../../../services/memory/LegacyTraceMetadataNormalizer';
+import { StorageAdapterOrGetter, resolveAdapter, withDualBackend, withReadableBackend, withWritableBackend } from '../../../services/helpers/DualBackendExecutor';
+
+/**
+ * MemoryService provides agent-specific logic for memory management
+ * Data access is delegated to either:
+ * - IStorageAdapter (new hybrid JSONL+SQLite backend with pagination)
+ * - WorkspaceService (legacy JSON file backend)
+ */
+export class MemoryService {
+  private storageAdapterOrGetter: StorageAdapterOrGetter;
+
+  constructor(
+    private plugin: Plugin,
+    private workspaceService: WorkspaceService,
+    storageAdapter?: StorageAdapterOrGetter
+  ) {
+    this.storageAdapterOrGetter = storageAdapter;
+  }
+
+  /**
+   * Resolve the storage adapter if available and ready.
+   * Delegates to shared DualBackendExecutor helper.
+   */
+  private getReadyAdapter(): IStorageAdapter | undefined {
+    return resolveAdapter(this.storageAdapterOrGetter);
+  }
+
+  /**
+   * Get memory traces from a workspace/session
+   * @param workspaceId - Workspace ID
+   * @param sessionId - Optional session ID to filter by
+   * @param options - Optional pagination parameters
+   * @returns Always returns PaginatedResult for consistent API
+   */
+  async getMemoryTraces(
+    workspaceId: string,
+    sessionId?: string,
+    options?: PaginationParams
+  ): Promise<PaginatedResult<WorkspaceMemoryTrace>> {
+    return withReadableBackend(
+      this.storageAdapterOrGetter,
+      async (adapter) => {
+        const result = await adapter.getTraces(workspaceId, sessionId, options);
+        const convertedItems = result.items.map(trace => this.convertToLegacyTrace(trace));
+        return {
+          ...result,
+          items: convertedItems
+        };
+      },
+      async () => {
+        let allTraces: WorkspaceMemoryTrace[] = [];
+
+        if (sessionId) {
+          const traces = await this.workspaceService.getMemoryTraces(workspaceId, sessionId);
+          allTraces = traces.map(trace => ({
+            ...trace,
+            workspaceId,
+            sessionId
+          }));
+        } else {
+          const workspace = await this.workspaceService.getWorkspace(workspaceId);
+          if (workspace) {
+            for (const [sid, session] of Object.entries(workspace.sessions)) {
+              const sessionTraces = Object.values(session.memoryTraces).map(trace => ({
+                ...trace,
+                workspaceId,
+                sessionId: sid
+              }));
+              allTraces.push(...sessionTraces);
+            }
+          }
+        }
+
+        return this.wrapInPaginatedResult(allTraces, options);
+      }
+    );
+  }
+
+  /**
+   * Helper to wrap an array in a PaginatedResult
+   */
+  private wrapInPaginatedResult<T>(items: T[], options?: PaginationParams): PaginatedResult<T> {
+    const page = options?.page ?? 0;
+    const pageSize = options?.pageSize ?? (items.length || 1); // Default to all items
+    const totalItems = items.length;
+
+    // Apply pagination if options provided
+    const start = page * pageSize;
+    const end = start + pageSize;
+    const paginatedItems = options ? items.slice(start, end) : items;
+
+    return {
+      items: paginatedItems,
+      ...calculatePaginationMetadata(page, pageSize, totalItems)
+    };
+  }
+
+  /**
+   * Helper to convert MemoryTraceData to WorkspaceMemoryTrace format
+   */
+  private convertToLegacyTrace(trace: MemoryTraceData): WorkspaceMemoryTrace {
+    return {
+      id: trace.id,
+      workspaceId: trace.workspaceId,
+      sessionId: trace.sessionId,
+      timestamp: trace.timestamp,
+      type: trace.type || 'generic',
+      content: trace.content,
+      metadata: trace.metadata
+    };
+  }
+
+  /**
+   * Helper to convert WorkspaceMemoryTrace to MemoryTraceData format
+   */
+  private convertFromLegacyTrace(trace: WorkspaceMemoryTrace): MemoryTraceData {
+    return {
+      id: trace.id,
+      workspaceId: trace.workspaceId,
+      sessionId: trace.sessionId || '',
+      timestamp: trace.timestamp,
+      type: trace.type,
+      content: trace.content,
+      metadata: trace.metadata
+    };
+  }
+
+  /**
+   * Record activity trace in a session
+   */
+  async recordActivityTrace(trace: Omit<WorkspaceMemoryTrace, 'id'>): Promise<string> {
+    const workspaceId = await this.resolveTraceWorkspaceId(trace);
+    const sessionId = trace.sessionId || this.createSessionId();
+
+    const tracePayload = {
+      timestamp: trace.timestamp || Date.now(),
+      type: trace.type || 'generic',
+      content: trace.content || '',
+      metadata: normalizeLegacyTraceMetadata({
+        workspaceId,
+        sessionId,
+        traceType: trace.type,
+        metadata: trace.metadata
+      })
+    };
+
+    return withDualBackend(
+      this.storageAdapterOrGetter,
+      async (adapter) => {
+        // Pre-check session existence (replaces the prior catch-and-retry pattern
+        // around addTrace). Dedup is now explicit: getSession + create-if-missing,
+        // so concurrent first-traces for the same new sessionId may both pass the
+        // existence check and the second adapter.createSession will surface a
+        // duplicate-key error from the storage layer rather than racing through
+        // the implicit retry. Acceptable here because the adapter is the
+        // authoritative dedup point and the SQLite UNIQUE constraint is the
+        // backstop.
+        const existingSession = await adapter.getSession(sessionId);
+        if (!existingSession) {
+          await adapter.createSession(workspaceId, {
+            id: sessionId,
+            name: this.buildSessionName({ ...trace, sessionId }),
+            description: this.buildSessionDescription(trace),
+            startTime: Date.now(),
+            isActive: true
+          });
+        } else if (existingSession.workspaceId !== workspaceId && adapter.moveSessionToWorkspace) {
+          await adapter.moveSessionToWorkspace(sessionId, workspaceId);
+          await adapter.updateSession(workspaceId, sessionId, {
+            name: existingSession.name,
+            description: existingSession.description,
+            endTime: existingSession.endTime,
+            isActive: existingSession.isActive
+          });
+        }
+        return await adapter.addTrace(workspaceId, sessionId, tracePayload);
+      },
+      async () => {
+        const workspace = await this.workspaceService.getWorkspace(workspaceId);
+        if (!workspace) {
+          throw new Error(`Workspace ${workspaceId} not found`);
+        }
+
+        if (!workspace.sessions[sessionId]) {
+          await this.workspaceService.addSession(workspaceId, {
+            id: sessionId,
+            name: this.buildSessionName({ ...trace, sessionId }),
+            description: this.buildSessionDescription(trace),
+            startTime: Date.now(),
+            isActive: true,
+            memoryTraces: {},
+            states: {}
+          });
+        }
+
+        const createdTrace = await this.workspaceService.addMemoryTrace(workspaceId, sessionId, tracePayload);
+        return createdTrace.id;
+      }
+    );
+  }
+
+  private async resolveTraceWorkspaceId(trace: Omit<WorkspaceMemoryTrace, 'id'>): Promise<string> {
+    const context = this.extractTraceContext(trace.metadata);
+    const contextWorkspaceId = typeof context.workspaceId === 'string' ? context.workspaceId.trim() : '';
+    const preferredWorkspaceId =
+      contextWorkspaceId && trace.workspaceId === GLOBAL_WORKSPACE_ID
+        ? contextWorkspaceId
+        : trace.workspaceId;
+
+    if (!preferredWorkspaceId) {
+      return trace.workspaceId;
+    }
+
+    try {
+      const workspace = await this.workspaceService.getWorkspaceByNameOrId(preferredWorkspaceId);
+      return workspace?.id || preferredWorkspaceId;
+    } catch {
+      return preferredWorkspaceId;
+    }
+  }
+
+  private buildSessionName(trace: Omit<WorkspaceMemoryTrace, 'id'>): string {
+    const context = this.extractTraceContext(trace.metadata);
+    const sessionName = typeof context.sessionName === 'string' ? context.sessionName.trim() : '';
+    if (sessionName) {
+      return this.truncateSessionText(sessionName, 80);
+    }
+
+    const displaySessionId = typeof context.displaySessionId === 'string' ? context.displaySessionId.trim() : '';
+    if (displaySessionId) {
+      return this.truncateSessionText(displaySessionId, 80);
+    }
+
+    if (trace.sessionId) {
+      return `Session ${trace.sessionId}`;
+    }
+
+    return 'Auto-created session';
+  }
+
+  private buildSessionDescription(trace: Omit<WorkspaceMemoryTrace, 'id'>): string {
+    const context = this.extractTraceContext(trace.metadata);
+    const memory = typeof context.memory === 'string' ? context.memory.trim() : '';
+    if (memory) {
+      return this.truncateSessionText(memory, 180);
+    }
+
+    return 'Auto-created session';
+  }
+
+  private extractTraceContext(metadata: unknown): Record<string, unknown> {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      return {};
+    }
+
+    const metadataRecord = metadata as Record<string, unknown>;
+    const context = metadataRecord.context;
+    return context && typeof context === 'object' && !Array.isArray(context)
+      ? context as Record<string, unknown>
+      : {};
+  }
+
+  private truncateSessionText(value: string, maxLength: number): string {
+    return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+  }
+
+  /**
+   * Create memory trace
+   */
+  async createMemoryTrace(trace: Omit<WorkspaceMemoryTrace, 'id'>): Promise<WorkspaceMemoryTrace> {
+    const workspaceId = trace.workspaceId;
+    const sessionId = trace.sessionId || this.createSessionId();
+    const traceId = await this.recordActivityTrace({
+      ...trace,
+      sessionId
+    });
+
+    // Retrieve the created trace
+    const traces = await this.getMemoryTraces(workspaceId, sessionId);
+    const createdTrace = traces.items.find((traceItem) => traceItem.id === traceId);
+
+    if (!createdTrace) {
+      throw new Error('Failed to retrieve created memory trace');
+    }
+
+    return {
+      ...createdTrace,
+      workspaceId,
+      sessionId
+    };
+  }
+
+  /**
+   * Get sessions for a workspace
+   * @param workspaceId - Workspace ID
+   * @param options - Optional pagination parameters
+   * @returns Always returns PaginatedResult for consistent API
+   */
+  async getSessions(
+    workspaceId: string,
+    options?: PaginationParams
+  ): Promise<PaginatedResult<WorkspaceSession>> {
+    return withReadableBackend(
+      this.storageAdapterOrGetter,
+      async (adapter) => {
+        const result = await adapter.getSessions(workspaceId, options);
+        const convertedItems = result.items.map(session => this.convertSessionMetadataToWorkspaceSession(session));
+        return {
+          ...result,
+          items: convertedItems
+        };
+      },
+      async () => {
+        const workspace = await this.workspaceService.getWorkspace(workspaceId);
+        if (!workspace) {
+          return this.wrapInPaginatedResult([], options);
+        }
+        const sessions = Object.values(workspace.sessions).map(session => ({
+          ...session,
+          workspaceId
+        }));
+        return this.wrapInPaginatedResult(sessions, options);
+      }
+    );
+  }
+
+  /**
+   * Helper to convert SessionMetadata to WorkspaceSession format
+   */
+  private convertSessionMetadataToWorkspaceSession(metadata: SessionMetadata): WorkspaceSession {
+    return {
+      id: metadata.id,
+      workspaceId: metadata.workspaceId,
+      name: metadata.name,
+      description: metadata.description
+    };
+  }
+
+  /**
+   * Create session in workspace
+   */
+  async createSession(session: Omit<WorkspaceSession, 'id'> & {
+    id?: string;
+    workspaceId: string;
+    startTime?: number;
+    endTime?: number;
+    isActive?: boolean;
+  }): Promise<WorkspaceSession> {
+    const workspaceId = session.workspaceId;
+    const sessionId = session.id; // Extract ID if provided
+
+    const createdSession = await this.workspaceService.addSession(workspaceId, {
+      id: sessionId, // Pass the ID through!
+      name: session.name,
+      description: session.description,
+      startTime: session.startTime || Date.now(),
+      endTime: session.endTime,
+      isActive: session.isActive ?? true,
+      memoryTraces: {},
+      states: {}
+    });
+
+    return {
+      ...createdSession,
+      workspaceId
+    };
+  }
+
+  /**
+   * Update session
+   */
+  async updateSession(workspaceId: string, sessionId: string, updates: Partial<WorkspaceSession>): Promise<void> {
+    await this.workspaceService.updateSession(workspaceId, sessionId, updates);
+  }
+
+  /**
+   * Get session by ID
+   */
+  async getSession(workspaceId: string, sessionId: string): Promise<WorkspaceSession | null> {
+    const session = await this.workspaceService.getSession(workspaceId, sessionId);
+
+    if (!session) {
+      return null;
+    }
+
+    return {
+      ...session,
+      workspaceId
+    };
+  }
+
+  /**
+   * Get session by name or ID (unified lookup)
+   * Tries ID lookup first, then falls back to name lookup
+   */
+  async getSessionByNameOrId(workspaceId: string, identifier: string): Promise<WorkspaceSession | null> {
+    const session = await this.workspaceService.getSessionByNameOrId(workspaceId, identifier);
+
+    if (!session) {
+      return null;
+    }
+
+    return {
+      ...session,
+      workspaceId
+    };
+  }
+
+  /**
+   * Delete session
+   */
+  async deleteSession(workspaceId: string, sessionId: string): Promise<void> {
+    await this.workspaceService.deleteSession(workspaceId, sessionId);
+  }
+
+  /**
+   * Save state to session
+   */
+  async saveState(
+    workspaceId: string,
+    sessionId: string,
+    stateData: WorkspaceState,
+    name?: string
+  ): Promise<string> {
+    await this.workspaceService.addSession(workspaceId, {
+      id: sessionId,
+      name: this.buildStateSessionName(stateData, name),
+      description: this.buildStateSessionDescription(stateData),
+      startTime: Date.now(),
+      isActive: true
+    });
+
+    const state = await this.workspaceService.addState(workspaceId, sessionId, {
+      id: stateData.id,  // Pass the ID to preserve it
+      name: name || stateData.name || 'Unnamed State',
+      description: stateData.description,
+      created: stateData.created || Date.now(),
+      tags: this.extractStateTags(stateData),
+      state: stateData
+    });
+
+    return state.id;
+  }
+
+  private buildStateSessionName(stateData: WorkspaceState, name?: string): string {
+    const activeTask = typeof stateData.context?.activeTask === 'string'
+      ? stateData.context.activeTask.trim()
+      : '';
+    if (activeTask) {
+      return this.truncateSessionText(activeTask, 80);
+    }
+
+    return this.truncateSessionText(name || stateData.name || `Session ${new Date().toLocaleString()}`, 80);
+  }
+
+  private buildStateSessionDescription(stateData: WorkspaceState): string {
+    const conversationContext = typeof stateData.context?.conversationContext === 'string'
+      ? stateData.context.conversationContext.trim()
+      : '';
+    if (conversationContext) {
+      return this.truncateSessionText(conversationContext, 180);
+    }
+
+    return stateData.description || 'Auto-created session for state storage';
+  }
+
+  /**
+   * Get state from session by ID
+   */
+  async getState(
+    workspaceId: string,
+    sessionId: string,
+    stateId: string
+  ): Promise<WorkspaceState | null> {
+    const stateData = await this.workspaceService.getState(workspaceId, sessionId, stateId);
+
+    if (!stateData) {
+      return null;
+    }
+
+    return stateData.state;
+  }
+
+  /**
+   * Get state by name or ID (unified lookup)
+   * Tries ID lookup first, then falls back to name lookup
+   */
+  async getStateByNameOrId(
+    workspaceId: string,
+    sessionId: string,
+    identifier: string
+  ): Promise<WorkspaceState | null> {
+    const stateData = await this.workspaceService.getStateByNameOrId(workspaceId, sessionId, identifier);
+
+    if (!stateData) {
+      return null;
+    }
+
+    return stateData.state;
+  }
+
+  /**
+   * Get all states for a session (or all sessions in workspace if sessionId not provided)
+   * @param workspaceId - Workspace ID
+   * @param sessionId - Optional session ID to filter by
+   * @param options - Optional pagination parameters
+   * @returns Always returns PaginatedResult for consistent API
+   */
+  /**
+   * List states for a workspace (optionally a single session).
+   *
+   * Reads SQLite metadata only. The archive flag consumers filter on lives at
+   * `item.state.state.metadata.isArchived`, and since schema v16 it is a
+   * denormalized column, so this no longer fetches every state's JSONL content
+   * to find it — that cost was one full workspace-stream parse PER STATE
+   * (issue #219: 200 states = 200 reads, ~180k events parsed, ~500 ms cold).
+   *
+   * Content is still fetched for a row whose flag is `undefined`, which means
+   * "not backfilled yet", not "not archived". Dropping that fallback is what
+   * made archived states reappear in #218.
+   */
+  async getStates(
+    workspaceId: string,
+    sessionId?: string,
+    options?: StateListOptions
+  ): Promise<PaginatedResult<{
+    id: string;
+    name: string;
+    description?: string;
+    sessionId?: string;
+    workspaceId?: string;
+    created: number;
+    tags?: string[];
+    state: WorkspaceState;
+  }>> {
+    type StateItem = {
+      id: string;
+      name: string;
+      description?: string;
+      sessionId?: string;
+      workspaceId?: string;
+      created: number;
+      tags?: string[];
+      state: WorkspaceState;
+    };
+
+    return withReadableBackend(
+      this.storageAdapterOrGetter,
+      async (adapter) => {
+        const result = await adapter.getStates(workspaceId, sessionId, options);
+        const convertedItems: StateItem[] = await Promise.all(result.items.map(async stateMeta => {
+          // The ONLY reason to open the JSONL stream here is a row whose
+          // archive flag SQLite cannot answer. Every other field the list
+          // needs is already on the metadata row.
+          const fullState = stateMeta.isArchived === undefined
+            ? await adapter.getState(stateMeta.id)
+            : null;
+          const tags = stateMeta.tags || this.extractStateTagsFromContent(fullState?.content);
+          return {
+            id: stateMeta.id,
+            name: stateMeta.name,
+            description: stateMeta.description,
+            sessionId: stateMeta.sessionId,
+            workspaceId: stateMeta.workspaceId,
+            created: stateMeta.created,
+            tags,
+            state: this.stateMetadataToWorkspaceState(stateMeta, fullState?.content, tags)
+          };
+        }));
+        return {
+          ...result,
+          items: convertedItems
+        };
+      },
+      async () => {
+        const workspace = await this.workspaceService.getWorkspace(workspaceId);
+        let allStates: StateItem[] = [];
+
+        if (workspace) {
+          if (sessionId) {
+            if (workspace.sessions[sessionId]) {
+              allStates = Object.values(workspace.sessions[sessionId].states);
+            }
+          } else {
+            for (const session of Object.values(workspace.sessions)) {
+              allStates.push(...Object.values(session.states));
+            }
+          }
+        }
+
+        return this.wrapInPaginatedResult(allStates, options);
+      }
+    );
+  }
+
+  /**
+   * Resolve one state by name or id within a workspace.
+   *
+   * Prefer this over scanning `getStates` for a match. `getStates` is a
+   * paginated list (default 25, hard cap 200 in `BaseRepository`), so a scan
+   * silently cannot see states older than the newest page - which made every
+   * state past the 25th unarchivable and unrestorable. Resolving in SQL also
+   * avoids paging, which would reintroduce the per-state JSONL reads that
+   * #219/#346 removed.
+   *
+   * Archived states are included: restore and rename both need them.
+   *
+   * @param workspaceId - Workspace that owns the state
+   * @param identifier - State id, or state name
+   * @param options.matchId - Also match against the state id (default true)
+   * @param options.caseSensitiveName - Exact-case name match (default true)
+   * @returns Matching state, or null
+   */
+  async findState(
+    workspaceId: string,
+    identifier: string,
+    options?: { matchId?: boolean; caseSensitiveName?: boolean }
+  ): Promise<{ id: string; name: string; sessionId?: string; tags?: string[] } | null> {
+    return withReadableBackend(
+      this.storageAdapterOrGetter,
+      async (adapter) => {
+        const match = await adapter.findState(workspaceId, identifier, options);
+        return match
+          ? { id: match.id, name: match.name, sessionId: match.sessionId, tags: match.tags }
+          : null;
+      },
+      async () => {
+        const workspace = await this.workspaceService.getWorkspace(workspaceId);
+        if (!workspace) {
+          return null;
+        }
+        const matchId = options?.matchId !== false;
+        const caseSensitive = options?.caseSensitiveName !== false;
+        const sameName = (name?: string) => caseSensitive
+          ? name === identifier
+          : name?.toLowerCase() === identifier.toLowerCase();
+
+        const all = Object.values(workspace.sessions)
+          .flatMap(session => Object.values(session.states)) as Array<{
+            id: string; name: string; sessionId?: string; created?: number; tags?: string[];
+          }>;
+        const sorted = [...all].sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
+        return sorted.find(s => matchId && s.id === identifier)
+          ?? sorted.find(s => sameName(s.name))
+          ?? null;
+      }
+    );
+  }
+
+  private extractStateTags(state: WorkspaceState): string[] | undefined {
+    const tags = state.state?.metadata?.tags;
+    return Array.isArray(tags) ? tags.filter((tag): tag is string => typeof tag === 'string') : undefined;
+  }
+
+  private extractStateTagsFromContent(content: unknown): string[] | undefined {
+    if (typeof content !== 'object' || content === null || Array.isArray(content)) {
+      return undefined;
+    }
+
+    const state = content as { state?: { metadata?: { tags?: unknown } } };
+    const tags = state.state?.metadata?.tags;
+    return Array.isArray(tags) ? tags.filter((tag): tag is string => typeof tag === 'string') : undefined;
+  }
+
+  /**
+   * Build the WorkspaceState consumers read.
+   *
+   * When `content` is absent this is a skeleton assembled from SQLite metadata
+   * alone. `state.metadata.isArchived` is filled from the denormalized column
+   * (v16) — every archive filter in the codebase reads it from there, so a
+   * skeleton that omitted it would silently list archived states as visible.
+   */
+  private stateMetadataToWorkspaceState(state: StateMetadata, content?: unknown, tags: string[] = state.tags || []): WorkspaceState {
+    const archivedMetadata = state.isArchived === undefined ? {} : { isArchived: state.isArchived };
+
+    if (typeof content === 'object' && content !== null && !Array.isArray(content)) {
+      const workspaceState = content as Partial<WorkspaceState>;
+      return {
+        ...workspaceState,
+        id: workspaceState.id || state.id,
+        name: workspaceState.name || state.name,
+        workspaceId: workspaceState.workspaceId || state.workspaceId,
+        sessionId: workspaceState.sessionId || state.sessionId,
+        description: workspaceState.description || state.description,
+        created: workspaceState.created || state.created,
+        context: workspaceState.context || {
+          workspaceContext: {
+            purpose: ''
+          },
+          conversationContext: '',
+          activeTask: state.description || '',
+          activeFiles: [],
+          nextSteps: []
+        },
+        state: {
+          workspace: workspaceState.state?.workspace ?? null,
+          recentTraces: workspaceState.state?.recentTraces ?? [],
+          contextFiles: workspaceState.state?.contextFiles ?? [],
+          metadata: {
+            // Column first, snapshot second: when content was fetched it is
+            // the source of truth and wins.
+            ...archivedMetadata,
+            ...workspaceState.state?.metadata,
+            tags
+          }
+        }
+      };
+    }
+
+    return {
+      id: state.id,
+      name: state.name,
+      workspaceId: state.workspaceId,
+      sessionId: state.sessionId,
+      description: state.description,
+      created: state.created,
+      context: {
+        workspaceContext: {
+          purpose: ''
+        },
+        conversationContext: '',
+        activeTask: state.description || '',
+        activeFiles: [],
+        nextSteps: []
+      },
+      state: {
+        workspace: null,
+        recentTraces: [],
+        contextFiles: [],
+        metadata: {
+          ...archivedMetadata,
+          tags
+        }
+      }
+    };
+  }
+
+  private createSessionId(): string {
+    return `session_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+  }
+
+  /**
+   * Update an existing state's mutable fields. The inner snapshot `content`
+   * (WorkspaceState) is replaced wholesale when `state` is provided; other
+   * fields (`name`, `description`, `tags`) are patched independently.
+   *
+   * Routes through WorkspaceService.updateState, which writes a state_updated
+   * event to JSONL and patches the SQLite cache via the storage adapter.
+   */
+  async updateState(
+    workspaceId: string,
+    sessionId: string,
+    stateId: string,
+    updates: Partial<{
+      name: string;
+      description: string;
+      tags: string[];
+      state: WorkspaceState;
+    }>
+  ): Promise<void> {
+    const adapterUpdates: {
+      name?: string;
+      description?: string;
+      tags?: string[];
+      content?: unknown;
+    } = {};
+    if (updates.name !== undefined) adapterUpdates.name = updates.name;
+    if (updates.description !== undefined) adapterUpdates.description = updates.description;
+    if (updates.tags !== undefined) adapterUpdates.tags = updates.tags;
+    if (updates.state !== undefined) adapterUpdates.content = updates.state;
+
+    await this.workspaceService.updateState(workspaceId, sessionId, stateId, adapterUpdates);
+  }
+
+  /**
+   * Delete state
+   */
+  async deleteState(
+    workspaceId: string,
+    sessionId: string,
+    stateId: string
+  ): Promise<void> {
+    // Destructive: must not silently route to the legacy store while the
+    // adapter is still hydrating. See #333 and withWritableBackend.
+    return withWritableBackend(
+      this.storageAdapterOrGetter,
+      async (adapter) => {
+        await adapter.deleteState(stateId);
+      },
+      async () => {
+        const workspace = await this.workspaceService.getWorkspace(workspaceId);
+
+        if (!workspace || !workspace.sessions[sessionId]) {
+          throw new Error('Session not found');
+        }
+
+        delete workspace.sessions[sessionId].states[stateId];
+
+        await this.workspaceService.updateWorkspace(workspaceId, workspace);
+      }
+    );
+  }
+
+}

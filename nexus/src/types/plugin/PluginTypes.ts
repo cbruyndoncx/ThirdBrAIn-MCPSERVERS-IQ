@@ -1,0 +1,108 @@
+/**
+ * Plugin Configuration Types
+ * Extracted from types.ts for better organization
+ */
+
+import { CustomPromptsSettings } from '../mcp/CustomPromptTypes';
+import { LLMProviderSettings } from '../llm/ProviderTypes';
+import { AppsSettings } from '../apps/AppTypes';
+import type { PluginScopedStorageState } from '../../database/migration/PluginScopedStorageCoordinator';
+
+// Forward declarations for service types to avoid circular imports
+// Actual types are imported where needed
+type MemoryServiceType = import('../../agents/memoryManager/services/MemoryService').MemoryService;
+type WorkspaceServiceType = import('../../services/WorkspaceService').WorkspaceService;
+type SessionServiceType = import('../../services/session/SessionService').SessionService;
+type ConversationServiceType = import('../../services/ConversationService').ConversationService;
+type CustomPromptStorageServiceType = import('../../agents/promptManager/services/CustomPromptStorageService').CustomPromptStorageService;
+
+export interface MCPStorageSettings {
+  schemaVersion?: number;
+  rootPath: string;
+  maxShardBytes: number;
+  /** Root paths from previous configurations, used as legacy read sources on next startup */
+  previousRootPaths?: string[];
+  /**
+   * Subfolder under `rootPath` where saved read-aloud audio files are written
+   * (e.g. `<rootPath>/<audioSubfolder>/`). Just a folder name, never a full
+   * path — the root is resolved from `rootPath` so changing the storage root
+   * relocates saved audio. Defaults to `audio`.
+   */
+  audioSubfolder?: string;
+}
+
+export const DEFAULT_STORAGE_SETTINGS: MCPStorageSettings = {
+  schemaVersion: 2,
+  rootPath: 'Nexus',
+  maxShardBytes: 4 * 1024 * 1024,
+  audioSubfolder: 'audio'
+};
+
+/**
+ * Plugin services registry type
+ * Provides typed access to plugin services
+ */
+export interface PluginServices {
+  memoryService?: MemoryServiceType;
+  workspaceService?: WorkspaceServiceType;
+  sessionService?: SessionServiceType;
+  conversationService?: ConversationServiceType;
+  customPromptStorageService?: CustomPromptStorageServiceType;
+  /** Allow additional services via index signature */
+  [key: string]: unknown;
+}
+
+// Memory management settings
+type MemorySettings = Record<string, never>;
+
+interface ProcessedFileState {
+  filePath: string;
+  lastModified: number;
+  contentHash: string;
+  processed: boolean;
+}
+
+/**
+ * Processed files data structure for file state management
+ * Stores file processing state to prevent re-processing on startup
+ */
+export interface ProcessedFilesData {
+  version: string;
+  lastUpdated: number;
+  files: Record<string, ProcessedFileState>;
+}
+
+/**
+ * Plugin settings interface
+ * Includes vault access toggle and version tracking
+ */
+export interface MCPSettings {
+  enabledVault: boolean;
+  enableEmbeddings?: boolean; // Enable/disable local embeddings for semantic search (desktop only)
+  enableIngestion?: boolean; // Enable/disable PDF/audio ingestion UI and ingest-only model settings
+  autoIngestion?: boolean; // Automatically convert newly added supported binary files to Markdown
+  configFilePath?: string;
+  memory?: MemorySettings;
+  storage?: MCPStorageSettings;
+  customPrompts?: CustomPromptsSettings;
+  llmProviders?: LLMProviderSettings;
+  apps?: AppsSettings;
+  // When true, API keys / credentials are stored in Obsidian's device-local
+  // secretStorage and stripped from the synced data.json. Off by default so
+  // keys keep syncing across devices unless the user opts in.
+  secureApiKeyStorage?: boolean;
+  // Default selections for chat
+  defaultWorkspaceId?: string;
+  defaultPromptId?: string;
+  defaultContextNotes?: string[];
+  // Update tracking
+  lastUpdateVersion?: string;
+  lastUpdateDate?: string;
+  availableUpdateVersion?: string;
+  lastUpdateCheckDate?: string;
+  processedFiles?: ProcessedFilesData;
+  pluginStorage?: PluginScopedStorageState;
+  workflowScheduler?: {
+    lastCheckAt?: number;
+  };
+}

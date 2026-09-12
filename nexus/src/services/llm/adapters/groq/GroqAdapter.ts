@@ -1,0 +1,319 @@
+/**
+ * Groq Adapter with true streaming support and Ultra-Fast Inference
+ * Leverages Groq's high-performance LLM serving infrastructure
+ * Uses Groq's OpenAI-compatible REST API with buffered SSE replay.
+ */
+
+import { BaseAdapter } from '../BaseAdapter';
+import {
+  GenerateOptions,
+  StreamChunk,
+  LLMResponse,
+  ModelInfo,
+  ProviderCapabilities,
+  ModelPricing,
+  Tool,
+  TokenUsage
+} from '../types';
+import type { SSEToolCall } from '../../streaming/SSEStreamProcessor';
+import { extractStreamErrorMessage } from '../../streaming/streamErrorFrames';
+import { GROQ_MODELS, GROQ_DEFAULT_MODEL } from './GroqModels';
+import {
+  buildBearerJsonHeaders,
+  buildMessagesWithConversationHistory,
+  mapOpenAiCompatFinishReason,
+  convertFunctionTools
+} from '../shared/OpenAICompatHelpers';
+import { staticModelToModelInfo, getStaticModelPricing } from '../shared/StaticModelHelpers';
+
+/**
+ * Extended Groq chunk type with x_groq metadata
+ * x_groq contains timing information (queue_time, prompt_time, completion_time)
+ */
+interface GroqChatCompletionChunk {
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    queue_time?: number;
+    prompt_time?: number;
+    completion_time?: number;
+  };
+  x_groq?: {
+    id?: string;
+    error?: string;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    };
+  };
+}
+
+interface GroqChatCompletionMessage {
+  content?: string;
+  tool_calls?: unknown[];
+}
+
+interface GroqChatCompletionChoice {
+  delta?: GroqChatCompletionMessage & {
+    content?: string;
+    tool_calls?: unknown[];
+  };
+  message?: GroqChatCompletionMessage;
+  finish_reason?: string | null;
+}
+
+interface GroqChatCompletionResponse extends GroqChatCompletionChunk {
+  choices: GroqChatCompletionChoice[];
+}
+
+type GroqChatCompletionMessageParam = Record<string, unknown>;
+
+function isGroqChatCompletionResponse(parsed: unknown): parsed is GroqChatCompletionResponse {
+  if (!parsed || typeof parsed !== 'object') {
+    return false;
+  }
+
+  return Array.isArray((parsed as Record<string, unknown>).choices);
+}
+
+export class GroqAdapter extends BaseAdapter {
+  readonly name = 'groq';
+  readonly baseUrl = 'https://api.groq.com/openai/v1';
+
+  constructor(apiKey: string, model?: string) {
+    super(apiKey, model || GROQ_DEFAULT_MODEL);
+    this.initializeCache();
+  }
+
+  async generateUncached(prompt: string, options?: GenerateOptions): Promise<LLMResponse> {
+    try {
+      // Tool execution requires streaming - use generateStreamAsync instead
+      if (options?.tools && options.tools.length > 0) {
+        throw new Error('Tool execution requires streaming. Use generateStreamAsync() instead.');
+      }
+
+      // Use basic chat completions
+      return await this.generateWithChatCompletions(prompt, options);
+    } catch (error) {
+      this.handleError(error, 'generation');
+    }
+  }
+
+  /**
+   * Generate streaming response using async generator
+   * Uses unified stream processing with automatic tool call accumulation
+   */
+  async* generateStreamAsync(prompt: string, options?: GenerateOptions): AsyncGenerator<StreamChunk, void, unknown> {
+    try {
+      const nodeStream = await this.requestStream({
+        url: `${this.baseUrl}/chat/completions`,
+        operation: 'streaming generation',
+        method: 'POST',
+        headers: buildBearerJsonHeaders(this.apiKey),
+        body: JSON.stringify({
+          model: options?.model || this.currentModel,
+          messages: buildMessagesWithConversationHistory(prompt, options),
+          temperature: options?.temperature,
+          max_completion_tokens: options?.maxTokens,
+          top_p: options?.topP,
+          stop: options?.stopSequences,
+          tools: options?.tools ? this.convertTools(options.tools) : undefined,
+          response_format: options?.jsonMode ? { type: 'json_object' } : undefined,
+          stream: true
+        }),
+        timeoutMs: 120_000
+      });
+
+      yield* this.processNodeStream(nodeStream, {
+        debugLabel: 'Groq',
+        extractContent: (chunk) => {
+          if (!isGroqChatCompletionResponse(chunk)) {
+            return null;
+          }
+
+          return chunk.choices[0]?.delta?.content || null;
+        },
+        extractToolCalls: (chunk) => {
+          if (!isGroqChatCompletionResponse(chunk)) {
+            return null;
+          }
+
+          return (chunk.choices[0]?.delta?.tool_calls || null) as SSEToolCall[] | null;
+        },
+        extractFinishReason: (chunk) => {
+          if (!isGroqChatCompletionResponse(chunk)) {
+            return null;
+          }
+
+          return chunk.choices[0]?.finish_reason ?? null;
+        },
+        // Groq answers HTTP 200 and then pushes {"error":{"message":...}} when a
+        // request fails mid-stream; it also nests failures under `x_groq.error`.
+        extractError: (chunk) => {
+          const direct = extractStreamErrorMessage(chunk, 'Groq streaming error');
+          if (direct) {
+            return direct;
+          }
+          const xGroq = (chunk as GroqChatCompletionChunk).x_groq;
+          return xGroq ? extractStreamErrorMessage(xGroq, 'Groq streaming error') : null;
+        },
+        extractUsage: (chunk) => {
+          if (!chunk || typeof chunk !== 'object') {
+            return undefined;
+          }
+
+          const groqChunk = chunk as GroqChatCompletionChunk;
+          const usage = groqChunk.usage || groqChunk.x_groq?.usage;
+          if (!usage) {
+            return undefined;
+          }
+
+          return {
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            total_tokens: usage.total_tokens
+          };
+        },
+        accumulateToolCalls: true,
+        toolCallThrottling: {
+          initialYield: true,
+          progressInterval: 50
+        }
+      });
+    } catch (error) {
+      console.error('[GroqAdapter] Streaming error:', error);
+      throw error;
+    }
+  }
+
+  listModels(): Promise<ModelInfo[]> {
+    try {
+      return Promise.resolve(GROQ_MODELS.map(model => staticModelToModelInfo(model)));
+    } catch (error) {
+      this.handleError(error, 'listing models');
+      return Promise.resolve([]);
+    }
+  }
+
+  getCapabilities(): ProviderCapabilities {
+    const baseCapabilities = {
+      supportsStreaming: true,
+      streamingMode: 'streaming' as const,
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsThinking: true,
+      maxContextWindow: 131072,
+      supportedFeatures: [
+        'messages',
+        'function_calling',
+        'vision',
+        'streaming',
+        'json_mode',
+        'ultra_fast_inference',
+        'extended_metrics'
+      ]
+    };
+
+    return baseCapabilities;
+  }
+
+  /**
+   * Generate using standard chat completions
+   */
+  private async generateWithChatCompletions(prompt: string, options?: GenerateOptions): Promise<LLMResponse> {
+    const model = options?.model || this.currentModel;
+
+    interface ChatCompletionParams {
+      model: string;
+      messages: GroqChatCompletionMessageParam[];
+      temperature?: number;
+      max_completion_tokens?: number;
+      top_p?: number;
+      stop?: string[];
+      response_format?: { type: 'json_object' };
+      tools?: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }>;
+    }
+
+    const chatParams: ChatCompletionParams = {
+      model,
+      messages: buildMessagesWithConversationHistory(prompt, options),
+      temperature: options?.temperature,
+      max_completion_tokens: options?.maxTokens,
+      top_p: options?.topP,
+      stop: options?.stopSequences,
+      response_format: options?.jsonMode ? { type: 'json_object' } : undefined
+    };
+
+    // Add tools if provided
+    if (options?.tools) {
+      chatParams.tools = this.convertTools(options.tools);
+    }
+
+    const response = await this.request<GroqChatCompletionResponse>({
+      url: `${this.baseUrl}/chat/completions`,
+      operation: 'generation',
+      method: 'POST',
+      headers: buildBearerJsonHeaders(this.apiKey),
+      body: JSON.stringify(chatParams),
+      timeoutMs: 60_000
+    });
+    this.assertOk(response, `Groq generation failed: HTTP ${response.status}`);
+    const responseJson = response.json as GroqChatCompletionResponse;
+    const choice = responseJson.choices[0];
+    
+    if (!choice) {
+      throw new Error('No response from Groq');
+    }
+    
+    let text = choice.message?.content || '';
+    const usage = this.extractUsage(responseJson);
+    const finishReason = this.mapFinishReason(choice.finish_reason ?? null);
+
+    // If tools were provided and we got tool calls, we need to handle them
+    // For now, just return the response as-is since tool execution is complex
+    if (options?.tools && choice.message?.tool_calls && choice.message.tool_calls.length > 0) {
+      text = text || '[AI requested tool calls but tool execution not available]';
+    }
+
+    return this.buildLLMResponse(
+      text,
+      model,
+      usage,
+      undefined,
+      finishReason
+    );
+  }
+
+  // Private methods
+  private convertTools(tools: Tool[]): Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
+    return convertFunctionTools(tools);
+  }
+
+  private mapFinishReason(reason: string | null): 'stop' | 'length' | 'tool_calls' | 'content_filter' {
+    return mapOpenAiCompatFinishReason(reason);
+  }
+
+  protected extractUsage(response: GroqChatCompletionChunk): TokenUsage | undefined {
+    const usage = response?.usage;
+    if (usage) {
+      return {
+        promptTokens: usage.prompt_tokens || 0,
+        completionTokens: usage.completion_tokens || 0,
+        totalTokens: usage.total_tokens || 0,
+        // Groq-specific extended metrics (queue_time, prompt_time, completion_time)
+        // These are available directly on CompletionUsage from Groq SDK
+        ...(usage.queue_time !== undefined && { queueTime: usage.queue_time }),
+        ...(usage.prompt_time !== undefined && { promptTime: usage.prompt_time }),
+        ...(usage.completion_time !== undefined && { completionTime: usage.completion_time })
+      };
+    }
+    return undefined;
+  }
+
+  getModelPricing(modelId: string): Promise<ModelPricing | null> {
+    return Promise.resolve(getStaticModelPricing(GROQ_MODELS, modelId));
+  }
+}

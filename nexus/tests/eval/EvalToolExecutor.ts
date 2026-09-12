@@ -1,0 +1,700 @@
+/**
+ * tests/eval/EvalToolExecutor.ts — Mock IToolExecutor for eval harness.
+ *
+ * Implements the IToolExecutor interface with configurable per-tool responses
+ * and call capture. Injected into StreamingOrchestrator to intercept tool calls
+ * during eval runs without touching real agents.
+ *
+ * Supports the two-tool architecture (getTools/useTools): when the LLM calls
+ * getTools, the executor returns domain tool schemas from the provided tool
+ * definitions. When the LLM calls useTools, the executor unwraps the inner
+ * tool calls and executes them against registered handlers.
+ */
+
+import type { IToolExecutor, ToolResult, ToolExecutionContext } from '../../src/services/llm/adapters/shared/ToolExecutionUtils';
+import type { ToolCall, Tool } from '../../src/services/llm/adapters/types';
+import type { CapturedToolCall, MockToolResponse } from './types';
+// Reuse the SAME context-contract steering production enforces (UseToolTool),
+// so harness recovery grading matches real app behavior — single source.
+import { collectContextContractViolations, formatContextContractError } from '../../src/agents/toolManager/services/ToolCliNormalizer';
+
+type ResponseHandler = (args: Record<string, unknown>) => ToolResult;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toKebabCase(value: string): string {
+  return value
+    .replace(/Manager$/i, '')
+    .replace(/Agent$/i, '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/[_\s]+/g, '-')
+    .replace(/--+/g, '-')
+    .toLowerCase();
+}
+
+function splitTopLevelSegments(input: string): string[] {
+  const segments: string[] = [];
+  let current = '';
+  let quote: '"' | '\'' | null = null;
+  let escaped = false;
+
+  for (const char of input) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      current += char;
+      escaped = true;
+      continue;
+    }
+
+    if ((char === '"' || char === '\'') && (!quote || quote === char)) {
+      quote = quote === char ? null : char;
+      current += char;
+      continue;
+    }
+
+    if (char === ',' && !quote) {
+      const trimmed = current.trim();
+      if (trimmed.length > 0) {
+        segments.push(trimmed);
+      }
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  const trimmed = current.trim();
+  if (trimmed.length > 0) {
+    segments.push(trimmed);
+  }
+
+  return segments;
+}
+
+function tokenize(input: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let quote: '"' | '\'' | null = null;
+  let escaped = false;
+
+  for (const char of input) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      current += char;
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === '\'') {
+      quote = char;
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = '';
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+
+  return tokens;
+}
+
+function getSchemaType(schema: Record<string, unknown>): string {
+  if (schema.type === 'array') {
+    const items = isRecord(schema.items) ? schema.items : {};
+    return `array<${typeof items.type === 'string' ? items.type : 'unknown'}>`;
+  }
+  return typeof schema.type === 'string' ? schema.type : 'unknown';
+}
+
+export class EvalToolExecutor implements IToolExecutor {
+  private responseHandlers: Map<string, ResponseHandler> = new Map();
+  private capturedCalls: CapturedToolCall[] = [];
+
+  // Sequential (per-round) response mode. Off by default (name-keyed,
+  // last-write-wins — unchanged for existing scenarios). When on, responses for
+  // a tool are QUEUED in registration order and consumed FIFO across rounds, so
+  // the same tool can return error-then-success (recovery patterns like
+  // read→error→read→success). Queues are cleared per exchange in resetCalls.
+  private sequentialResponses = false;
+  private responseQueues: Map<string, ResponseHandler[]> = new Map();
+  private queueConsumed: Map<string, number> = new Map();
+
+  // Context-contract enforcement (recovery testing). When enabled, a useTools
+  // call whose context block fails the shared validator gets a recoverable
+  // steering error INSTEAD of executing — letting us observe whether the model
+  // self-corrects across rounds. Stats are per-exchange (reset in resetCalls).
+  private enforceContextContract = false;
+  private contextSteeringErrors = 0;
+  private contextRecovered = false;
+  private sawValidExecution = false;
+  // Deterministic recovery test: reject the first N useTools calls with a real
+  // steering error regardless of input, so recovery is exercised even when the
+  // model fills the context block acceptably. Reset per exchange.
+  private forceSteeringTotal = 0;
+  private forceSteeringRemaining = 0;
+
+  /**
+   * Domain tool definitions — set when running in two-tool (meta) mode.
+   * Used by the getTools handler to return realistic tool schemas.
+   */
+  private domainTools: Tool[] = [];
+
+  /**
+   * Set the domain tools available for getTools discovery responses.
+   * Called by EvalRunner when the scenario uses the two-tool architecture.
+   */
+  setDomainTools(tools: Tool[]): void {
+    this.domainTools = tools;
+  }
+
+  /**
+   * Enable/disable context-contract enforcement on useTools execution.
+   * When on, a useTools call with empty memory/goal (or junk IDs) is rejected
+   * with the shared production steering message so the model can recover.
+   */
+  setEnforceContextContract(enabled: boolean): void {
+    this.enforceContextContract = enabled;
+  }
+
+  /**
+   * Force the first N useTools calls to fail with a real context steering error
+   * (deterministic recovery test). The model must re-issue to proceed.
+   */
+  setForceContextSteering(rounds: number): void {
+    this.forceSteeringTotal = Math.max(0, rounds);
+    this.forceSteeringRemaining = this.forceSteeringTotal;
+  }
+
+  /**
+   * Per-exchange context-contract stats: how many steering errors were issued
+   * and whether a valid execution call eventually landed (recovery).
+   */
+  getContextContractStats(): { enforced: boolean; steeringErrors: number; recovered: boolean } {
+    return {
+      enforced: this.enforceContextContract || this.forceSteeringTotal > 0,
+      steeringErrors: this.contextSteeringErrors,
+      // First-try-valid is not "recovery"; recovery = valid call AFTER ≥1 steer.
+      recovered: this.contextSteeringErrors > 0 && this.contextRecovered,
+    };
+  }
+
+  /**
+   * Enable per-round (FIFO) response consumption so a tool can return different
+   * results across rounds (e.g. error then success). Off = last-write-wins.
+   */
+  setSequentialResponses(enabled: boolean): void {
+    this.sequentialResponses = enabled;
+  }
+
+  /**
+   * Resolve the handler for a tool. In sequential mode, consume the FIFO queue
+   * (clamping to the last entry once exhausted); otherwise the name-keyed map.
+   */
+  private resolveHandler(toolName: string): ResponseHandler | undefined {
+    if (this.sequentialResponses && this.responseQueues.has(toolName)) {
+      const queue = this.responseQueues.get(toolName) ?? [];
+      if (queue.length === 0) return undefined;
+      const consumed = this.queueConsumed.get(toolName) ?? 0;
+      const index = Math.min(consumed, queue.length - 1);
+      this.queueConsumed.set(toolName, consumed + 1);
+      return queue[index];
+    }
+    return this.responseHandlers.get(toolName);
+  }
+
+  /**
+   * Register a dynamic handler for a tool name.
+   * The handler receives parsed args and returns a ToolResult.
+   */
+  registerHandler(toolName: string, handler: ResponseHandler): void {
+    if (this.sequentialResponses) {
+      const queue = this.responseQueues.get(toolName) ?? [];
+      queue.push(handler);
+      this.responseQueues.set(toolName, queue);
+      return;
+    }
+    this.responseHandlers.set(toolName, handler);
+  }
+
+  /**
+   * Register a static mock response for a tool name.
+   */
+  registerStaticResponse(toolName: string, response: MockToolResponse): void {
+    const handler: ResponseHandler = (_args: Record<string, unknown>) => ({
+      id: '', // Will be filled at execution time
+      name: toolName,
+      success: response.success,
+      result: response.result,
+      error: response.error,
+    });
+    // registerHandler routes to the FIFO queue in sequential mode, else the map.
+    this.registerHandler(toolName, handler);
+  }
+
+  /**
+   * Register all mock responses from a scenario turn's mockResponses map.
+   * For useTools mock responses, also registers handlers for the inner
+   * domain tool names so they are available when useTools unwraps them.
+   */
+  registerTurnResponses(mockResponses: Record<string, MockToolResponse>): void {
+    for (const [toolName, response] of Object.entries(mockResponses)) {
+      this.registerStaticResponse(toolName, response);
+    }
+  }
+
+  /**
+   * IToolExecutor implementation — called by ToolContinuationService.
+   *
+   * Handles three tool types:
+   * 1. getTools — returns domain tool schemas matching production format
+   * 2. useTools — unwraps inner calls, executes them, captures domain tool names
+   * 3. Domain tools — direct execution via registered handlers
+   */
+  async executeToolCalls(
+    toolCalls: ToolCall[],
+    _context?: ToolExecutionContext,
+    onToolEvent?: (event: 'started' | 'completed', data: unknown) => void
+  ): Promise<ToolResult[]> {
+    const results: ToolResult[] = [];
+
+    for (const tc of toolCalls) {
+      const toolName = tc.function?.name || tc.name || 'unknown';
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(tc.function?.arguments || '{}');
+      } catch {
+        // Keep empty args on parse failure
+      }
+
+      onToolEvent?.('started', { toolName, id: tc.id });
+
+      if (toolName === 'getTools') {
+        // Two-tool architecture: getTools discovery
+        const result = this.handleGetTools(tc.id, toolName, args);
+        this.capturedCalls.push({ name: toolName, args, id: tc.id });
+        results.push(result);
+      } else if (toolName === 'useTools') {
+        // Two-tool architecture: useTools execution — unwrap inner calls
+        const result = this.handleUseTools(tc.id, toolName, args);
+        // Capture the outer useTools call
+        this.capturedCalls.push({ name: toolName, args, id: tc.id });
+        results.push(result);
+      } else {
+        // Direct domain tool call
+        this.capturedCalls.push({ name: toolName, args, id: tc.id });
+
+        const handler = this.resolveHandler(toolName);
+        if (handler) {
+          const result = handler(args);
+          result.id = tc.id;
+          result.name = toolName;
+          results.push(result);
+        } else {
+          results.push({
+            id: tc.id,
+            name: toolName,
+            success: true,
+            result: { message: `Mock response for ${toolName}` },
+          });
+        }
+      }
+
+      onToolEvent?.('completed', { toolName, id: tc.id });
+    }
+
+    return results;
+  }
+
+  /**
+   * Handle getTools calls by returning domain tool schemas.
+   *
+   * Production getTools returns { success: true, data: { tools: [...] } }
+   * where each tool has { agent, tool, description, inputSchema }. In both
+   * production and eval, the LLM uses those schemas to construct its
+   * useTools call parameters — the 2-tool surface never exposes them as
+   * individually-callable functions.
+   *
+   * The mock handler is checked first (for scenario-specific responses),
+   * then falls back to generating schemas from domainTools.
+   */
+  private handleGetTools(
+    id: string,
+    toolName: string,
+    args: Record<string, unknown>
+  ): ToolResult {
+    // Check for scenario-specific mock response first
+    const handler = this.resolveHandler(toolName);
+    if (handler) {
+      const result = handler(args);
+      result.id = id;
+      result.name = toolName;
+      return result;
+    }
+
+    // Auto-generate from domain tools
+    const requestedSelectors = typeof args.tool === 'string'
+      ? splitTopLevelSegments(args.tool)
+      : [];
+
+    const schemas = this.domainTools
+      .filter(tool => {
+        if (requestedSelectors.length === 0) return true;
+        const functionName = tool.function?.name ?? '';
+        const [rawAgent, rawTool] = functionName.split('_');
+        const agentAlias = toKebabCase(rawAgent);
+        const toolAlias = toKebabCase(rawTool ?? '');
+
+        return requestedSelectors.some((selector) => {
+          const tokens = tokenize(selector);
+          if (tokens.length === 0) return false;
+          const expectedAgent = toKebabCase(tokens[0]);
+          const expectedTool = tokens[1] ? toKebabCase(tokens[1].replace(/^--/, '')) : undefined;
+          if (expectedAgent !== agentAlias) return false;
+          return expectedTool ? expectedTool === toolAlias : true;
+        });
+      })
+      .map(tool => this.buildCliSchema(tool));
+
+    return {
+      id,
+      name: toolName,
+      success: true,
+      result: { tools: schemas },
+    };
+  }
+
+  /**
+   * Handle useTools calls by unwrapping inner tool calls and executing them.
+   *
+   * Production useTools accepts { tool: "agent tool-name --flag value" }
+   * and returns results for each inner call.
+   *
+   * The mock handler is checked first (for scenario-specific responses),
+   * then falls back to executing each inner call against registered handlers.
+   */
+  private handleUseTools(
+    id: string,
+    toolName: string,
+    args: Record<string, unknown>
+  ): ToolResult {
+    // Recovery enforcement runs BEFORE any scripted response, exactly like
+    // production (UseToolTool validates before executing).
+    //
+    // 1. Forced steering: reject the first N calls with a real steering error
+    //    regardless of input — deterministic recovery test.
+    // 2. Contract enforcement: reject calls whose context block fails the shared
+    //    validator (empty memory/goal) — production-faithful.
+    // A call that survives both, after a prior steer, counts as recovery.
+    if (this.forceSteeringRemaining > 0) {
+      this.forceSteeringRemaining -= 1;
+      this.contextSteeringErrors += 1;
+      // Reuse the real production memory-steering message (goal filled → only
+      // the memory violation is reported).
+      const forced = collectContextContractViolations({ goal: 'forced-steering' });
+      return { id, name: toolName, success: false, error: formatContextContractError(forced) };
+    }
+    if (this.enforceContextContract) {
+      const violations = collectContextContractViolations(args);
+      if (violations.length > 0) {
+        this.contextSteeringErrors += 1;
+        return { id, name: toolName, success: false, error: formatContextContractError(violations) };
+      }
+    }
+    if (this.enforceContextContract || this.forceSteeringTotal > 0) {
+      // A call that reached here passed all gates. If we steered earlier, this
+      // is the recovery.
+      if (this.contextSteeringErrors > 0) {
+        this.contextRecovered = true;
+      }
+      this.sawValidExecution = true;
+    }
+
+    // Check for scenario-specific mock response first
+    const handler = this.resolveHandler(toolName);
+    if (handler) {
+      const result = handler(args);
+      result.id = id;
+      result.name = toolName;
+      return result;
+    }
+
+    // Unwrap and execute inner calls
+    const calls = this.parseCliCommands(typeof args.tool === 'string' ? args.tool : '');
+    const innerResults: Array<{ tool: string; success: boolean; result?: unknown; error?: string }> = [];
+
+    for (const call of calls) {
+      const innerName = call.name;
+      const innerArgs = call.args ?? {};
+
+      // Capture the inner domain tool call for assertions
+      this.capturedCalls.push({
+        name: innerName,
+        args: innerArgs,
+        id: `${id}_inner_${innerName}`,
+      });
+
+      const innerHandler = this.resolveHandler(innerName);
+      if (innerHandler) {
+        const innerResult = innerHandler(innerArgs);
+        innerResults.push({
+          tool: innerName,
+          success: innerResult.success,
+          result: innerResult.result,
+          error: innerResult.error,
+        });
+      } else {
+        innerResults.push({
+          tool: innerName,
+          success: true,
+          result: { message: `Mock response for ${innerName}` },
+        });
+      }
+    }
+
+    return {
+      id,
+      name: toolName,
+      success: true,
+      result: { results: innerResults },
+    };
+  }
+
+  /**
+   * Get all captured tool calls since last reset.
+   */
+  getCapturedCalls(): CapturedToolCall[] {
+    return [...this.capturedCalls];
+  }
+
+  /**
+   * Clear all handlers and captured calls.
+   */
+  reset(): void {
+    this.responseHandlers.clear();
+    this.responseQueues.clear();
+    this.queueConsumed.clear();
+    this.capturedCalls = [];
+  }
+
+  /**
+   * Clear only captured calls (keep handlers). Also resets per-exchange
+   * context-contract stats so recovery is measured within one exchange.
+   */
+  resetCalls(): void {
+    this.capturedCalls = [];
+    this.contextSteeringErrors = 0;
+    this.contextRecovered = false;
+    this.sawValidExecution = false;
+    this.forceSteeringRemaining = this.forceSteeringTotal;
+    // Sequential queues are re-registered per exchange by EvalRunner; clear so
+    // they don't accumulate, and reset FIFO consumption to the start.
+    if (this.sequentialResponses) {
+      this.responseQueues.clear();
+    }
+    this.queueConsumed.clear();
+  }
+
+  private buildCliSchema(tool: Tool): Record<string, unknown> {
+    const functionName = tool.function?.name ?? '';
+    const [rawAgent, rawTool] = functionName.split('_');
+    const command = `${toKebabCase(rawAgent)} ${toKebabCase(rawTool ?? '')}`;
+    const schema = isRecord(tool.function?.parameters)
+      ? tool.function?.parameters
+      : { type: 'object', properties: {} };
+    const properties = isRecord(schema.properties) ? schema.properties : {};
+    const required = new Set(
+      Array.isArray(schema.required)
+        ? schema.required.filter((value): value is string => typeof value === 'string')
+        : [],
+    );
+
+    const argumentsSchema = Object.entries(properties).map(([name, rawSchema]) => {
+      const property = isRecord(rawSchema) ? rawSchema : {};
+      const type = getSchemaType(property);
+      const requiredArg = required.has(name);
+      const positional = requiredArg && type !== 'boolean' && type !== 'object' && !type.startsWith('array<');
+      return {
+        name,
+        flag: `--${toKebabCase(name)}`,
+        type,
+        required: requiredArg,
+        positional,
+        ...(typeof property.description === 'string' ? { description: property.description } : {}),
+      };
+    });
+
+    const usage = [
+      command,
+      ...argumentsSchema.map((arg) => {
+        if (Boolean(arg.positional)) {
+          return `<${String(arg.name)}>`;
+        }
+        if (String(arg.type) === 'boolean') {
+          return Boolean(arg.required) ? String(arg.flag) : `[${String(arg.flag)}]`;
+        }
+        return Boolean(arg.required)
+          ? `${String(arg.flag)} <${String(arg.name)}>`
+          : `[${String(arg.flag)} <${String(arg.name)}>]`;
+      }),
+    ].join(' ');
+
+    return {
+      agent: rawAgent,
+      tool: rawTool,
+      description: tool.function?.description ?? '',
+      command,
+      usage,
+      arguments: argumentsSchema,
+      examples: [command],
+    };
+  }
+
+  private parseCliCommands(commandString: string): Array<{ name: string; args: Record<string, unknown> }> {
+    if (!commandString.trim()) {
+      return [];
+    }
+
+    return splitTopLevelSegments(commandString)
+      .map((segment) => tokenize(segment))
+      .filter((tokens) => tokens.length >= 2)
+      .map((tokens) => {
+        const agentAlias = toKebabCase(tokens[0]);
+        const toolAlias = toKebabCase(tokens[1].replace(/^--/, ''));
+        const tool = this.domainTools.find((candidate) => {
+          const [rawAgent, rawTool] = (candidate.function?.name ?? '').split('_');
+          return toKebabCase(rawAgent) === agentAlias && toKebabCase(rawTool ?? '') === toolAlias;
+        });
+        const innerName = tool?.function?.name ?? `${tokens[0]}_${tokens[1]}`;
+        return {
+          name: innerName,
+          args: this.parseCliArgs(tokens.slice(2), tool),
+        };
+      });
+  }
+
+  /**
+   * Parse the flag/positional tokens of a single CLI command into an args
+   * object, using the inner tool's JSON schema to map kebab-case flags and
+   * bare positionals back to their real parameter names and coerce value
+   * types. Mirrors the production ToolCliNormalizer closely enough for
+   * assertion fidelity, without needing a live agent registry — the prior
+   * implementation dropped all flags (returned `{}`), so every unwrapped
+   * domain call failed its "expected param" assertion even when the model
+   * emitted a correct CLI string.
+   */
+  private parseCliArgs(tokens: string[], tool: Tool | undefined): Record<string, unknown> {
+    const args: Record<string, unknown> = {};
+
+    const schema = isRecord(tool?.function?.parameters)
+      ? (tool?.function?.parameters as Record<string, unknown>)
+      : undefined;
+    const properties = schema && isRecord(schema.properties)
+      ? (schema.properties as Record<string, unknown>)
+      : {};
+    const required = new Set(
+      schema && Array.isArray(schema.required)
+        ? schema.required.filter((v): v is string => typeof v === 'string')
+        : [],
+    );
+
+    // Map kebab flag -> real property name, and remember each property's type.
+    const flagToName = new Map<string, string>();
+    const typeOf = new Map<string, string>();
+    for (const [name, raw] of Object.entries(properties)) {
+      flagToName.set(toKebabCase(name), name);
+      typeOf.set(name, getSchemaType(isRecord(raw) ? raw : {}));
+    }
+
+    // Positional order: required scalars (non-boolean/object/array), declared order.
+    const positionals = Object.keys(properties).filter((name) => {
+      const t = typeOf.get(name) ?? 'unknown';
+      return required.has(name) && t !== 'boolean' && t !== 'object' && !t.startsWith('array<');
+    });
+    let positionalIdx = 0;
+
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token.startsWith('--')) {
+        const flag = toKebabCase(token.slice(2));
+        const name = flagToName.get(flag) ?? flag.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
+        const type = typeOf.get(name) ?? 'unknown';
+        const next = tokens[i + 1];
+        if (type === 'boolean') {
+          if (next === 'true' || next === 'false') {
+            args[name] = next === 'true';
+            i++;
+          } else {
+            args[name] = true;
+          }
+        } else if (next === undefined || next.startsWith('--')) {
+          args[name] = true;
+        } else {
+          args[name] = this.coerceCliValue(next, type);
+          i++;
+        }
+      } else {
+        const name = positionals[positionalIdx++];
+        if (name) {
+          args[name] = this.coerceCliValue(token, typeOf.get(name) ?? 'string');
+        }
+      }
+    }
+
+    return args;
+  }
+
+  private coerceCliValue(value: string, type: string): unknown {
+    if (type === 'number' || type === 'integer') {
+      const n = Number(value);
+      return Number.isNaN(n) ? value : n;
+    }
+    if (type === 'boolean') {
+      return value === 'true';
+    }
+    if (type.startsWith('array<')) {
+      const trimmed = value.trim();
+      if (trimmed.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) return parsed;
+        } catch {
+          // Not valid JSON — fall through to single-element array.
+        }
+      }
+      return [value];
+    }
+    return value;
+  }
+}

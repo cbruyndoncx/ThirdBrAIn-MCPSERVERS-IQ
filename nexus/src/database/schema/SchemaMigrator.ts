@@ -1,0 +1,779 @@
+/**
+ * Schema Migrator for SQLite Database
+ * Location: src/database/schema/SchemaMigrator.ts
+ *
+ * Purpose: Handle incremental schema migrations without data loss.
+ * Each migration is idempotent and can be safely re-run.
+ *
+ * ============================================================================
+ * HOW TO ADD A NEW SCHEMA MIGRATION
+ * ============================================================================
+ *
+ * When you need to modify the database schema (add columns, tables, indexes):
+ *
+ * STEP 1: Update CURRENT_SCHEMA_VERSION
+ *   - Increment the version number (e.g., 3 -> 4)
+ *
+ * STEP 2: Add a new migration to the MIGRATIONS array
+ *   - Add an entry with the new version number
+ *   - Include a description of what the migration does
+ *   - Add the SQL statements needed
+ *
+ *   Example:
+ *   ```
+ *   {
+ *     version: 4,
+ *     description: 'Add tags column to conversations table',
+ *     sql: [
+ *       'ALTER TABLE conversations ADD COLUMN tagsJson TEXT',
+ *     ]
+ *   }
+ *   ```
+ *
+ * STEP 3: Update SCHEMA_SQL in schema.ts
+ *   - Add the same columns/tables to the main schema
+ *   - This ensures new installs get the complete schema
+ *
+ * IMPORTANT RULES:
+ *   - NEVER modify existing migrations - only add new ones
+ *   - Migrations must be idempotent (the migrator checks if columns exist)
+ *   - Use ALTER TABLE ADD COLUMN for new columns (preserves existing data)
+ *   - Use CREATE TABLE IF NOT EXISTS for new tables
+ *   - Use CREATE INDEX IF NOT EXISTS for new indexes
+ *   - Test on a vault with existing data before releasing
+ *
+ * SUPPORTED OPERATIONS:
+ *   - Adding columns: ALTER TABLE x ADD COLUMN y TYPE
+ *   - Adding tables: CREATE TABLE IF NOT EXISTS x (...)
+ *   - Adding indexes: CREATE INDEX IF NOT EXISTS x ON y(z)
+ *   - Adding triggers: CREATE TRIGGER IF NOT EXISTS x ...
+ *
+ * NOT SUPPORTED (requires manual data migration):
+ *   - Removing columns (SQLite doesn't support DROP COLUMN easily)
+ *   - Renaming columns
+ *   - Changing column types
+ *
+ * ============================================================================
+ */
+
+import { deriveStateMetadataFromJson, resolveStateDescription } from '../utils/stateContent';
+
+/**
+ * Minimal interface for SQLite database operations needed by SchemaMigrator.
+ * Works with both sql.js and @dao-xyz/sqlite3-vec WASM databases.
+ *
+ * Note: The raw WASM database only has prepare(), but this interface expects
+ * exec() and run() to be provided by a wrapper/adapter class.
+ */
+export interface MigratableDatabase {
+  /** Execute SQL and return results */
+  exec(sql: string): { values: unknown[][] }[];
+  /** Run a statement (INSERT/UPDATE/DELETE) with optional parameters */
+  run(sql: string, params?: unknown[]): void;
+}
+
+// Alias for backward compatibility
+type Database = MigratableDatabase;
+
+export const CURRENT_SCHEMA_VERSION = 16;
+
+export interface Migration {
+  version: number;
+  description: string;
+  /** SQL statements to run. Each is executed separately. */
+  sql: string[];
+  /** Optional JavaScript migration function for logic that cannot be expressed in SQL alone (e.g., JSON parsing). */
+  migrationFn?: (db: MigratableDatabase) => void;
+}
+
+interface LegacyConversationMetadata {
+  chatSettings?: {
+    workspaceId?: string;
+    sessionId?: string;
+  };
+  workspaceId?: string;
+  sessionId?: string;
+  workflowId?: string;
+  runTrigger?: string;
+  scheduledFor?: number;
+  runKey?: string;
+}
+
+/**
+ * Migration definitions - add new migrations here when schema changes.
+ *
+ * IMPORTANT:
+ * - Never modify existing migrations
+ * - Always add new migrations with incrementing version numbers
+ * - Migrations must be idempotent (safe to run multiple times)
+ * - Use "IF NOT EXISTS" for new tables/indexes
+ * - For columns, check if column exists before adding
+ */
+export const MIGRATIONS: Migration[] = [
+  // Version 1 -> 2: Initial schema (handled by fresh install)
+  // No migration needed - v1 and v2 had same structure
+
+  // Version 2 -> 3: Add message alternatives/branching support
+  {
+    version: 3,
+    description: 'Add alternativesJson and activeAlternativeIndex to messages table for branching support',
+    sql: [
+      // SQLite doesn't have IF NOT EXISTS for columns, so we use a workaround
+      // The migrator will check column existence before running these
+      `ALTER TABLE messages ADD COLUMN alternativesJson TEXT`,
+      `ALTER TABLE messages ADD COLUMN activeAlternativeIndex INTEGER DEFAULT 0`,
+    ]
+  },
+
+  // Version 3 -> 4: Added branches tables (intermediate version, now superseded by v5)
+  // NOTE: This was only in schema.ts for fresh installs, never migrated.
+  // Skipped in migration since v5 removes these tables anyway.
+
+  // Version 4 -> 5: Remove branches tables (unified model: branches ARE conversations)
+  // In the unified model, branches are stored as regular conversations with:
+  //   - metadata.parentConversationId: parent conversation
+  //   - metadata.parentMessageId: message branch is attached to
+  //   - metadata.branchType: 'alternative' | 'subagent'
+  {
+    version: 5,
+    description: 'Remove branches and branch_messages tables - unified model stores branches as conversations with parent metadata',
+    sql: [
+      // Drop tables if they exist (v4 fresh installs have them, v3 upgrades don't)
+      'DROP TABLE IF EXISTS branch_messages',
+      'DROP TABLE IF EXISTS branches',
+    ]
+  },
+
+  // Version 5 -> 6: Add dedicatedAgentId to workspaces table + custom_prompts table
+  {
+    version: 6,
+    description: 'Add dedicatedAgentId column to workspaces table and custom_prompts table for SQLite-based prompt storage',
+    sql: [
+      // Add dedicatedAgentId column (stores either agent name or ID)
+      `ALTER TABLE workspaces ADD COLUMN dedicatedAgentId TEXT`,
+
+      // Create custom_prompts table for SQLite-based prompt storage
+      `CREATE TABLE IF NOT EXISTS custom_prompts (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        prompt TEXT NOT NULL,
+        isEnabled INTEGER NOT NULL DEFAULT 1,
+        created INTEGER NOT NULL,
+        modified INTEGER NOT NULL
+      )`,
+
+      // Create indexes for custom_prompts
+      `CREATE INDEX IF NOT EXISTS idx_custom_prompts_name ON custom_prompts(name)`,
+      `CREATE INDEX IF NOT EXISTS idx_custom_prompts_enabled ON custom_prompts(isEnabled)`
+    ]
+  },
+
+  // ========================================================================
+  // ADD NEW MIGRATIONS BELOW THIS LINE
+  // ========================================================================
+
+  // Version 6 -> 7: Add conversation embeddings, backfill state, and denormalized workspace/session columns
+  {
+    version: 7,
+    description: 'Add conversation embedding tables, embedding backfill state, and denormalized workspaceId/sessionId on conversations',
+    sql: [
+      // Denormalized columns on conversations table
+      `ALTER TABLE conversations ADD COLUMN workspaceId TEXT`,
+      `ALTER TABLE conversations ADD COLUMN sessionId TEXT`,
+      `CREATE INDEX IF NOT EXISTS idx_conversations_workspaceId ON conversations(workspaceId)`,
+      `CREATE INDEX IF NOT EXISTS idx_conversations_sessionId ON conversations(sessionId)`,
+
+      // Conversation embeddings vec0 virtual table
+      `CREATE VIRTUAL TABLE IF NOT EXISTS conversation_embeddings USING vec0(
+        embedding float[384]
+      )`,
+
+      // Conversation embedding metadata
+      `CREATE TABLE IF NOT EXISTS conversation_embedding_metadata (
+        rowid INTEGER PRIMARY KEY,
+        pairId TEXT NOT NULL,
+        side TEXT NOT NULL,
+        chunkIndex INTEGER NOT NULL,
+        conversationId TEXT NOT NULL,
+        startSequenceNumber INTEGER NOT NULL,
+        endSequenceNumber INTEGER NOT NULL,
+        pairType TEXT NOT NULL,
+        sourceId TEXT,
+        sessionId TEXT,
+        workspaceId TEXT,
+        model TEXT NOT NULL,
+        contentHash TEXT NOT NULL,
+        contentPreview TEXT,
+        created INTEGER NOT NULL
+      )`,
+
+      // Indexes for conversation embedding metadata
+      `CREATE INDEX IF NOT EXISTS idx_conv_embed_meta_pairId ON conversation_embedding_metadata(pairId)`,
+      `CREATE INDEX IF NOT EXISTS idx_conv_embed_meta_conversationId ON conversation_embedding_metadata(conversationId)`,
+      `CREATE INDEX IF NOT EXISTS idx_conv_embed_meta_workspaceId ON conversation_embedding_metadata(workspaceId)`,
+      `CREATE INDEX IF NOT EXISTS idx_conv_embed_meta_sessionId ON conversation_embedding_metadata(sessionId)`,
+
+      // Embedding backfill state table
+      `CREATE TABLE IF NOT EXISTS embedding_backfill_state (
+        id TEXT PRIMARY KEY DEFAULT 'conversation_backfill',
+        lastProcessedConversationId TEXT,
+        totalConversations INTEGER DEFAULT 0,
+        processedConversations INTEGER DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        startedAt INTEGER,
+        completedAt INTEGER,
+        errorMessage TEXT
+      )`,
+    ],
+    migrationFn: (db: MigratableDatabase): void => {
+      // Backfill denormalized workspaceId/sessionId from metadataJson
+      // Cannot use json_extract() — may not be available in WASM SQLite
+      const rows = db.exec('SELECT id, metadataJson FROM conversations WHERE metadataJson IS NOT NULL');
+      if (rows.length === 0) return;
+
+      let skipped = 0;
+      for (const row of rows[0].values) {
+        const id = row[0] as string;
+        const metadataJson = row[1] as string;
+
+        let workspaceId: string | null = null;
+        let sessionId: string | null = null;
+
+        try {
+          const metadata = JSON.parse(metadataJson) as LegacyConversationMetadata;
+
+          // Try chatSettings path first (ConversationManager-created conversations)
+          if (metadata?.chatSettings?.workspaceId) {
+            workspaceId = metadata.chatSettings.workspaceId;
+          }
+          if (metadata?.chatSettings?.sessionId) {
+            sessionId = metadata.chatSettings.sessionId;
+          }
+
+          // Fall back to top-level path (directly-created conversations)
+          if (!workspaceId && metadata?.workspaceId) {
+            workspaceId = metadata.workspaceId;
+          }
+          if (!sessionId && metadata?.sessionId) {
+            sessionId = metadata.sessionId;
+          }
+        } catch {
+          skipped++;
+          continue;
+        }
+
+        if (workspaceId || sessionId) {
+          db.run(
+            'UPDATE conversations SET workspaceId = ?, sessionId = ? WHERE id = ?',
+            [workspaceId, sessionId, id]
+          );
+        }
+      }
+
+      if (skipped > 0) {
+        console.warn(`[SchemaMigrator] workspaceId/sessionId backfill: skipped ${skipped} conversation(s) with unparseable metadataJson`);
+      }
+    },
+  },
+
+  // Version 7 -> 8: Add referencedNotes column to conversation_embedding_metadata
+  {
+    version: 8,
+    description: 'Add referencedNotes column to conversation_embedding_metadata for pre-extracted wiki-link references',
+    sql: [
+      `ALTER TABLE conversation_embedding_metadata ADD COLUMN referencedNotes TEXT`,
+    ]
+  },
+
+  // Version 8 -> 9: Add task management tables (projects, tasks, task_dependencies, task_note_links)
+  {
+    version: 9,
+    description: 'Add task management tables (projects, tasks, task_dependencies, task_note_links)',
+    sql: [
+      // Projects table
+      `CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        workspaceId TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        created INTEGER NOT NULL,
+        updated INTEGER NOT NULL,
+        metadataJson TEXT,
+        FOREIGN KEY(workspaceId) REFERENCES workspaces(id) ON DELETE CASCADE,
+        UNIQUE(workspaceId, name)
+      )`,
+      // Tasks table
+      `CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        projectId TEXT NOT NULL,
+        workspaceId TEXT NOT NULL,
+        parentTaskId TEXT,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'todo',
+        priority TEXT DEFAULT 'medium',
+        created INTEGER NOT NULL,
+        updated INTEGER NOT NULL,
+        completedAt INTEGER,
+        dueDate INTEGER,
+        assignee TEXT,
+        tagsJson TEXT,
+        metadataJson TEXT,
+        FOREIGN KEY(projectId) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY(workspaceId) REFERENCES workspaces(id) ON DELETE CASCADE,
+        FOREIGN KEY(parentTaskId) REFERENCES tasks(id) ON DELETE SET NULL
+      )`,
+      // Task dependencies (DAG edges)
+      `CREATE TABLE IF NOT EXISTS task_dependencies (
+        taskId TEXT NOT NULL,
+        dependsOnTaskId TEXT NOT NULL,
+        created INTEGER NOT NULL,
+        PRIMARY KEY(taskId, dependsOnTaskId),
+        FOREIGN KEY(taskId) REFERENCES tasks(id) ON DELETE CASCADE,
+        FOREIGN KEY(dependsOnTaskId) REFERENCES tasks(id) ON DELETE CASCADE
+      )`,
+      // Task-note links (bidirectional)
+      `CREATE TABLE IF NOT EXISTS task_note_links (
+        taskId TEXT NOT NULL,
+        notePath TEXT NOT NULL,
+        linkType TEXT NOT NULL DEFAULT 'reference',
+        created INTEGER NOT NULL,
+        PRIMARY KEY(taskId, notePath),
+        FOREIGN KEY(taskId) REFERENCES tasks(id) ON DELETE CASCADE
+      )`,
+      // Indexes
+      'CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspaceId)',
+      'CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)',
+      'CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated)',
+      'CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(projectId)',
+      'CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspaceId)',
+      'CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parentTaskId)',
+      'CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)',
+      'CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority)',
+      'CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated)',
+      'CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(dueDate)',
+      'CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(projectId, status)',
+      'CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(taskId)',
+      'CREATE INDEX IF NOT EXISTS idx_task_deps_depends ON task_dependencies(dependsOnTaskId)',
+      'CREATE INDEX IF NOT EXISTS idx_task_links_note ON task_note_links(notePath)',
+    ]
+  },
+
+  // Version 9 -> 10: Add workflow run metadata columns to conversations
+  {
+    version: 10,
+    description: 'Add workflow run metadata columns to conversations for scheduled workflow dedupe',
+    sql: [
+      'ALTER TABLE conversations ADD COLUMN workflowId TEXT',
+      'ALTER TABLE conversations ADD COLUMN runTrigger TEXT',
+      'ALTER TABLE conversations ADD COLUMN scheduledFor INTEGER',
+      'ALTER TABLE conversations ADD COLUMN runKey TEXT',
+      'CREATE INDEX IF NOT EXISTS idx_conversations_workflowId ON conversations(workflowId)',
+      'CREATE INDEX IF NOT EXISTS idx_conversations_scheduledFor ON conversations(scheduledFor)',
+      'CREATE INDEX IF NOT EXISTS idx_conversations_runKey ON conversations(runKey)'
+    ],
+    migrationFn: (db: MigratableDatabase): void => {
+      const rows = db.exec('SELECT id, metadataJson FROM conversations WHERE metadataJson IS NOT NULL');
+      if (rows.length === 0) return;
+
+      let skipped = 0;
+      for (const row of rows[0].values) {
+        const id = row[0] as string;
+        const metadataJson = row[1] as string;
+
+        try {
+          const metadata = JSON.parse(metadataJson) as LegacyConversationMetadata;
+          const workflowId = metadata?.workflowId;
+          const runTrigger = metadata?.runTrigger;
+          const scheduledFor = metadata?.scheduledFor;
+          const runKey = metadata?.runKey;
+
+          if (workflowId || runTrigger || scheduledFor || runKey) {
+            db.run(
+              'UPDATE conversations SET workflowId = ?, runTrigger = ?, scheduledFor = ?, runKey = ? WHERE id = ?',
+              [workflowId ?? null, runTrigger ?? null, scheduledFor ?? null, runKey ?? null, id]
+            );
+          }
+        } catch {
+          skipped++;
+        }
+      }
+
+      if (skipped > 0) {
+        console.warn(`[SchemaMigrator] workflow metadata backfill: skipped ${skipped} conversation(s) with unparseable metadataJson`);
+      }
+    }
+  },
+
+  // Version 10 -> 11: Add workspace archive flag
+  {
+    version: 11,
+    description: 'Add isArchived column to workspaces table for soft-delete persistence',
+    sql: [
+      'ALTER TABLE workspaces ADD COLUMN isArchived INTEGER DEFAULT 0',
+      'CREATE INDEX IF NOT EXISTS idx_workspaces_archived ON workspaces(isArchived)'
+    ]
+  },
+
+  // Version 11 -> 12: Add shard_cursors table for sync-safe reconcile fast-path.
+  // PK is (deviceId, shardPath) where shardPath is the FULL filename — canonical
+  // OR conflict-suffixed. A canonical shard and a conflict sibling are physically
+  // distinct files holding disjoint event sets, so each gets its own cursor row.
+  // Do NOT collapse cursors by baseIndex.
+  {
+    version: 12,
+    description: 'Add shard_cursors table for per-file reconcile fast-path (sync-safe storage reconcile Phase 1)',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS shard_cursors (
+        deviceId TEXT NOT NULL,
+        shardPath TEXT NOT NULL,
+        lastEventId TEXT,
+        lastOffset INTEGER NOT NULL DEFAULT 0,
+        lastTimestamp INTEGER NOT NULL DEFAULT 0,
+        kind TEXT NOT NULL,
+        workspaceKey TEXT,
+        updatedAt INTEGER NOT NULL,
+        PRIMARY KEY (deviceId, shardPath)
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_shard_cursors_path ON shard_cursors(shardPath)',
+      'CREATE INDEX IF NOT EXISTS idx_shard_cursors_kind ON shard_cursors(kind)'
+    ]
+  },
+
+  // Version 12 -> 13: Add skills table (Skills app — derived cache of on-disk
+  // skill folders). Source of truth is the folder on disk; the index is always
+  // rebuildable by a re-scan. UNIQUE(provider, name) — same name allowed across
+  // providers. See docs/plans/skills-protocol-integration-plan.md §4.
+  {
+    version: 13,
+    description: 'Add skills table for the Skills app (derived index of on-disk SKILL.md folders)',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS skills (
+        id            TEXT PRIMARY KEY,
+        provider      TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        description   TEXT,
+        vault_path    TEXT NOT NULL,
+        origin_path   TEXT,
+        content_hash  TEXT NOT NULL,
+        is_archived   INTEGER DEFAULT 0,
+        last_loaded_at INTEGER,
+        created       INTEGER NOT NULL,
+        updated       INTEGER NOT NULL,
+        UNIQUE(provider, name)
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name)'
+    ]
+  },
+
+  // Version 13 -> 14: Add the notes query index (`notes` + `note_properties`).
+  // These two tables already existed at runtime — NotesIndexService.ensureSchema()
+  // issued this DDL at startup — but they were absent from SCHEMA_SQL, so every
+  // freshly created database lacked them. "Nexus: Rebuild cache" closes the
+  // connection, deletes the cache blob and reopens from SCHEMA_SQL alone, which
+  // dropped both tables while the still-subscribed NotesIndexBuilder kept writing
+  // to them: `SQLite3Error: no such table: notes` on every subsequent note
+  // create/edit/rename/delete, for the rest of the session. Owning the tables in
+  // the schema makes every database-creating path produce them.
+  // See docs/plans/notes-query-index-plan.md §5 / §6.
+  {
+    version: 14,
+    description: 'Add notes + note_properties tables (notes query index) to the owned schema',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS notes (
+        id INTEGER PRIMARY KEY,
+        path TEXT NOT NULL UNIQUE,
+        basename TEXT NOT NULL,
+        folder TEXT NOT NULL,
+        ext TEXT NOT NULL,
+        title TEXT,
+        ctime INTEGER NOT NULL,
+        mtime INTEGER NOT NULL,
+        size INTEGER NOT NULL,
+        tags_json TEXT,
+        links_json TEXT,
+        frontmatter_json TEXT,
+        content_hash TEXT NOT NULL
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_notes_folder ON notes(folder)',
+      'CREATE INDEX IF NOT EXISTS idx_notes_mtime ON notes(mtime)',
+      `CREATE TABLE IF NOT EXISTS note_properties (
+        note_id INTEGER NOT NULL REFERENCES notes(id),
+        key TEXT NOT NULL,
+        key_raw TEXT NOT NULL,
+        value_text TEXT,
+        value_num REAL,
+        value_type TEXT NOT NULL,
+        position INTEGER
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_np_key_text ON note_properties(key, value_text)',
+      'CREATE INDEX IF NOT EXISTS idx_np_key_num ON note_properties(key, value_num)',
+      'CREATE INDEX IF NOT EXISTS idx_np_note ON note_properties(note_id)'
+    ]
+  },
+
+  // Version 14 -> 15: Durable operation receipts. JSONL workspace events are
+  // authoritative; this table is the query/replay cache rebuilt from them.
+  {
+    version: 15,
+    description: 'Add durable tool operation receipts for duplicate suppression',
+    sql: [
+      `CREATE TABLE IF NOT EXISTS tool_operation_receipts (
+        operationId TEXT PRIMARY KEY,
+        signature TEXT NOT NULL,
+        status TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        workspaceId TEXT NOT NULL,
+        sessionId TEXT NOT NULL,
+        conversationId TEXT,
+        messageId TEXT,
+        turnId TEXT,
+        replayPolicy TEXT NOT NULL,
+        replayable INTEGER NOT NULL DEFAULT 0,
+        commandSummary TEXT NOT NULL,
+        resultJson TEXT,
+        resultTruncated INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        startedAt INTEGER NOT NULL,
+        completedAt INTEGER,
+        updatedAt INTEGER NOT NULL
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_tool_operation_workspace ON tool_operation_receipts(workspaceId)',
+      'CREATE INDEX IF NOT EXISTS idx_tool_operation_status ON tool_operation_receipts(status)',
+      'CREATE INDEX IF NOT EXISTS idx_tool_operation_workspace_status ON tool_operation_receipts(workspaceId, status)'
+    ]
+  },
+
+  // Version 15 -> 16: Denormalize the state archive flag (issue #219).
+  //
+  // `state.metadata.isArchived` lived only inside the snapshot content in the
+  // JSONL event store, so `MemoryService.getStates` called `adapter.getState`
+  // for EVERY row just to learn whether it was archived. Each of those reads
+  // parses the whole workspace event stream, making a cold `listStates`
+  // quadratic in the number of states (measured: 200 states -> 200 reads,
+  // 180k events parsed, ~500 ms).
+  //
+  // The column is deliberately NULLABLE WITH NO DEFAULT: NULL means "unknown,
+  // ask the content". A `DEFAULT 0` would silently claim every pre-existing
+  // archived state is visible again — exactly the archive-visibility bug #218
+  // fixed. Rows are filled in three ways:
+  //   1. here, for rows whose `stateJson` the applier already cached;
+  //   2. `StateRepository.backfillDerivedStateMetadata()` at the first init
+  //      after this migration, which reads each workspace JSONL ONCE (not
+  //      once per state) and folds it — the upgrade cost is O(workspaces);
+  //   3. lazily by `MemoryService.getStates`, which still reads content for
+  //      any row that is still NULL.
+  //
+  // `description` is backfilled alongside it from `context.activeTask`: once
+  // the archive flag no longer forces a content read, that fallback is the
+  // only thing keeping `listStates` from reporting "No description" for every
+  // state the createState tool ever wrote (it supplies no explicit
+  // description). Both writers of this table derive it identically via
+  // src/database/utils/stateContent.ts.
+  {
+    version: 16,
+    description: 'Add isArchived column to states table so getStates filters without reading JSONL content',
+    sql: [
+      'ALTER TABLE states ADD COLUMN isArchived INTEGER',
+      'CREATE INDEX IF NOT EXISTS idx_states_archived ON states(isArchived)'
+    ],
+    migrationFn: (db: MigratableDatabase): void => {
+      // Only rows the event applier populated carry stateJson; rows written
+      // live by StateRepository have it NULL and are left unknown for the
+      // JSONL-backed backfill described above.
+      const rows = db.exec(
+        'SELECT id, description, stateJson FROM states WHERE stateJson IS NOT NULL AND isArchived IS NULL'
+      );
+      if (rows.length === 0) return;
+
+      let skipped = 0;
+      for (const row of rows[0].values) {
+        const id = row[0] as string;
+        const description = (row[1] ?? null) as string | null;
+        const stateJson = row[2] as string;
+
+        const derived = deriveStateMetadataFromJson(stateJson);
+        if (!derived) {
+          skipped++;
+          continue;
+        }
+
+        db.run(
+          'UPDATE states SET isArchived = ?, description = ? WHERE id = ?',
+          [derived.isArchived ? 1 : 0, resolveStateDescription(description, derived), id]
+        );
+      }
+
+      if (skipped > 0) {
+        console.warn(`[SchemaMigrator] state archive backfill: skipped ${skipped} state(s) with unparseable stateJson`);
+      }
+    }
+  },
+];
+
+/**
+ * SchemaMigrator handles database schema upgrades
+ */
+export class SchemaMigrator {
+  private db: Database;
+
+  constructor(db: Database) {
+    this.db = db;
+  }
+
+  /**
+   * Get the current schema version from the database
+   * Returns 0 if schema_version table doesn't exist (very old DB)
+   * Returns 1 if table exists but is empty (pre-versioning DB)
+   */
+  getCurrentVersion(): number {
+    try {
+      // Check if schema_version table exists
+      const tableCheck = this.db.exec(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
+      );
+
+      if (tableCheck.length === 0 || tableCheck[0].values.length === 0) {
+        // No schema_version table - this is a very old database or fresh
+        // Check if messages table exists to differentiate
+        const messagesCheck = this.db.exec(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'"
+        );
+
+        if (messagesCheck.length === 0 || messagesCheck[0].values.length === 0) {
+          // No messages table = fresh database, return 0
+          return 0;
+        }
+
+        // Has messages but no schema_version = v1 database
+        return 1;
+      }
+
+      // Get max version from schema_version table
+      const result = this.db.exec('SELECT MAX(version) as version FROM schema_version');
+
+      if (result.length === 0 || result[0].values.length === 0 || result[0].values[0][0] === null) {
+        // Table exists but empty - treat as v1
+        return 1;
+      }
+
+      return result[0].values[0][0] as number;
+    } catch (error) {
+      console.error('[SchemaMigrator] Error getting current version:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Check if a column exists in a table
+   */
+  private columnExists(tableName: string, columnName: string): boolean {
+    try {
+      const result = this.db.exec(`PRAGMA table_info(${tableName})`);
+
+      if (result.length === 0) return false;
+
+      // PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
+      // Column name is at index 1
+      const columns = result[0].values.map(row => row[1] as string);
+      return columns.includes(columnName);
+    } catch (error) {
+      console.error(`[SchemaMigrator] Error checking column ${tableName}.${columnName}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Run all pending migrations
+   * Returns migration result including whether a rebuild is needed
+   *
+   * NOTE: When migrations are applied, the SQLite cache should be rebuilt from JSONL
+   * because the existing data doesn't have the new columns populated correctly.
+   */
+  migrate(): Promise<{
+    applied: number;
+    fromVersion: number;
+    toVersion: number;
+    needsRebuild: boolean;  // True if migrations were applied and data should be rebuilt from JSONL
+  }> {
+    const currentVersion = this.getCurrentVersion();
+    const targetVersion = CURRENT_SCHEMA_VERSION;
+
+    if (currentVersion >= targetVersion) {
+      return Promise.resolve({ applied: 0, fromVersion: currentVersion, toVersion: currentVersion, needsRebuild: false });
+    }
+
+    // Ensure schema_version table exists
+    this.ensureSchemaVersionTable();
+
+    // Get migrations to apply (versions > currentVersion)
+    const pendingMigrations = MIGRATIONS.filter(m => m.version > currentVersion);
+
+    if (pendingMigrations.length === 0) {
+      this.setVersion(targetVersion);
+      return Promise.resolve({ applied: 0, fromVersion: currentVersion, toVersion: targetVersion, needsRebuild: false });
+    }
+
+    let appliedCount = 0;
+
+    for (const migration of pendingMigrations) {
+      try {
+        for (const sql of migration.sql) {
+          const alterMatch = sql.match(/ALTER TABLE (\w+) ADD COLUMN (\w+)/i);
+
+          if (alterMatch) {
+            const [, tableName, columnName] = alterMatch;
+
+            if (this.columnExists(tableName, columnName)) {
+              continue;
+            }
+          }
+
+          this.db.run(sql);
+        }
+
+        // Run optional JavaScript migration function (e.g., JSON-based backfills)
+        if (migration.migrationFn) {
+          migration.migrationFn(this.db);
+        }
+
+        this.setVersion(migration.version);
+        appliedCount++;
+      } catch (error) {
+        console.error(`[SchemaMigrator] Migration v${migration.version} failed:`, error);
+        throw error;
+      }
+    }
+
+    return Promise.resolve({
+      applied: appliedCount,
+      fromVersion: currentVersion,
+      toVersion: targetVersion,
+      needsRebuild: false
+    });
+  }
+
+  /**
+   * Ensure schema_version table exists
+   */
+  private ensureSchemaVersionTable(): void {
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY,
+        appliedAt INTEGER NOT NULL
+      )
+    `);
+  }
+
+  /**
+   * Set the current schema version
+   */
+  private setVersion(version: number): void {
+    this.db.run(
+      'INSERT OR REPLACE INTO schema_version (version, appliedAt) VALUES (?, ?)',
+      [version, Date.now()]
+    );
+  }
+}

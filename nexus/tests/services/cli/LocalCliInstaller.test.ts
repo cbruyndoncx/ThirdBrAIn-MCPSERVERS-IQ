@@ -1,0 +1,527 @@
+/**
+ * LocalCliInstaller — real-filesystem test against a temp HOME.
+ *
+ * Mocks obsidian's Platform (desktop) and desktopRequire (so it returns real
+ * node modules, with os.homedir redirected to the temp dir), then exercises the
+ * enable → status → reconcile → uninstall lifecycle and asserts on-disk effects.
+ */
+import * as realFs from 'fs';
+import * as realOs from 'os';
+import * as realPath from 'path';
+
+let TEST_HOME = '';
+const ORIGINAL_LOCALAPPDATA = process.env.LOCALAPPDATA;
+const ORIGINAL_PATH = process.env.PATH;
+const ORIGINAL_SHELL = process.env.SHELL;
+const mockSpawnSync = jest.fn();
+const DEFAULT_NODE_PATH = '/resolved/bin/node';
+const mockResolveDesktopBinaryPath = jest.fn(() => DEFAULT_NODE_PATH);
+
+interface MockSpawnResult {
+    status: number;
+    stdout: string;
+    stderr: string;
+    error?: Error;
+}
+
+const nodeOk: MockSpawnResult = { status: 0, stdout: 'v20.19.0\n', stderr: '' };
+const TEST_SHELL = '/bin/zsh';
+/** What the mocked login shell reports for `command -v nexus` (null = not found). */
+let loginShellResolves: string | null = null;
+
+function mockNodeAndPowerShell(...powerShellResults: MockSpawnResult[]): void {
+    let powerShellIndex = 0;
+    mockSpawnSync.mockImplementation((command: string) => {
+        if (command === DEFAULT_NODE_PATH) return nodeOk;
+        if (command === TEST_SHELL) {
+            return loginShellResolves === null
+                ? { status: 1, stdout: '', stderr: '' }
+                : { status: 0, stdout: `${loginShellResolves}\n`, stderr: '' };
+        }
+        return powerShellResults[powerShellIndex++] ?? { status: 0, stdout: 'PRESENT\n', stderr: '' };
+    });
+}
+
+function powerShellCalls(): unknown[][] {
+    return mockSpawnSync.mock.calls.filter((call) => call[0] === 'powershell.exe');
+}
+
+jest.mock('obsidian', () => ({
+    Platform: { isDesktop: true, isWin: false, isMacOS: true, isMobile: false },
+}));
+
+jest.mock('../../../src/utils/desktopRequire', () => ({
+    desktopRequire: (moduleName: string) => {
+        const name = moduleName.replace(/^node:/, '');
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const mod = require(name);
+        if (name === 'os') {
+            return { ...mod, homedir: () => TEST_HOME };
+        }
+        if (name === 'child_process') {
+            return { ...mod, spawnSync: mockSpawnSync };
+        }
+        return mod;
+    },
+}));
+
+jest.mock('../../../src/utils/binaryDiscovery', () => ({
+    resolveDesktopBinaryPath: mockResolveDesktopBinaryPath,
+}));
+
+import { LocalCliInstaller } from '../../../src/services/cli/LocalCliInstaller';
+import { NEXUS_CLI_JS } from '../../../src/utils/cliAssets';
+
+describe('LocalCliInstaller', () => {
+    let installer: LocalCliInstaller;
+    const posixIt = process.platform === 'win32' ? it.skip : it;
+
+    beforeEach(() => {
+        const platform = jest.requireMock('obsidian').Platform as {
+            isDesktop: boolean;
+            isWin: boolean;
+            isMacOS: boolean;
+            isMobile: boolean;
+        };
+        platform.isWin = false;
+        platform.isMacOS = true;
+        if (ORIGINAL_LOCALAPPDATA === undefined) delete process.env.LOCALAPPDATA;
+        else process.env.LOCALAPPDATA = ORIGINAL_LOCALAPPDATA;
+        if (ORIGINAL_PATH === undefined) delete process.env.PATH;
+        else process.env.PATH = ORIGINAL_PATH;
+        process.env.SHELL = TEST_SHELL;
+        loginShellResolves = null;
+        mockSpawnSync.mockReset();
+        mockResolveDesktopBinaryPath.mockReset();
+        mockResolveDesktopBinaryPath.mockReturnValue(DEFAULT_NODE_PATH);
+        mockNodeAndPowerShell();
+        TEST_HOME = realFs.mkdtempSync(realPath.join(realOs.tmpdir(), 'nexus-cli-test-'));
+        // Simulate all three agents being installed so detection fires.
+        realFs.mkdirSync(realPath.join(TEST_HOME, '.claude'), { recursive: true });
+        realFs.mkdirSync(realPath.join(TEST_HOME, '.cursor'), { recursive: true });
+        realFs.mkdirSync(realPath.join(TEST_HOME, '.codex'), { recursive: true });
+        installer = new LocalCliInstaller();
+    });
+
+    afterEach(() => {
+        realFs.rmSync(TEST_HOME, { recursive: true, force: true });
+        if (ORIGINAL_LOCALAPPDATA === undefined) delete process.env.LOCALAPPDATA;
+        else process.env.LOCALAPPDATA = ORIGINAL_LOCALAPPDATA;
+        if (ORIGINAL_PATH === undefined) delete process.env.PATH;
+        else process.env.PATH = ORIGINAL_PATH;
+        if (ORIGINAL_SHELL === undefined) delete process.env.SHELL;
+        else process.env.SHELL = ORIGINAL_SHELL;
+    });
+
+    posixIt('enable() writes the CLI, skill, PATH symlink, Claude + Cursor skill links, and Codex block', () => {
+        const result = installer.enable();
+        const p = installer.getPaths();
+
+        expect(realFs.readFileSync(p.cliJsPath, 'utf-8')).toBe(NEXUS_CLI_JS);
+        expect(realFs.readFileSync(p.skillMdPath, 'utf-8')).toContain('# Nexus vault CLI');
+        expect(realFs.lstatSync(p.binPath).isSymbolicLink()).toBe(true);
+        expect(realFs.realpathSync(p.binPath)).toBe(realFs.realpathSync(p.cliJsPath));
+        expect(realFs.lstatSync(p.claudeSkillLink).isSymbolicLink()).toBe(true);
+        expect(realFs.lstatSync(p.cursorSkillLink).isSymbolicLink()).toBe(true);
+        expect(realFs.realpathSync(p.cursorSkillLink)).toBe(realFs.realpathSync(p.skillDir));
+        expect(realFs.readFileSync(p.codexAgentsPath, 'utf-8')).toContain('Nexus vault access');
+        expect(result.created).toContain(p.cliJsPath);
+        expect(result.detected).toEqual({ claudeCode: true, cursor: true, codex: true });
+    });
+
+    posixIt('status() reflects an installed, on-PATH, linked state', () => {
+        installer.enable();
+        loginShellResolves = installer.getPaths().binPath;
+        const s = new LocalCliInstaller().status();
+        expect(s.installed).toBe(true);
+        expect(s.onPath).toBe(true);
+        expect(s.pathFix).toBeNull();
+        expect(s.stale).toBe(false);
+        expect(s.skillLinked).toBe(true);
+        expect(s.cursorLinked).toBe(true);
+        expect(s.codexLinked).toBe(true);
+    });
+
+    // Regression: onPath used to be a bare symlink check on POSIX, so a correctly
+    // installed CLI that no shell could resolve still reported "on your PATH".
+    posixIt('status() does not claim onPath when the login shell cannot resolve nexus', () => {
+        installer.enable();
+        loginShellResolves = null;
+        const s = new LocalCliInstaller().status();
+
+        expect(s.installed).toBe(true);
+        expect(s.pathConfigured).toBe(true); // our symlink is in place...
+        expect(s.onPath).toBe(false);        // ...but the shell still can't find it
+        expect(s.pathFix).not.toBeNull();
+    });
+
+    posixIt('status() ignores a namesake nexus that resolves ahead of ours', () => {
+        installer.enable();
+        loginShellResolves = '/usr/local/bin/nexus';
+        expect(new LocalCliInstaller().status().onPath).toBe(false);
+    });
+
+    posixIt('probes a login shell rather than trusting the PATH Obsidian inherited', () => {
+        const p = installer.getPaths();
+        process.env.PATH = `${p.binDir}:/usr/bin`; // Obsidian sees it; the shell does not
+        installer.enable();
+        loginShellResolves = null;
+
+        expect(new LocalCliInstaller().status().onPath).toBe(false);
+        const shellCalls = mockSpawnSync.mock.calls.filter((call) => call[0] === TEST_SHELL);
+        expect(shellCalls.length).toBeGreaterThan(0);
+        expect(shellCalls[0][1]).toEqual(['-lc', 'command -v nexus']);
+        // PATH is dropped so the shell's own profiles decide, not Obsidian's env.
+        expect((shellCalls[0][2] as { env: Record<string, string> }).env.PATH).toBeUndefined();
+    });
+
+    posixIt('enable() warns with the exact profile edit when the shell cannot resolve nexus', () => {
+        loginShellResolves = null;
+        const result = installer.enable();
+
+        const warning = result.warnings.find((w) => w.includes('not on your shell PATH'));
+        expect(warning).toBeDefined();
+        expect(warning).toContain('export PATH="$HOME/.local/bin:$PATH"');
+        expect(warning).toContain(realPath.join(TEST_HOME, '.zshrc'));
+    });
+
+    posixIt('enable() stays quiet about PATH when the shell already resolves nexus', () => {
+        loginShellResolves = realPath.join(TEST_HOME, '.local', 'bin', 'nexus');
+        const result = installer.enable();
+        expect(result.warnings.filter((w) => w.toLowerCase().includes('path'))).toEqual([]);
+    });
+
+    posixIt('describePathFix() targets the profile for the running shell', () => {
+        process.env.SHELL = '/bin/bash';
+        expect(new LocalCliInstaller().describePathFix()).toEqual({
+            shell: 'bash',
+            profilePath: realPath.join(TEST_HOME, '.bash_profile'), // isMacOS is true here
+            exportLine: 'export PATH="$HOME/.local/bin:$PATH"',
+            reloadCommand: 'source ~/.bash_profile',
+        });
+
+        process.env.SHELL = '/opt/homebrew/bin/fish';
+        expect(new LocalCliInstaller().describePathFix()).toEqual({
+            shell: 'fish',
+            profilePath: realPath.join(TEST_HOME, '.config', 'fish', 'config.fish'),
+            exportLine: 'fish_add_path $HOME/.local/bin',
+            reloadCommand: 'source ~/.config/fish/config.fish',
+        });
+    });
+
+    posixIt('accepts Node.js 24 discovered outside Obsidian\'s inherited PATH', () => {
+        const discoveredNode = realPath.join(TEST_HOME, '.nvm', 'versions', 'node', 'v24.4.0', 'bin', 'node');
+        mockResolveDesktopBinaryPath.mockReturnValue(discoveredNode);
+        mockSpawnSync.mockImplementation((command: string) => {
+            if (command === discoveredNode) {
+                return { status: 0, stdout: 'v24.4.0\n', stderr: '' };
+            }
+            return { status: 1, stdout: '', stderr: 'not found' };
+        });
+
+        expect(() => installer.enable({ claudeCode: false, cursor: false, codex: false })).not.toThrow();
+        expect(mockSpawnSync).toHaveBeenCalledWith(
+            discoveredNode,
+            ['--version'],
+            expect.objectContaining({ encoding: 'utf-8' })
+        );
+        expect(mockSpawnSync).not.toHaveBeenCalledWith(
+            'node',
+            ['--version'],
+            expect.anything()
+        );
+    });
+
+    posixIt('enable(targets) wires only the selected providers', () => {
+        installer.enable({ claudeCode: true, cursor: false, codex: false });
+        const s = installer.status();
+        expect(s.installed).toBe(true);
+        expect(s.skillLinked).toBe(true);
+        expect(s.cursorLinked).toBe(false);
+        expect(s.codexLinked).toBe(false);
+    });
+
+    posixIt('setProvider() wires and unwires a single provider without touching the others', () => {
+        installer.enable({ claudeCode: true, cursor: false, codex: false });
+        expect(installer.status().cursorLinked).toBe(false);
+
+        installer.setProvider('cursor', true);
+        let s = installer.status();
+        expect(s.cursorLinked).toBe(true);
+        expect(s.skillLinked).toBe(true);
+
+        installer.setProvider('cursor', false);
+        s = installer.status();
+        expect(s.cursorLinked).toBe(false);
+        expect(s.skillLinked).toBe(true);
+    });
+
+    posixIt('reconcile() refreshes a stale on-disk CLI copy', () => {
+        installer.enable();
+        const p = installer.getPaths();
+        realFs.writeFileSync(p.cliJsPath, '// stale content', 'utf-8');
+        expect(installer.status().stale).toBe(true);
+
+        const changed = installer.reconcile();
+        expect(changed).toBe(true);
+        expect(realFs.readFileSync(p.cliJsPath, 'utf-8')).toBe(NEXUS_CLI_JS);
+        expect(installer.status().stale).toBe(false);
+    });
+
+    posixIt('does not clobber a real (non-symlink) file at the bin path', () => {
+        const p = installer.getPaths();
+        realFs.mkdirSync(p.binDir, { recursive: true });
+        realFs.writeFileSync(p.binPath, '#!/bin/sh\necho mine\n', 'utf-8');
+
+        const result = installer.enable();
+        expect(realFs.readFileSync(p.binPath, 'utf-8')).toContain('echo mine');
+        expect(result.warnings.some((w) => w.includes(p.binPath))).toBe(true);
+    });
+
+    posixIt('does not clobber a foreign symlink at the bin path (e.g. another tool named nexus)', () => {
+        const p = installer.getPaths();
+        const otherTool = realPath.join(TEST_HOME, 'other-nexus.sh');
+        realFs.writeFileSync(otherTool, '#!/bin/sh\necho other\n', 'utf-8');
+        realFs.mkdirSync(p.binDir, { recursive: true });
+        realFs.symlinkSync(otherTool, p.binPath);
+
+        const result = installer.enable();
+        expect(realFs.readlinkSync(p.binPath)).toBe(otherTool);
+        expect(result.warnings.some((w) => w.includes(p.binPath))).toBe(true);
+    });
+
+    posixIt('uninstall() preserves a foreign symlink at the bin path', () => {
+        const p = installer.getPaths();
+        installer.enable();
+        // Simulate the user replacing our PATH entry with their own tool afterward.
+        const otherTool = realPath.join(TEST_HOME, 'other-nexus.sh');
+        realFs.writeFileSync(otherTool, '#!/bin/sh\necho other\n', 'utf-8');
+        realFs.unlinkSync(p.binPath);
+        realFs.symlinkSync(otherTool, p.binPath);
+
+        installer.uninstall();
+        expect(realFs.existsSync(p.dataDir)).toBe(false);
+        expect(realFs.readlinkSync(p.binPath)).toBe(otherTool);
+    });
+
+    posixIt('replaces our own dangling symlink on reinstall', () => {
+        const p = installer.getPaths();
+        realFs.mkdirSync(p.binDir, { recursive: true });
+        // Our link from a previous install whose dataDir was wiped.
+        realFs.symlinkSync(p.cliJsPath, p.binPath);
+
+        const result = installer.enable();
+        expect(realFs.realpathSync(p.binPath)).toBe(realFs.realpathSync(p.cliJsPath));
+        expect(result.warnings.some((w) => w.includes(p.binPath) && w.includes('Skipped'))).toBe(false);
+    });
+
+    posixIt('uninstall() removes our artifacts and strips the Codex block while preserving other content', () => {
+        const p = installer.getPaths();
+        realFs.writeFileSync(p.codexAgentsPath, '# My Codex rules\nKeep this line.\n', 'utf-8');
+
+        installer.enable();
+        expect(realFs.readFileSync(p.codexAgentsPath, 'utf-8')).toContain('Nexus vault access');
+
+        installer.uninstall();
+        expect(realFs.existsSync(p.cliJsPath)).toBe(false);
+        expect(realFs.existsSync(p.dataDir)).toBe(false);
+        expect(realFs.existsSync(p.binPath)).toBe(false);
+        expect(realFs.existsSync(p.claudeSkillLink)).toBe(false);
+        expect(realFs.existsSync(p.cursorSkillLink)).toBe(false);
+
+        const codex = realFs.readFileSync(p.codexAgentsPath, 'utf-8');
+        expect(codex).toContain('Keep this line.');
+        expect(codex).not.toContain('Nexus vault access');
+    });
+
+    describe('on Windows', () => {
+        beforeEach(() => {
+            const platform = jest.requireMock('obsidian').Platform as {
+                isWin: boolean;
+                isMacOS: boolean;
+            };
+            platform.isWin = true;
+            platform.isMacOS = false;
+            process.env.LOCALAPPDATA = realPath.join(TEST_HOME, 'AppData', 'Local');
+            process.env.PATH = 'C:\\Windows\\System32';
+        });
+
+        it('enable() persists the CLI directory in the user PATH and reports it accurately', () => {
+            mockNodeAndPowerShell({ status: 0, stdout: 'ADDED\n', stderr: '' });
+
+            const result = installer.enable({ claudeCode: false, cursor: false, codex: false });
+            const paths = installer.getPaths();
+
+            expect(mockSpawnSync).toHaveBeenCalledWith(
+                'powershell.exe',
+                expect.arrayContaining(['-NoProfile', '-NonInteractive', '-Command']),
+                expect.objectContaining({
+                    windowsHide: true,
+                    env: expect.objectContaining({ NEXUS_CLI_BIN_DIR: paths.binDir }),
+                })
+            );
+            expect(realFs.existsSync(paths.binPath)).toBe(true);
+            expect(realFs.existsSync(paths.pathMarkerPath)).toBe(true);
+            expect(process.env.PATH?.toLowerCase()).toContain(paths.binDir.toLowerCase());
+            expect(installer.status().onPath).toBe(true);
+            expect(installer.status().runtimeReady).toBe(true);
+            expect(result.warnings).toEqual([]);
+        });
+
+        it('uninstall() removes a PATH entry and all payloads that Nexus added', () => {
+            mockNodeAndPowerShell(
+                { status: 0, stdout: 'ADDED\n', stderr: '' },
+                { status: 0, stdout: 'REMOVED\n', stderr: '' }
+            );
+
+            installer.enable({ claudeCode: false, cursor: false, codex: false });
+            const paths = installer.getPaths();
+            const result = installer.uninstall();
+
+            expect(powerShellCalls()).toHaveLength(2);
+            expect(process.env.PATH?.toLowerCase()).not.toContain(paths.binDir.toLowerCase());
+            expect(realFs.existsSync(paths.pathMarkerPath)).toBe(false);
+            expect(realFs.existsSync(paths.cliJsPath)).toBe(false);
+            expect(realFs.existsSync(paths.dataDir)).toBe(false);
+            expect(result.warnings).toEqual([]);
+        });
+
+        it('reconcile() never changes the user PATH without an explicit action', () => {
+            mockNodeAndPowerShell({ status: 0, stdout: 'PRESENT\n', stderr: '' });
+            installer.enable({ claudeCode: false, cursor: false, codex: false });
+            process.env.PATH = 'C:\\Windows\\System32';
+            mockSpawnSync.mockReset();
+            mockNodeAndPowerShell();
+
+            installer.reconcile();
+
+            expect(powerShellCalls()).toHaveLength(0);
+            expect(installer.status().onPath).toBe(false);
+        });
+
+        it('supports an explicit PATH repair for an existing install', () => {
+            mockNodeAndPowerShell(
+                { status: 0, stdout: 'PRESENT\n', stderr: '' },
+                { status: 0, stdout: 'ADDED\n', stderr: '' }
+            );
+            installer.enable({ claudeCode: false, cursor: false, codex: false });
+            process.env.PATH = 'C:\\Windows\\System32';
+
+            const result = installer.addToWindowsUserPath();
+
+            expect(result.warnings).toEqual([]);
+            expect(installer.status().onPath).toBe(true);
+        });
+
+        it('uninstall() preserves a PATH entry that was already user-managed', () => {
+            const paths = installer.getPaths();
+            process.env.PATH = `${process.env.PATH};${paths.binDir}`;
+            mockNodeAndPowerShell({ status: 0, stdout: 'PRESENT\n', stderr: '' });
+
+            installer.enable({ claudeCode: false, cursor: false, codex: false });
+            expect(realFs.existsSync(paths.pathMarkerPath)).toBe(false);
+
+            installer.uninstall();
+
+            expect(powerShellCalls()).toHaveLength(1);
+            expect(process.env.PATH?.toLowerCase()).toContain(paths.binDir.toLowerCase());
+        });
+
+        it('keeps the install but reports PATH persistence failures', () => {
+            mockNodeAndPowerShell({ status: 1, stdout: '', stderr: 'registry denied' });
+
+            const result = installer.enable({ claudeCode: false, cursor: false, codex: false });
+            const paths = installer.getPaths();
+
+            expect(realFs.existsSync(paths.binPath)).toBe(true);
+            expect(installer.status().onPath).toBe(false);
+            expect(result.warnings).toEqual([
+                expect.stringContaining('registry denied'),
+            ]);
+        });
+
+        it('retains its PATH ownership marker when cleanup fails', () => {
+            mockNodeAndPowerShell(
+                { status: 0, stdout: 'ADDED\n', stderr: '' },
+                { status: 1, stdout: '', stderr: 'registry denied' }
+            );
+            installer.enable({ claudeCode: false, cursor: false, codex: false });
+            const paths = installer.getPaths();
+
+            const result = installer.uninstall();
+
+            expect(realFs.existsSync(paths.pathMarkerPath)).toBe(true);
+            expect(realFs.existsSync(paths.dataDir)).toBe(true);
+            expect(result.warnings).toEqual(expect.arrayContaining([
+                expect.stringContaining('registry denied'),
+                expect.stringContaining('cleanup can be retried safely'),
+            ]));
+        });
+
+        it('refuses installation when Node.js 18+ is unavailable', () => {
+            mockSpawnSync.mockReturnValue({ status: 1, stdout: '', stderr: 'not found' });
+            const paths = installer.getPaths();
+
+            expect(() => installer.enable()).toThrow('requires Node.js 18 or newer');
+            expect(realFs.existsSync(paths.cliJsPath)).toBe(false);
+        });
+
+        it('reports a namesake command that appears earlier on PATH', () => {
+            const otherBin = realPath.join(TEST_HOME, 'other-bin');
+            realFs.mkdirSync(otherBin, { recursive: true });
+            realFs.writeFileSync(realPath.join(otherBin, 'nexus.cmd'), '@echo other\r\n', 'utf-8');
+            // Join with the host's delimiter: the code under test splits PATH with
+            // the real path module, so a hardcoded ';' never splits on a POSIX host
+            // and the namesake in otherBin would be invisible to the lookup.
+            process.env.PATH = [otherBin, 'C:\\Windows\\System32'].join(realPath.delimiter);
+            mockNodeAndPowerShell({ status: 0, stdout: 'ADDED\n', stderr: '' });
+
+            const result = installer.enable({ claudeCode: false, cursor: false, codex: false });
+            const status = installer.status();
+
+            expect(status.pathConfigured).toBe(true);
+            expect(status.onPath).toBe(false);
+            expect(result.warnings).toEqual(expect.arrayContaining([
+                expect.stringContaining('appears earlier on PATH'),
+            ]));
+        });
+
+        it('preserves an unmarked provider skill directory during install and uninstall', () => {
+            const paths = installer.getPaths();
+            realFs.mkdirSync(paths.claudeSkillLink, { recursive: true });
+            const userSkill = realPath.join(paths.claudeSkillLink, 'SKILL.md');
+            realFs.writeFileSync(userSkill, '# User-owned Nexus skill\n', 'utf-8');
+            mockNodeAndPowerShell({ status: 0, stdout: 'PRESENT\n', stderr: '' });
+
+            const installResult = installer.enable({ claudeCode: true, cursor: false, codex: false });
+            expect(realFs.readFileSync(userSkill, 'utf-8')).toBe('# User-owned Nexus skill\n');
+            expect(installResult.warnings).toEqual(expect.arrayContaining([
+                expect.stringContaining('not managed by Nexus'),
+            ]));
+
+            const uninstallResult = installer.uninstall();
+            expect(realFs.readFileSync(userSkill, 'utf-8')).toBe('# User-owned Nexus skill\n');
+            expect(uninstallResult.warnings).toEqual(expect.arrayContaining([
+                expect.stringContaining(`Preserved ${paths.claudeSkillLink}`),
+            ]));
+        });
+
+        it('marks, refreshes, and removes Windows provider skill copies that Nexus owns', () => {
+            mockNodeAndPowerShell(
+                { status: 0, stdout: 'ADDED\n', stderr: '' },
+                { status: 0, stdout: 'REMOVED\n', stderr: '' }
+            );
+            installer.enable({ claudeCode: true, cursor: false, codex: false });
+            const paths = installer.getPaths();
+            const marker = realPath.join(paths.claudeSkillLink, '.nexus-managed');
+            expect(realFs.existsSync(marker)).toBe(true);
+
+            realFs.writeFileSync(paths.claudeSkillLink + realPath.sep + 'SKILL.md', '# stale\n', 'utf-8');
+            expect(installer.reconcile()).toBe(true);
+            expect(realFs.readFileSync(paths.claudeSkillLink + realPath.sep + 'SKILL.md', 'utf-8')).toContain('# Nexus vault CLI');
+
+            installer.uninstall();
+            expect(realFs.existsSync(paths.claudeSkillLink)).toBe(false);
+        });
+    });
+});

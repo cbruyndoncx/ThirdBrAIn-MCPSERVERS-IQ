@@ -1,0 +1,291 @@
+/**
+ * Location: /src/agents/memoryManager/modes/workspaces/UpdateWorkspaceMode.ts
+ * Purpose: Update existing workspace properties and context
+ *
+ * Supports partial updates - pass only the fields you want to change.
+ * Context fields can be updated individually without replacing the entire context.
+ *
+ * Used by: MemoryManager agent for workspace modification operations
+ */
+
+import { App } from 'obsidian';
+import { BaseTool } from '../../../baseTool';
+import { MemoryManagerAgent } from '../../memoryManager';
+import { labelWithId, verbs } from '../../../utils/toolStatusLabels';
+import type { ToolStatusTense } from '../../../interfaces/ITool';
+import { createServiceIntegration } from '../../services/ValidationService';
+import { createErrorMessage } from '../../../../utils/errorUtils';
+import { tryResolveVaultPath } from '../../../../core/vaultPath';
+import { CommonResult, CommonParameters } from '../../../../types/mcp/AgentTypes';
+import type { IndividualWorkspace } from '../../../../types/storage/StorageTypes';
+import type { WorkspaceWorkflow } from '../../../../database/types/workspace/WorkspaceTypes';
+
+// Define parameter and result types for workspace updates
+export interface UpdateWorkspaceParameters extends CommonParameters {
+    /**
+     * Workspace ID or name to update. This is the explicit tool argument used
+     * by the CLI because `workspaceId` is reserved for ToolManager context.
+     */
+    id?: string;
+    /**
+     * Legacy/internal fallback. ToolManager strips this from CLI metadata
+     * because it is a top-level context key, so new callers should use `id`.
+     */
+    workspaceId?: string;
+    // Top-level fields (all optional)
+    name?: string;
+    description?: string;
+    rootFolder?: string;
+    // Context fields (all optional) - merged individually
+    purpose?: string;
+    workflows?: WorkspaceWorkflow[];
+    keyFiles?: string[];
+    preferences?: string;
+    dedicatedAgentId?: string;
+}
+
+export interface UpdateWorkspaceResult extends CommonResult {
+    success: boolean;
+    error?: string;
+}
+
+/**
+ * UpdateWorkspaceMode - Modify existing workspace properties
+ * Pass only the fields you want to update; others remain unchanged.
+ */
+export class UpdateWorkspaceTool extends BaseTool<UpdateWorkspaceParameters, UpdateWorkspaceResult> {
+    private app: App;
+    private serviceIntegration: ReturnType<typeof createServiceIntegration>;
+
+    constructor(private agent: MemoryManagerAgent) {
+        super(
+            'updateWorkspace',
+            'Update Workspace',
+            'Update workspace properties. Pass only fields to change - others remain unchanged.',
+            '2.0.0'
+        );
+
+        this.app = agent.getApp();
+        this.serviceIntegration = createServiceIntegration(this.app, {
+            logLevel: 'warn',
+            maxRetries: 2,
+            fallbackBehavior: 'warn'
+        });
+    }
+
+    async execute(params: UpdateWorkspaceParameters): Promise<UpdateWorkspaceResult> {
+        try {
+            // Get workspace service
+            const serviceResult = await this.serviceIntegration.getWorkspaceService();
+            if (!serviceResult.success || !serviceResult.service) {
+                return this.prepareResult(false, undefined, `Workspace service not available: ${serviceResult.error}`);
+            }
+
+            const workspaceService = serviceResult.service;
+            const workspaceIdentifier = this.resolveWorkspaceIdentifier(params);
+            if (!workspaceIdentifier) {
+                return this.prepareResult(false, undefined, 'Workspace identifier is required. Pass the workspace ID or name as the first argument. Example: memory update-workspace "Project Workspace" --description "Updated description".');
+            }
+
+            // Validate workspace exists using unified lookup (ID or name)
+            const existingWorkspace = await workspaceService.getWorkspaceByNameOrId(workspaceIdentifier);
+            if (!existingWorkspace) {
+                return this.prepareResult(false, undefined, `Workspace "${workspaceIdentifier}" not found. Use listWorkspaces to see available workspaces.`);
+            }
+
+            // Check that at least one field is being updated
+            const hasTopLevelUpdates = params.name !== undefined ||
+                                       params.description !== undefined ||
+                                       params.rootFolder !== undefined;
+            const hasContextUpdates = params.purpose !== undefined ||
+                                      params.workflows !== undefined ||
+                                      params.keyFiles !== undefined ||
+                                      params.preferences !== undefined ||
+                                      params.dedicatedAgentId !== undefined;
+
+            if (!hasTopLevelUpdates && !hasContextUpdates) {
+                return this.prepareResult(false, undefined, 'No updates provided. Pass at least one field to update (name, description, rootFolder, purpose, workflows, keyFiles, preferences, or dedicatedAgentId).');
+            }
+
+            // Create a deep copy for updating
+            const workspaceCopy: IndividualWorkspace = {
+                ...existingWorkspace,
+                context: existingWorkspace.context ? { ...existingWorkspace.context } : undefined
+            };
+            const now = Date.now();
+
+            // Apply top-level updates
+            if (params.name !== undefined) {
+                workspaceCopy.name = params.name;
+            }
+            if (params.description !== undefined) {
+                workspaceCopy.description = params.description;
+            }
+            if (params.rootFolder !== undefined) {
+                // Confine the workspace root to the vault (reject traversal/absolute
+                // paths). The root sentinels "/", "." and "" legitimately mean the
+                // vault root, so they are preserved as-is; everything else is confined.
+                const rootTrimmed = params.rootFolder.trim();
+                if (rootTrimmed !== '' && rootTrimmed !== '/' && rootTrimmed !== '.') {
+                    const resolvedRoot = tryResolveVaultPath(params.rootFolder);
+                    if (!resolvedRoot.ok) {
+                        return this.prepareResult(false, undefined, resolvedRoot.error);
+                    }
+                    params.rootFolder = resolvedRoot.path;
+                }
+                // Ensure folder exists
+                try {
+                    const folder = this.app.vault.getAbstractFileByPath(params.rootFolder);
+                    if (!folder) {
+                        await this.app.vault.createFolder(params.rootFolder);
+                    }
+                } catch {
+                    // Ignore folder creation errors
+                }
+                workspaceCopy.rootFolder = params.rootFolder;
+            }
+
+            // Initialize context if it doesn't exist
+            if (!workspaceCopy.context) {
+                workspaceCopy.context = {};
+            }
+
+            // Apply context-level updates (merged individually)
+            if (params.purpose !== undefined) {
+                workspaceCopy.context.purpose = params.purpose;
+            }
+            if (params.workflows !== undefined) {
+                workspaceCopy.context.workflows = params.workflows;
+            }
+            if (params.keyFiles !== undefined) {
+                workspaceCopy.context.keyFiles = params.keyFiles;
+            }
+            if (params.preferences !== undefined) {
+                workspaceCopy.context.preferences = params.preferences;
+            }
+            if (params.dedicatedAgentId !== undefined) {
+                if (params.dedicatedAgentId === '') {
+                    // Empty string means remove dedicated agent
+                    workspaceCopy.dedicatedAgentId = undefined;
+                } else {
+                    // Store ID or name as-is (lookup happens on load)
+                    workspaceCopy.dedicatedAgentId = params.dedicatedAgentId;
+                }
+            }
+
+            // Update timestamp
+            workspaceCopy.lastAccessed = now;
+
+            // Perform the update
+            await workspaceService.updateWorkspace(existingWorkspace.id, workspaceCopy);
+
+            // Success - LLM already knows what it passed
+            return this.prepareResult(true);
+
+        } catch (error) {
+            return this.prepareResult(false, undefined, createErrorMessage('Error updating workspace: ', error));
+        }
+    }
+
+    private resolveWorkspaceIdentifier(params: UpdateWorkspaceParameters): string | null {
+        const explicitId = params.id?.trim();
+        if (explicitId) {
+            return explicitId;
+        }
+
+        const legacyWorkspaceId = params.workspaceId?.trim();
+        return legacyWorkspaceId || null;
+    }
+
+    getStatusLabel(params: Record<string, unknown> | undefined, tense: ToolStatusTense): string | undefined {
+        return labelWithId(verbs('Updating workspace', 'Updated workspace', 'Failed to update workspace'), params, tense, { keys: ['id', 'workspaceId'], fallback: 'workspace' });
+    }
+
+    getParameterSchema(): Record<string, unknown> {
+        const toolSchema = {
+            type: 'object',
+            properties: {
+                id: {
+                    type: 'string',
+                    description: 'Workspace ID or name to update (REQUIRED). This selects the target workspace; using the workspace name is fine and the UUID is not required.'
+                },
+                // Top-level optional fields
+                name: {
+                    type: 'string',
+                    description: 'New workspace name (optional). This renames the workspace; it is not the target identifier.'
+                },
+                description: {
+                    type: 'string',
+                    description: 'New workspace description (optional)'
+                },
+                rootFolder: {
+                    type: 'string',
+                    description: 'New root folder path (optional, will create if needed)'
+                },
+                // Context optional fields
+                purpose: {
+                    type: 'string',
+                    description: 'New workspace purpose (optional, updates context.purpose)'
+                },
+                workflows: {
+                    type: 'array',
+                    description: 'New workflows array (optional, replaces context.workflows)',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string', description: 'Stable workflow ID. Provide to update an existing workflow.' },
+                            name: { type: 'string' },
+                            when: { type: 'string' },
+                            steps: { type: 'string' },
+                            promptId: { type: 'string', description: 'Optional custom prompt ID bound to this workflow.' },
+                            promptName: { type: 'string', description: 'Optional cached prompt name for display.' },
+                            schedule: {
+                                type: 'object',
+                                description: 'Optional workflow schedule.',
+                                properties: {
+                                    enabled: { type: 'boolean' },
+                                    frequency: { type: 'string', enum: ['hourly', 'daily', 'weekly', 'monthly'] },
+                                    intervalHours: { type: 'number' },
+                                    hour: { type: 'number' },
+                                    minute: { type: 'number' },
+                                    dayOfWeek: { type: 'number' },
+                                    dayOfMonth: { type: 'number' },
+                                    catchUp: { type: 'string', enum: ['skip', 'latest', 'all'] }
+                                },
+                                required: ['enabled', 'frequency', 'catchUp']
+                            }
+                        },
+                        required: ['name', 'when', 'steps']
+                    }
+                },
+                keyFiles: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'New key files array (optional, replaces context.keyFiles)'
+                },
+                preferences: {
+                    type: 'string',
+                    description: 'New preferences text (optional, updates context.preferences)'
+                },
+                dedicatedAgentId: {
+                    type: 'string',
+                    description: 'ID of custom agent to set as workspace dedicated agent (optional, updates context.dedicatedAgent). Pass empty string to remove dedicated agent.'
+                }
+            },
+            required: ['id']
+        };
+
+        return this.getMergedSchema(toolSchema);
+    }
+
+    getResultSchema(): Record<string, unknown> {
+        return {
+            type: 'object',
+            properties: {
+                success: { type: 'boolean', description: 'Whether the operation succeeded' },
+                error: { type: 'string', description: 'Error message if failed (includes recovery guidance)' }
+            },
+            required: ['success']
+        };
+    }
+}

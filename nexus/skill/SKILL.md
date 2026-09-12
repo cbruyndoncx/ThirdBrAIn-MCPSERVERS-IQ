@@ -1,0 +1,90 @@
+---
+name: nexus
+description: >-
+  Read, search, and edit the user's Obsidian vault (notes, folders, canvas,
+  bases, tasks, memory/workspaces, saved prompts) from the shell via the `nexus` CLI —
+  no MCP connection needed. Use whenever the user refers to their vault, notes,
+  daily notes, second brain, or Obsidian, or asks you to find/read/change
+  something stored there and the `nexus` command is on PATH. Do not use it to
+  edit files in the current code repository; use normal file tools for those.
+---
+
+# Nexus vault CLI
+
+`nexus` drives a running Nexus (Obsidian) vault from the shell over a local
+socket — no MCP config. It has two verbs: **discover** what you can do, then
+**execute**.
+
+## Start here
+
+**Run `nexus --help` first.** It is the authoritative, always-current manual —
+commands, the context contract, CLI syntax, gotchas, and the tool catalog. It's
+offline and instant (no socket), so read it before your first real command
+instead of guessing.
+
+For a common task, **`nexus playbook <name>`** gives you a ready-to-run recipe
+*plus* your workspaces and the exact tools it needs, in one call. Run
+`nexus playbook` to see what's available (typically: `vault-work`, `organize`,
+`tasks`, `prompt`).
+
+## The mindset (this is what `--help` can't teach you)
+
+- **Explore → inspect → exploit.** Search/list find *locations*; `content read`
+  gets *contents*; then you write. A search hit is a `{path, score}`, **not** the
+  note — never quote, summarize, or edit from a hit without reading it first.
+- **`nexus tools` returns schemas, not data.** It's discovery. Don't loop it
+  hoping for vault content — that comes from `nexus use --memory … --goal … -- content read …`.
+- **`--memory` and `--goal` are real and enforced.** You're operating a person's
+  live vault; pass a genuine running summary and objective, not placeholders.
+- **You can't escape the vault.** Paths are vault-relative; `..`, `~`, and
+  absolute paths are rejected. That's a guardrail, not a bug.
+- **Nothing is destroyed.** The AI gets archive (reversible), not delete.
+- **Windows:** `nexus vaults` discovers local named pipes. If policy blocks
+  enumeration, pass `--vault <name>` or set `NEXUS_VAULT`.
+
+## The shape
+
+```
+nexus tools [selector]              # discover — tool schemas (never vault data)
+nexus use --memory "<what you're doing>" --goal "<objective>" -- \
+    <agent command --flags>         # execute — runs one tool, prints the result
+```
+
+The `--` delimiter is canonical: context belongs before it; the tool command
+belongs after it. This avoids nested command-string quoting, especially in
+Windows PowerShell. The legacy one-string form remains supported.
+
+Three rules that cover almost every way this goes wrong:
+
+- **`--` splits the two halves, and only that.** Context flags (`--memory`,
+  `--goal`, `--session`, `--constraints`, `--vault`) go before it; the agent
+  name, tool name, and every tool flag go after it.
+- **Pass a tool's required value positionally.** Write
+  `memory load-workspace "Silicon Zone"`, not
+  `memory load-workspace --workspace "Silicon Zone"`. `--workspace` is also a
+  context flag, so the positional form is the one that can't be misread.
+- **Keep the agent name with the tool name.** The command after `--` is always
+  `<agent> <tool> [flags]` — `storage list`, not `list`.
+- **Context flags may sit before or after the verb.** `nexus --vault V use …`
+  and `nexus use --vault V …` are equivalent.
+
+Malformed commands fail loudly with the corrected command in the error text —
+read it and retry rather than switching syntax forms. Nothing is silently
+dropped, so an error never means a partial write happened.
+
+For multiline Markdown or content containing embedded quotes, keep the body
+out of shell argv. Any value-taking tool flag has a transport form: pipe with
+`--<flag>-stdin` or pass a local path with `--<flag>-file` (e.g.
+`--content-stdin`, `--conversation-context-file ctx.md`). Put the transport
+after the `--` delimiter and do not also pass the flag directly. Never flatten
+multiline content to one line to dodge quoting:
+
+```powershell
+Get-Content -Raw .\note.md |
+    nexus use --memory "importing note" --goal "write note" -- content write --path Notes/Imported.md --content-stdin
+```
+
+Everything else — the flag table, per-tool schemas, syntax rules, the live
+per-vault catalog (including any enabled app agents) — comes from `nexus --help`,
+`nexus tools <tool>`, and `nexus playbook <name>`. Prefer those over guessing;
+they're always current.

@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/ProfSynapse/nexus.git
+	branch = main
+	commit = 5f639efdf83e9218e671311949976e34330a1dc1
+	parent = ed86e8107b3d82101fe899522648e7a71cb01f79
+	method = merge
+	cmdver = 0.4.9

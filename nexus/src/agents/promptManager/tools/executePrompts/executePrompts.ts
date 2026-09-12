@@ -1,0 +1,517 @@
+import { JSONSchema } from '../../../../types/schema/JSONSchemaTypes';
+import { App } from 'obsidian';
+import { BaseTool } from '../../../baseTool';
+import { getErrorMessage } from '../../../../utils/errorUtils';
+import { createResult } from '../../../../utils/schemaUtils';
+import { LLMProviderManager } from '../../../../services/llm/providers/ProviderManager';
+import { LLMService } from '../../../../services/llm/core/LLMService';
+import { AgentManager } from '../../../../services/AgentManager';
+import { CustomPromptStorageService } from '../../services/CustomPromptStorageService';
+import { UsageTracker } from '../../../../services/UsageTracker';
+
+// Import refactored services and types
+import {
+  BatchExecutePromptParams,
+  BatchExecutePromptResult,
+  InternalExecutionResult,
+  PromptConfig
+} from './types';
+import {
+  BudgetValidator,
+  ContextBuilder,
+  PromptExecutor,
+  RequestExecutor,
+  SequenceManager,
+  ResultProcessor,
+  ActionExecutor
+} from './services';
+import { PromptParser } from './utils';
+import { Recommendation } from '../../../../utils/recommendationUtils';
+import { NudgeHelpers } from '../../../../utils/nudgeHelpers';
+import type { ToolStatusTense } from '../../../interfaces/ITool';
+import { verbs } from '../../../utils/toolStatusLabels';
+
+type BatchExecutePromptResultWithRecommendations = BatchExecutePromptResult & {
+  recommendations: Recommendation[];
+};
+
+function addBatchRecommendations(
+  result: BatchExecutePromptResult,
+  recommendations: Recommendation[]
+): BatchExecutePromptResultWithRecommendations {
+  return { ...result, recommendations };
+}
+
+/**
+ * ExecutePromptsTool - Execute one or more LLM prompts
+ * For single prompt: pass one item in prompts array
+ * For multiple: supports sequencing, parallel groups, and result forwarding
+ *
+ * Responsibilities:
+ * - Orchestrate prompt execution workflow
+ * - Coordinate specialized services
+ * - Handle high-level error management
+ */
+export class ExecutePromptsTool extends BaseTool<BatchExecutePromptParams, BatchExecutePromptResult> {
+  // Core services (injected)
+  private obsidianApp: App | null = null;
+  private llmService: LLMService | null = null;
+  private providerManager: LLMProviderManager | null = null;
+  private agentManager: AgentManager | null = null;
+  private promptStorage: CustomPromptStorageService | null = null;
+  private usageTracker: UsageTracker | null = null;
+
+  // Specialized services (composition)
+  private budgetValidator!: BudgetValidator;
+  private contextBuilder!: ContextBuilder;
+  private promptExecutor!: PromptExecutor;
+  private requestExecutor!: RequestExecutor;
+  private sequenceManager!: SequenceManager;
+  private resultProcessor!: ResultProcessor;
+  private actionExecutor!: ActionExecutor;
+  
+  // Utilities
+  private promptParser!: PromptParser;
+
+  constructor(
+    app?: App,
+    llmService?: LLMService,
+    providerManager?: LLMProviderManager,
+    agentManager?: AgentManager,
+    promptStorage?: CustomPromptStorageService
+  ) {
+    super(
+      'execute',
+      'Execute LLM Prompts',
+      'Execute one or more LLM prompts. For single: pass one item. For multiple: supports sequencing (sequence: 0,1,2), parallel groups, and result forwarding (includePreviousResults: true).',
+      '1.0.0'
+    );
+
+    // Store injected dependencies
+    this.obsidianApp = app || null;
+    this.llmService = llmService || null;
+    this.providerManager = providerManager || null;
+    this.agentManager = agentManager || null;
+    this.promptStorage = promptStorage || null;
+
+    // Initialize specialized services
+    this.initializeServices();
+  }
+
+  getStatusLabel(_params: Record<string, unknown> | undefined, tense: ToolStatusTense): string | undefined {
+    return verbs('Prompting', 'Prompted', 'Prompt failed')[tense];
+  }
+
+  /**
+   * Wait for dependencies to be initialized
+   * @param timeoutMs Maximum time to wait in milliseconds
+   * @private
+   */
+  private async waitForDependencies(timeoutMs: number): Promise<void> {
+    const startTime = Date.now();
+    const checkInterval = 100; // Check every 100ms
+    
+    while (Date.now() - startTime < timeoutMs) {
+      if (this.llmService && this.providerManager && this.promptStorage) {
+        return;
+      }
+      
+      // Wait for the next check
+      await new Promise(resolve => window.setTimeout(resolve, checkInterval));
+    }
+  }
+
+  /**
+   * Initialize all specialized services following dependency injection patterns
+   */
+  private initializeServices(): void {
+    // Initialize utilities
+    this.promptParser = new PromptParser();
+
+    // Initialize core services
+    this.budgetValidator = new BudgetValidator(this.usageTracker || undefined);
+    this.contextBuilder = new ContextBuilder();
+    this.actionExecutor = new ActionExecutor(this.agentManager || undefined, () => this.obsidianApp);
+
+    // PromptExecutor requires LLM service, so we'll initialize it in execute() if needed
+    // Same for SequenceManager and ResultProcessor
+    this.resultProcessor = new ResultProcessor();
+  }
+
+  /**
+   * Ensure request executor is initialized with all dependencies
+   */
+  private ensureRequestExecutor(): void {
+    if (!this.promptExecutor && this.llmService) {
+      this.promptExecutor = new PromptExecutor(
+        this.llmService,
+        this.budgetValidator,
+        this.contextBuilder,
+        this.promptStorage || undefined
+      );
+    }
+
+    if (!this.requestExecutor && this.promptExecutor && this.actionExecutor) {
+      this.requestExecutor = new RequestExecutor(
+        this.promptExecutor,
+        this.actionExecutor
+      );
+
+      this.sequenceManager = new SequenceManager(
+        this.requestExecutor,
+        this.contextBuilder
+      );
+    }
+  }
+
+  /**
+   * Execute multiple LLM prompts with orchestrated workflow
+   */
+  async execute(params: BatchExecutePromptParams): Promise<BatchExecutePromptResult> {
+    try {
+      // Try to wait for dependencies if not available
+      if (!this.llmService || !this.providerManager || !this.promptStorage) {
+        await this.waitForDependencies(3000);
+      }
+      
+      // Validate dependencies
+      if (!this.llmService) {
+        return createResult<BatchExecutePromptResult>(
+          false, undefined, 'LLM Service not initialized'
+        );
+      }
+
+      if (!this.providerManager) {
+        return createResult<BatchExecutePromptResult>(
+          false, undefined, 'LLM Provider Manager not initialized. Please ensure you have configured at least one LLM provider with valid API keys.'
+        );
+      }
+
+      if (!this.promptStorage) {
+        return createResult<BatchExecutePromptResult>(
+          false, undefined, 'Prompt storage service not initialized'
+        );
+      }
+
+      // Ensure specialized services are ready
+      this.ensureRequestExecutor();
+      if (!this.requestExecutor || !this.sequenceManager) {
+        return createResult<BatchExecutePromptResult>(
+          false, undefined, 'Failed to initialize execution services'
+        );
+      }
+
+      // Validate parameters using utility
+      const validation = this.promptParser.validateParameters(params);
+      if (!validation.valid) {
+        return createResult<BatchExecutePromptResult>(
+          false, undefined, `Parameter validation failed: ${validation.errors.join(', ')}`
+        );
+      }
+
+      const startTime = performance.now();
+      
+      // Normalize prompt configurations
+      const normalizedPrompts = this.promptParser.normalizePromptConfigs(params.prompts);
+
+      // Initialize execution context with default values
+      const executionContext = this.contextBuilder.initializeExecutionContext(
+        'default',
+        ''
+      );
+
+      // Execute prompts with sequence and parallel group support
+      const results = await this.sequenceManager.executePromptsWithSequencing(
+        normalizedPrompts,
+        executionContext
+      );
+      
+      // Process actions for results that have them
+      await this.processResultActions(results, normalizedPrompts);
+      
+      const totalExecutionTime = performance.now() - startTime;
+      
+      // Process and format final results
+      const processedResults = this.resultProcessor.processResults(
+        results,
+        params.mergeResponses || false,
+        totalExecutionTime,
+        params.prompts.length
+      );
+      
+      const result = createResult<BatchExecutePromptResult>(
+        processedResults.success,
+        processedResults,
+        processedResults.error
+      );
+
+      // Dynamic nudges based on operation count
+      const nudges: Recommendation[] = [NudgeHelpers.suggestCaptureProgress()];
+      const batchNudge = NudgeHelpers.checkBatchAgentOpportunity(processedResults.results?.length || 0);
+      if (batchNudge) nudges.push(batchNudge);
+
+      return addBatchRecommendations(result, nudges);
+
+    } catch (error) {
+      console.error('Batch LLM prompt execution failed:', error);
+      return createResult<BatchExecutePromptResult>(
+        false,
+        undefined,
+        `Batch execution failed: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  /**
+   * Process content actions for results that specify them
+   */
+  private async processResultActions(
+    results: InternalExecutionResult[],
+    promptConfigs: PromptConfig[]
+  ): Promise<void> {
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const promptConfig = promptConfigs.find(p => p.id === result.id) || promptConfigs[i];
+      
+      // Only process actions for text results
+      if (promptConfig?.type === 'text' && 'action' in promptConfig && promptConfig.action &&
+          result.success && result.type === 'text' && result.response) {
+        try {
+          const actionResult = await this.actionExecutor.executeContentAction(
+            promptConfig.action,
+            result.response,
+            'default',
+            ''
+          );
+
+          result.actionPerformed = {
+            type: promptConfig.action.type,
+            targetPath: promptConfig.action.targetPath,
+            success: actionResult.success,
+            error: actionResult.error
+          };
+        } catch (actionError) {
+          result.actionPerformed = {
+            type: promptConfig.action.type,
+            targetPath: promptConfig.action.targetPath,
+            success: false,
+            error: actionError instanceof Error ? actionError.message : 'Unknown action error'
+          };
+        }
+      }
+    }
+  }
+
+  /**
+   * Set the LLM service instance
+   */
+  setLLMService(llmService: LLMService): void {
+    this.llmService = llmService;
+  }
+
+  /**
+   * Set the usage tracker for LLM cost tracking
+   */
+  setUsageTracker(usageTracker: UsageTracker): void {
+    this.usageTracker = usageTracker;
+    this.budgetValidator = new BudgetValidator(usageTracker);
+  }
+
+  /**
+   * Set the provider manager instance
+   */
+  setProviderManager(providerManager: LLMProviderManager): void {
+    this.providerManager = providerManager;
+    
+    // Get LLM service from provider manager if we don't have one
+    if (!this.llmService && providerManager) {
+      this.llmService = providerManager.getLLMService();
+    }
+  }
+
+  /**
+   * Set the agent manager for action execution
+   */
+  setAgentManager(agentManager: AgentManager): void {
+    this.agentManager = agentManager;
+    this.actionExecutor = new ActionExecutor(agentManager, () => this.obsidianApp);
+  }
+
+  /**
+   * Set the prompt storage for custom agent support
+   */
+  setPromptStorage(promptStorage: CustomPromptStorageService): void {
+    this.promptStorage = promptStorage;
+  }
+
+  /**
+   * Get parameter schema for MCP tool definition
+   */
+  getParameterSchema(): JSONSchema {
+    // Get defaults from data.json settings
+    const defaultModel = this.providerManager?.getSettings()?.defaultModel;
+    const defaultImageModel = this.providerManager?.getSettings()?.defaultImageModel;
+
+    const toolSchema = {
+      properties: {
+        prompts: {
+          type: 'array',
+          description: 'Array of text and/or image generation requests to execute in batch',
+          minItems: 1,
+          maxItems: 100,
+          items: {
+            type: 'object',
+            properties: {
+              type: {
+                type: 'string',
+                enum: ['text', 'image'],
+                description: 'Type of request: "text" for LLM prompts, "image" for AI image generation'
+              },
+              id: {
+                type: 'string',
+                description: 'Optional unique identifier for this request'
+              },
+              prompt: {
+                type: 'string',
+                description: 'Text prompt (for LLM) or image description (for image generation)',
+                minLength: 1,
+                maxLength: 32000
+              },
+              sequence: {
+                type: 'integer',
+                minimum: 0,
+                description: 'Execution sequence (0, 1, 2, etc.). Requests in same sequence run in parallel'
+              },
+              parallelGroup: {
+                type: 'string',
+                description: 'Parallel group identifier within sequence. Different groups run sequentially'
+              },
+              includePreviousResults: {
+                type: 'boolean',
+                description: 'Include results from previous sequences as context'
+              },
+              contextFromSteps: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Specific request IDs to include as context'
+              },
+              // Text-specific properties
+              provider: {
+                type: 'string',
+                description: `Optional. LLM provider to use. Defaults to configured agent model (${defaultModel?.provider || 'not set'}). For image generation, defaults to configured image provider (${defaultImageModel?.provider || 'not set'}). Use listModels to see available providers.`,
+                default: defaultModel?.provider
+              },
+              model: {
+                type: 'string',
+                description: `Optional. Model name to use. Defaults to configured agent model (${defaultModel?.model || 'not set'}). For image generation, defaults to configured image model (${defaultImageModel?.model || 'not set'}). Use listModels to see available models.`,
+                default: defaultModel?.model
+              },
+              contextFiles: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'File paths to include as context (text requests only)'
+              },
+              workspace: {
+                type: 'string',
+                description: 'Workspace name for context gathering (text requests only)'
+              },
+              action: {
+                type: 'object',
+                description: 'Content action to perform with LLM response (text requests only)',
+                properties: {
+                  type: {
+                    type: 'string',
+                    enum: ['create', 'append', 'prepend', 'replace', 'findReplace']
+                  },
+                  targetPath: { type: 'string' },
+                  findText: { type: 'string' },
+                  replaceAll: { type: 'boolean' },
+                  caseSensitive: { type: 'boolean' },
+                  wholeWord: { type: 'boolean' },
+                  start: {
+                    type: 'string',
+                    description: 'Required for replace actions. The opening line(s) of the range to replace, copied verbatim from your read. Whole-line match. If a single line is not unique in the file, extend `start` to multiple lines using \\n until it identifies one location only.'
+                  },
+                  end: {
+                    type: 'string',
+                    description: 'Required for replace actions. The closing line(s) of the range. Same rules as `start`. Must come after `start` in the file.'
+                  }
+                },
+                required: ['type', 'targetPath']
+              },
+              customPrompt: {
+                type: 'string',
+                description: 'Custom prompt name or ID to use (text requests only). Use listPrompts to see available prompts.'
+              },
+              // Image-specific properties
+              savePath: {
+                type: 'string',
+                description: 'Vault-relative path to save generated image (image requests only)',
+                pattern: '^[^/].*\\.(png|jpg|jpeg|webp)$'
+              },
+              aspectRatio: {
+                type: 'string',
+                description: 'Image aspect ratio (image requests only)',
+                enum: ['1:1', '3:4', '4:3', '9:16', '16:9'],
+                default: '1:1'
+              },
+              referenceImages: {
+                type: 'array',
+                items: { type: 'string' },
+                maxItems: 14,
+                description: 'Reference images for style/composition (vault-relative paths, image requests only). Max count depends on the model used.'
+              }
+            },
+            required: ['type', 'prompt'],
+            allOf: [
+              {
+                if: { properties: { type: { const: 'image' } } },
+                then: {
+                  required: ['savePath']
+                }
+              }
+            ]
+          }
+        },
+        mergeResponses: {
+          type: 'boolean',
+          description: 'Whether to merge all responses into a single result',
+          default: false
+        }
+      },
+      required: ['prompts']
+    };
+    
+    return this.getMergedSchema(toolSchema);
+  }
+
+  /**
+   * Get result schema for MCP tool definition (lean format)
+   * Type inferred from fields: response/savedTo = text, imagePath = image
+   */
+  getResultSchema(): Record<string, unknown> {
+    return {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        results: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              response: { type: 'string', description: 'Text response (omitted if saved)' },
+              savedTo: { type: 'string', description: 'Path where text was saved' },
+              imagePath: { type: 'string', description: 'Path where image was saved' },
+              error: { type: 'string' }
+            },
+            required: ['success']
+          }
+        },
+        merged: { type: 'string', description: 'Combined response (if mergeResponses: true)' },
+        error: { type: 'string' }
+      },
+      required: ['success']
+    };
+  }
+}

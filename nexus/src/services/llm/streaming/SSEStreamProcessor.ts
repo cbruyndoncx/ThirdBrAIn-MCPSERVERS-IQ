@@ -1,0 +1,400 @@
+/**
+ * SSE Stream Processor
+ * Location: src/services/llm/streaming/SSEStreamProcessor.ts
+ *
+ * Extracted from BaseAdapter.ts to follow Single Responsibility Principle.
+ * Handles Server-Sent Events (SSE) streaming with automatic tool call accumulation.
+ *
+ * ## Why Two Stream Processors?
+ *
+ * LLM providers deliver streaming data in two fundamentally different formats:
+ *
+ * 1. **SDK Streams (StreamChunkProcessor.ts)** - Used by OpenAI, Groq, Mistral SDKs
+ *    - SDKs return `AsyncIterable<Chunk>` with pre-parsed JavaScript objects
+ *    - Clean iteration: `for await (const chunk of stream)`
+ *    - SDK handles HTTP, buffering, and JSON parsing internally
+ *
+ * 2. **SSE Streams (this processor)** - Used by OpenRouter, Requesty, Perplexity
+ *    - Return raw `Response` objects with Server-Sent Events text format:
+ *      ```
+ *      data: {"choices":[{"delta":{"content":"Hello"}}]}
+ *      data: {"choices":[{"delta":{"content":" world"}}]}
+ *      data: [DONE]
+ *      ```
+ *    - Requires manual: byte-to-text decoding, SSE protocol parsing (`data:`, newlines),
+ *      JSON parsing of each event, buffer management for partial chunks
+ *    - More complex error recovery and reconnection handling
+ *
+ * OpenRouter uses SSE because it's a proxy service (100+ models) that exposes a raw HTTP API
+ * rather than a typed SDK. This allows them to:
+ * - Support any HTTP client/language
+ * - Add custom headers (cost tracking, routing metadata)
+ * - Unify different provider formats into one consistent SSE stream
+ *
+ * Both processors must preserve `reasoning_details` and `thought_signature` for Gemini models
+ * which require this data to be sent back in tool continuation requests.
+ *
+ * Usage:
+ * - Used by BaseAdapter.processSSEStream()
+ * - Handles buffering, parsing, and error recovery for SSE streams
+ * - Accumulates tool calls incrementally with throttled yielding
+ * - Uses eventsource-parser for robust SSE parsing
+ *
+ * Features:
+ * - Automatic tool call accumulation across stream chunks
+ * - Configurable throttling for tool call progress updates
+ * - Usage extraction from stream events
+ * - Proper finish reason handling
+ */
+
+import { createParser, type ParseEvent } from 'eventsource-parser';
+import { StreamChunk, ToolCall } from '../adapters/types';
+import type { AnthropicThinkingBlock } from '../../../types/llm/ProviderTypes';
+import { createProviderStreamError } from './streamErrorFrames';
+
+export interface SSEParsedUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+}
+
+interface SSEToolCallFunction {
+  name?: string;
+  arguments?: string;
+}
+
+export interface SSEToolCall {
+  index?: number;
+  id?: string;
+  type?: string;
+  function?: SSEToolCallFunction;
+  reasoning_details?: unknown;
+  thought_signature?: unknown;
+  anthropic_thinking_blocks?: AnthropicThinkingBlock[];
+}
+
+export interface SSEParsedEvent extends Record<string, unknown> {
+  usage?: SSEParsedUsage;
+}
+
+export interface SSEStreamOptions {
+  extractContent: (parsed: SSEParsedEvent) => string | null;
+  extractToolCalls: (parsed: SSEParsedEvent) => SSEToolCall[] | null;
+  extractFinishReason: (parsed: SSEParsedEvent) => string | null;
+  extractUsage?: (parsed: SSEParsedEvent) => SSEParsedUsage | undefined;
+  extractMetadata?: (parsed: SSEParsedEvent) => Record<string, unknown> | null;
+  // Reasoning/thinking extraction for models that support it
+  extractReasoning?: (parsed: SSEParsedEvent) => { text: string; complete: boolean } | null;
+  // Some providers deliver a fatal error as an in-stream event (HTTP 200, then an
+  // {"error": {...}} data frame) rather than an HTTP error. Return the message and the
+  // processor throws an LLMProviderError carrying PROVIDER_STREAM_ERROR instead of
+  // silently ending the stream with no output. Honoured identically by every processor
+  // that parses provider frames (processNodeStream, processSSEStream,
+  // processBufferedSSEText, processStream) -- see streamErrorFrames.ts.
+  extractError?: (parsed: SSEParsedEvent) => string | null;
+  onParseError?: (error: Error, rawData: string) => void;
+  debugLabel?: string;
+  /**
+   * Provider name stamped onto a thrown stream error. BaseAdapter fills this in from
+   * `this.name`; falls back to `debugLabel` for direct callers of the processors.
+   */
+  providerName?: string;
+  // Tool call accumulation settings
+  accumulateToolCalls?: boolean;
+  toolCallThrottling?: {
+    initialYield: boolean;
+    progressInterval: number; // Yield every N characters of arguments
+  };
+}
+
+export class SSEStreamProcessor {
+  /**
+   * Process SSE stream with automatic tool call accumulation
+   * Handles all the complex buffering, parsing, and error recovery
+   */
+  static async* processSSEStream(
+    response: Response,
+    options: SSEStreamOptions
+  ): AsyncGenerator<StreamChunk, void, unknown> {
+    if (!response.body) {
+      throw new Error('Response body is not readable');
+    }
+
+    let usage: SSEParsedUsage | undefined;
+    let metadata: Record<string, unknown> | undefined = undefined;
+    // A fatal error frame delivered over HTTP 200. Recorded here, thrown once the
+    // already-queued events have drained, so partial output is not lost.
+    let streamError: string | undefined = undefined;
+
+    // Tool call accumulation system
+    const toolCallsAccumulator: Map<number, ToolCall> = new Map();
+
+    // Event queue for handling async events in sync generator
+    const eventQueue: StreamChunk[] = [];
+    let isCompleted = false;
+    const completionError: Error | null = null;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    const parser = createParser((event: ParseEvent) => {
+      if (isCompleted) return;
+
+      // Handle reconnect intervals
+      if (event.type === 'reconnect-interval') {
+        return;
+      }
+
+      // Handle [DONE] event
+      if (event.data === '[DONE]') {
+        const finalUsage = usage ? {
+          promptTokens: usage.prompt_tokens || 0,
+          completionTokens: usage.completion_tokens || 0,
+          totalTokens: usage.total_tokens || 0
+        } : undefined;
+
+        const finalToolCalls = options.accumulateToolCalls && toolCallsAccumulator.size > 0
+          ? Array.from(toolCallsAccumulator.values())
+          : undefined;
+
+        eventQueue.push({
+          content: '',
+          complete: true,
+          usage: finalUsage,
+          toolCalls: finalToolCalls,
+          toolCallsReady: finalToolCalls && finalToolCalls.length > 0 ? true : undefined,
+          metadata
+        });
+
+        isCompleted = true;
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(event.data) as SSEParsedEvent;
+
+        // Fatal in-stream error (HTTP 200, then an {"error": {...}} frame). Stop
+        // consuming; the throw after the drain is the real outcome.
+        if (options.extractError) {
+          const errorMessage = options.extractError(parsed);
+          if (errorMessage) {
+            streamError = errorMessage;
+            isCompleted = true;
+            return;
+          }
+        }
+
+        if (options.extractMetadata) {
+          metadata = {
+            ...(metadata || {}),
+            ...(options.extractMetadata(parsed) || {})
+          };
+        }
+
+        // Extract content using adapter-specific logic
+        const content = options.extractContent(parsed);
+        if (content) {
+          eventQueue.push({
+            content,
+            complete: false
+          });
+        }
+
+        // Extract reasoning/thinking using adapter-specific logic (if provided)
+        if (options.extractReasoning) {
+          const reasoning = options.extractReasoning(parsed);
+          if (reasoning) {
+            eventQueue.push({
+              content: '',
+              complete: false,
+              reasoning: reasoning.text,
+              reasoningComplete: reasoning.complete
+            });
+          }
+        }
+
+        // Extract tool calls using adapter-specific logic
+        const toolCalls = options.extractToolCalls(parsed);
+        if (toolCalls && options.accumulateToolCalls) {
+          let shouldYieldToolCalls = false;
+
+          for (const toolCall of toolCalls) {
+            const index = toolCall.index || 0;
+
+            if (!toolCallsAccumulator.has(index)) {
+              // Initialize new tool call - preserve reasoning_details and thought_signature
+              const accumulated: ToolCall = {
+                id: toolCall.id || '',
+                type: 'function',
+                function: {
+                  name: toolCall.function?.name || '',
+                  arguments: toolCall.function?.arguments || ''
+                }
+              };
+
+              // Preserve reasoning data for OpenRouter Gemini and Google models
+              if (Array.isArray(toolCall.reasoning_details)) {
+                accumulated.reasoning_details = toolCall.reasoning_details;
+              }
+              if (typeof toolCall.thought_signature === 'string') {
+                accumulated.thought_signature = toolCall.thought_signature;
+              }
+              if (Array.isArray(toolCall.anthropic_thinking_blocks)) {
+                accumulated.anthropic_thinking_blocks = toolCall.anthropic_thinking_blocks;
+              }
+
+              toolCallsAccumulator.set(index, accumulated);
+              shouldYieldToolCalls = options.toolCallThrottling?.initialYield !== false;
+            } else {
+              // Accumulate existing tool call
+              const existing = toolCallsAccumulator.get(index);
+              if (!existing) {
+                continue;
+              }
+              if (toolCall.id) existing.id = toolCall.id;
+              if (toolCall.function?.name) {
+                existing.function.name = toolCall.function.name;
+              }
+              if (toolCall.function?.arguments) {
+                existing.function.arguments = `${existing.function.arguments ?? ''}${toolCall.function.arguments}`;
+
+                // Check throttling conditions
+                const argLength = existing.function.arguments.length;
+                const interval = options.toolCallThrottling?.progressInterval || 50;
+                shouldYieldToolCalls = argLength > 0 && argLength % interval === 0;
+              }
+              // Also preserve reasoning data if it arrives in later chunks
+              if (Array.isArray(toolCall.reasoning_details) && !existing.reasoning_details) {
+                existing.reasoning_details = toolCall.reasoning_details;
+              }
+              if (typeof toolCall.thought_signature === 'string' && !existing.thought_signature) {
+                existing.thought_signature = toolCall.thought_signature;
+              }
+              if (Array.isArray(toolCall.anthropic_thinking_blocks) && !existing.anthropic_thinking_blocks) {
+                existing.anthropic_thinking_blocks = toolCall.anthropic_thinking_blocks;
+              }
+            }
+          }
+
+          if (shouldYieldToolCalls) {
+            const currentToolCalls = Array.from(toolCallsAccumulator.values());
+
+            eventQueue.push({
+              content: '',
+              complete: false,
+              toolCalls: currentToolCalls
+            });
+          }
+        }
+
+        // Extract usage information
+        if (options.extractUsage) {
+          const extractedUsage = options.extractUsage(parsed);
+          if (extractedUsage) {
+            usage = extractedUsage;
+          }
+        }
+
+        // Handle completion
+        const finishReason = options.extractFinishReason(parsed);
+        if (finishReason === 'stop' || finishReason === 'length' || finishReason === 'tool_calls') {
+          // Include accumulated tool calls in completion event (same pattern as [DONE])
+          const finalToolCalls = options.accumulateToolCalls && toolCallsAccumulator.size > 0
+            ? Array.from(toolCallsAccumulator.values())
+            : undefined;
+
+          const finalUsageFormatted = usage ? {
+            promptTokens: usage.prompt_tokens || 0,
+            completionTokens: usage.completion_tokens || 0,
+            totalTokens: usage.total_tokens || 0
+          } : undefined;
+
+          eventQueue.push({
+            content: '',
+            complete: true,
+            toolCalls: finalToolCalls,
+            usage: finalUsageFormatted,
+            toolCallsReady: finalToolCalls && finalToolCalls.length > 0 ? true : undefined,
+            metadata
+          });
+
+          isCompleted = true;
+        }
+
+      } catch (parseError) {
+        if (options.onParseError) {
+          options.onParseError(parseError as Error, event.data);
+        }
+        // Continue processing other events
+      }
+    });
+
+    try {
+      // Process the stream
+      while (!isCompleted && !completionError) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          isCompleted = true;
+          break;
+        }
+
+        // Feed chunk to parser
+        const chunk = decoder.decode(value, { stream: true });
+        parser.feed(chunk);
+
+        // Yield any queued events
+        while (eventQueue.length > 0) {
+          const event = eventQueue.shift();
+          if (!event) {
+            continue;
+          }
+          yield event;
+
+          // If this was a completion event, we're done
+          if (event.complete) {
+            isCompleted = true;
+            break;
+          }
+        }
+      }
+
+      // Yield any remaining queued events
+      while (eventQueue.length > 0) {
+        const event = eventQueue.shift();
+        if (!event) {
+          continue;
+        }
+        yield event;
+      }
+
+      // If we completed without a completion event, yield one -- but never claim
+      // success when the stream carried a fatal error frame.
+      if (!streamError && (!isCompleted || (!eventQueue.length && !completionError))) {
+        yield {
+          content: '',
+          complete: true,
+          usage: usage ? {
+            promptTokens: usage.prompt_tokens || 0,
+            completionTokens: usage.completion_tokens || 0,
+            totalTokens: usage.total_tokens || 0
+          } : undefined
+        };
+      }
+
+      if (streamError) {
+        throw createProviderStreamError(
+          streamError,
+          options.providerName || options.debugLabel || 'llm'
+        );
+      }
+
+    } finally {
+      try {
+        void reader.cancel();
+      } catch {
+        // Ignore cancellation errors
+      }
+    }
+  }
+}

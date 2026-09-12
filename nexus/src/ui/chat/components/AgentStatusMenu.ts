@@ -1,0 +1,252 @@
+/**
+ * AgentStatusMenu - Header icon + badge showing running subagent count
+ *
+ * Displays in the chat header next to settings button.
+ * Shows:
+ * - Robot icon with badge when agents are running
+ * - Clicking opens AgentStatusModal
+ *
+ * Uses Obsidian's setIcon helper for consistent iconography.
+ * Uses event-based updates instead of polling for efficiency.
+ */
+
+import { setIcon, Component, Events } from 'obsidian';
+import { ManagedTimeoutTracker } from '../utils/ManagedTimeoutTracker';
+import type { SubagentExecutor } from '../../../services/chat/SubagentExecutor';
+import type { SubagentExecutorEvents } from '../../../types/branch/BranchTypes';
+
+export interface AgentStatusMenuCallbacks {
+  onOpenModal: () => void;
+}
+
+/**
+ * Event emitter for subagent status updates
+ * Allows UI components to subscribe to status changes without polling
+ */
+export class SubagentEventBus extends Events {
+  trigger(name: 'status-changed'): void {
+    super.trigger(name);
+  }
+
+  on(name: 'status-changed', callback: () => void): ReturnType<Events['on']> {
+    return super.on(name, callback);
+  }
+}
+
+// Singleton event bus for subagent status updates
+let globalEventBus: SubagentEventBus | null = null;
+
+export function getSubagentEventBus(): SubagentEventBus {
+  if (!globalEventBus) {
+    globalEventBus = new SubagentEventBus();
+  }
+  return globalEventBus;
+}
+
+/**
+ * Create event handlers that notify the event bus
+ * Wire these to SubagentExecutor.setEventHandlers()
+ */
+export function createSubagentEventHandlers(): Partial<SubagentExecutorEvents> {
+  const eventBus = getSubagentEventBus();
+
+  return {
+    onSubagentStarted: () => {
+      eventBus.trigger('status-changed');
+    },
+    onSubagentProgress: () => {
+      // Trigger on progress updates (tool changes, iteration updates)
+      eventBus.trigger('status-changed');
+    },
+    onSubagentComplete: () => {
+      eventBus.trigger('status-changed');
+    },
+    onSubagentError: () => {
+      eventBus.trigger('status-changed');
+    },
+  };
+}
+
+export class AgentStatusMenu {
+  private element: HTMLElement | null = null;
+  private badgeEl: HTMLElement | null = null;
+  private iconEl: HTMLElement | null = null;
+  private lastCount = 0;
+  private eventRef: ReturnType<Events['on']> | null = null;
+  private hasShownSuccess = false; // Track if green state was shown
+  private isShowingSpinner = false; // Track current icon state
+  private timeouts: ManagedTimeoutTracker;
+
+  constructor(
+    private container: HTMLElement,
+    private subagentExecutor: SubagentExecutor | null,
+    private callbacks: AgentStatusMenuCallbacks,
+    private component: Component,
+    private insertBefore?: HTMLElement // Insert before this element (e.g., settings button)
+  ) {
+    this.timeouts = new ManagedTimeoutTracker(component);
+  }
+
+  /**
+   * Create and render the status menu button
+   */
+  render(): HTMLElement {
+    // Clear any default placeholder icon in the slot
+    this.container.empty();
+
+    // Create the button element
+    const button = createEl('button');
+    button.addClass('clickable-icon', 'nexus-agent-status-button');
+    button.setAttribute('aria-label', 'Running agents');
+    button.setAttribute('title', 'Running agents');
+
+    // Icon container
+    const iconContainer = button.createDiv('nexus-agent-status-icon');
+    setIcon(iconContainer, 'bot');
+    this.iconEl = iconContainer;
+
+    // Badge (hidden by default)
+    const badge = button.createDiv('nexus-agent-status-badge');
+    badge.addClass('nexus-badge-hidden');
+    badge.textContent = '0';
+    this.badgeEl = badge;
+
+    // Click handler - clears success state when modal opens
+    this.component.registerDomEvent(button, 'click', () => {
+      this.clearSuccessState();
+      this.callbacks.onOpenModal();
+    });
+
+    this.element = button;
+
+    // Insert before settings button (left side) or append (right side)
+    if (this.insertBefore) {
+      this.container.insertBefore(button, this.insertBefore);
+    } else {
+      this.container.appendChild(button);
+    }
+
+    // Subscribe to event bus for status updates (replaces polling)
+    this.subscribeToEvents();
+
+    // Initial update
+    this.updateDisplay();
+
+    return button;
+  }
+
+  /**
+   * Update the executor reference (if initialized later)
+   */
+  setSubagentExecutor(executor: SubagentExecutor): void {
+    this.subagentExecutor = executor;
+    this.updateDisplay();
+  }
+
+  /**
+   * Subscribe to subagent status events
+   */
+  private subscribeToEvents(): void {
+    const eventBus = getSubagentEventBus();
+    this.eventRef = eventBus.on('status-changed', () => {
+      this.updateDisplay();
+    });
+  }
+
+  /**
+   * Update the badge display based on running agent count
+   * Handles three states: running (spinner icon), success (green bot), default (bot)
+   */
+  updateDisplay(): void {
+    if (!this.element || !this.badgeEl || !this.iconEl) return;
+
+    const statusList = this.subagentExecutor?.getAgentStatusList() ?? [];
+    const runningCount = statusList.filter(a => a.state === 'running').length;
+    const completedCount = statusList.filter(a =>
+      ['complete', 'cancelled', 'max_iterations', 'abandoned'].includes(a.state)
+    ).length;
+    // Update badge
+    this.badgeEl.textContent = runningCount.toString();
+    this.badgeEl.toggleClass('nexus-badge-hidden', runningCount === 0);
+
+    // State logic: running > success > default
+    if (runningCount > 0) {
+      // Running state - swap to spinner icon
+      if (!this.isShowingSpinner) {
+        setIcon(this.iconEl, 'loader-2');
+        this.isShowingSpinner = true;
+      }
+      this.element.addClass('nexus-status-running');
+      this.element.removeClass('nexus-status-success');
+      this.element.addClass('nexus-agents-active');
+      this.element.setAttribute('title', `${runningCount} agent${runningCount > 1 ? 's' : ''} running`);
+      this.hasShownSuccess = false; // Reset on new activity
+    } else if (completedCount > 0 && !this.hasShownSuccess) {
+      // Success state - show green bot icon
+      if (this.isShowingSpinner) {
+        setIcon(this.iconEl, 'bot');
+        this.isShowingSpinner = false;
+      }
+      this.element.removeClass('nexus-status-running');
+      this.element.addClass('nexus-status-success');
+      this.element.removeClass('nexus-agents-active');
+      this.element.setAttribute('title', 'Agents completed');
+      this.hasShownSuccess = true;
+    } else if (!this.hasShownSuccess) {
+      // Default state - show bot icon
+      if (this.isShowingSpinner) {
+        setIcon(this.iconEl, 'bot');
+        this.isShowingSpinner = false;
+      }
+      this.element.removeClass('nexus-status-running', 'nexus-status-success', 'nexus-agents-active');
+      this.element.setAttribute('title', 'Running agents');
+    }
+    // If hasShownSuccess is true, keep the green state until clearSuccessState() is called
+
+    this.lastCount = runningCount;
+  }
+
+  /**
+   * Clear the success (green) state - called when modal is opened
+   */
+  clearSuccessState(): void {
+    if (!this.element) return;
+    this.element.removeClass('nexus-status-success');
+    this.hasShownSuccess = false;
+    this.element.setAttribute('title', 'Running agents');
+  }
+
+  /**
+   * Force refresh the display (call after agent state changes)
+   */
+  refresh(): void {
+    this.lastCount = -1; // Force update
+    this.updateDisplay();
+  }
+
+  /**
+   * Show visual feedback when an agent completes
+   */
+  showCompletionPulse(): void {
+    if (!this.element) return;
+
+    this.element.addClass('nexus-agent-completion-pulse');
+    this.timeouts.schedule(() => this.element?.removeClass('nexus-agent-completion-pulse'), 1000);
+  }
+
+  /**
+   * Cleanup
+   */
+  cleanup(): void {
+    if (this.eventRef) {
+      getSubagentEventBus().offref(this.eventRef);
+      this.eventRef = null;
+    }
+
+    this.element?.remove();
+    this.element = null;
+    this.badgeEl = null;
+    this.iconEl = null;
+    this.isShowingSpinner = false;
+  }
+}

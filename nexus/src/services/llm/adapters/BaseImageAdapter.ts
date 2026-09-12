@@ -1,0 +1,341 @@
+/**
+ * Base Image Generation Adapter
+ * Abstract class that image generation adapters extend
+ * Provides common functionality for image generation while extending BaseAdapter
+ */
+
+import { BaseAdapter } from './BaseAdapter';
+import { 
+  ImageGenerationParams, 
+  ImageGenerationResponse, 
+  ImageGenerationResult,
+  ImageValidationResult,
+  ImageCostDetails,
+  ImageGenerationError,
+  ImageModel,
+  ImageUsage
+} from '../types/ImageTypes';
+import { ProviderCapabilities, ModelInfo, CostDetails } from './types';
+
+type HttpErrorLike = {
+  response?: {
+    status?: number;
+    data?: {
+      error?: {
+        message?: string;
+      };
+    };
+  };
+  message?: string;
+};
+
+export abstract class BaseImageAdapter extends BaseAdapter {
+  abstract readonly supportedModels: ImageModel[];
+  abstract readonly supportedSizes: string[];
+  abstract readonly supportedFormats: string[];
+
+  constructor(
+    apiKey: string, 
+    defaultModel: string, 
+    baseUrl?: string
+  ) {
+    super(
+      apiKey,
+      defaultModel,
+      baseUrl,
+      true // requiresApiKey
+    );
+  }
+
+  // Abstract methods that each image provider must implement
+  abstract generateImage(params: ImageGenerationParams): Promise<ImageGenerationResponse>;
+  abstract validateImageParams(params: ImageGenerationParams): ImageValidationResult;
+  abstract getImageCapabilities(): ProviderCapabilities;
+  abstract getSupportedImageSizes(): string[];
+  abstract getImageModelPricing(model: string): Promise<CostDetails | null>;
+
+  /**
+   * Generate image with comprehensive validation and error handling
+   */
+  async generateImageSafely(params: ImageGenerationParams): Promise<ImageGenerationResult> {
+    const { result } = await this.generateImageWithResponse(params);
+    return result;
+  }
+
+  /**
+   * Same as generateImageSafely, but also hands back the raw provider response
+   * so the caller can save the bytes without a second paid generation.
+   * `response` is present only when `result.success` is true.
+   */
+  async generateImageWithResponse(params: ImageGenerationParams): Promise<{
+    result: ImageGenerationResult;
+    response?: ImageGenerationResponse;
+  }> {
+    const startTime = Date.now();
+
+    try {
+      // Validate parameters first
+      const validation = this.validateImageParams(params);
+      if (!validation.isValid) {
+        return {
+          result: {
+            success: false,
+            error: `Parameter validation failed: ${validation.errors.join(', ')}`,
+            validationErrors: validation.errors
+          }
+        };
+      }
+
+      // Use adjusted parameters if provided
+      const finalParams = { ...params, ...validation.adjustedParams };
+
+      // Generate the image with timeout
+      const response = await Promise.race([
+        this.generateImage(finalParams),
+        this.createTimeoutPromise(120000) // 2 minute timeout
+      ]);
+
+      const generationTime = Date.now() - startTime;
+
+      // Calculate costs
+      const cost = await this.calculateImageCost(response, finalParams.model || this.currentModel);
+
+      return {
+        result: {
+          success: true,
+          data: {
+            imagePath: finalParams.savePath,
+            prompt: finalParams.prompt,
+            revisedPrompt: response.revisedPrompt,
+            model: finalParams.model || this.currentModel,
+            provider: this.name,
+            dimensions: response.dimensions,
+            fileSize: response.imageData.length,
+            format: response.format,
+            cost: cost || undefined,
+            usage: response.usage,
+            metadata: {
+              ...response.metadata,
+              generationTimeMs: generationTime
+            }
+          }
+        },
+        response
+      };
+    } catch (error) {
+      const generationTime = Date.now() - startTime;
+      console.error(`[${this.name}] Image generation failed after ${generationTime}ms:`, error);
+      
+      if (error instanceof ImageGenerationError) {
+        return {
+          result: {
+            success: false,
+            error: error.message
+          }
+        };
+      }
+
+      // Handle timeout specifically
+      if (error instanceof Error && error.message === 'Image generation timed out') {
+        return {
+          result: {
+            success: false,
+            error: `Image generation timed out after ${Math.round(generationTime / 1000)}s. This can happen with complex prompts or high server load. Please try again with a simpler prompt.`
+          }
+        };
+      }
+
+      return {
+        result: {
+          success: false,
+          error: `Image generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        }
+      };
+    }
+  }
+
+  /**
+   * Create a timeout promise that rejects after specified milliseconds
+   */
+  private createTimeoutPromise(timeoutMs: number): Promise<never> {
+    return new Promise((_, reject) => {
+      window.setTimeout(() => {
+        reject(new Error('Image generation timed out'));
+      }, timeoutMs);
+    });
+  }
+
+  /**
+   * Check if the adapter is available for image generation
+   */
+  isImageGenerationAvailable(): boolean {
+    if (!this.apiKey) {
+      return false;
+    }
+
+    try {
+      const capabilities = this.getImageCapabilities();
+      return capabilities.supportsImageGeneration || false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get all supported models with their capabilities
+   */
+  async getImageModels(): Promise<ModelInfo[]> {
+    const models = await this.listModels();
+    return models.filter(model => model.supportsImageGeneration);
+  }
+
+  /**
+   * Calculate image generation cost
+   */
+  protected async calculateImageCost(
+    response: ImageGenerationResponse, 
+    model: string
+  ): Promise<ImageCostDetails | null> {
+    try {
+      const pricing = await this.getImageModelPricing(model);
+      if (!pricing) {
+        return null;
+      }
+
+      const usage = response.usage;
+      if (!usage) {
+        return null;
+      }
+
+      // For image generation, we typically have a per-image cost
+      const totalCost = pricing.totalCost * usage.imagesGenerated;
+
+      return {
+        inputCost: 0, // Images don't have input tokens in the traditional sense
+        outputCost: totalCost,
+        totalCost,
+        currency: pricing.currency,
+        ratePerImage: pricing.totalCost,
+        resolution: usage.resolution,
+        imagesGenerated: usage.imagesGenerated
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Validate common image parameters
+   */
+  protected validateCommonParams(params: ImageGenerationParams): ImageValidationResult {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    // Validate prompt
+    if (!params.prompt || params.prompt.trim().length === 0) {
+      errors.push('Prompt is required');
+    }
+
+    // Validate save path
+    if (!params.savePath || params.savePath.trim().length === 0) {
+      errors.push('Save path is required');
+    }
+
+    // Check if path is trying to escape vault
+    if (params.savePath?.includes('..') || params.savePath?.startsWith('/')) {
+      errors.push('Save path must be relative to vault root');
+    }
+
+    // Validate model if specified
+    if (params.model && !this.supportedModels.includes(params.model as ImageModel)) {
+      errors.push(`Model ${params.model} not supported. Supported models: ${this.supportedModels.join(', ')}`);
+    }
+
+    // Validate size if specified
+    if (params.size && !this.supportedSizes.includes(params.size)) {
+      errors.push(`Size ${params.size} not supported. Supported sizes: ${this.supportedSizes.join(', ')}`);
+    }
+
+    // Format validation removed - Google Imagen only outputs PNG
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings
+    };
+  }
+
+  /**
+   * Build image usage tracking object
+   */
+  protected buildImageUsage(
+    imagesGenerated: number, 
+    resolution: string, 
+    model: string
+  ): ImageUsage {
+    return {
+      imagesGenerated,
+      resolution,
+      model,
+      provider: this.name
+    };
+  }
+
+  /**
+   * Handle image-specific errors
+   */
+  protected handleImageError(error: unknown, operation: string, params?: ImageGenerationParams): never {
+    if (error instanceof ImageGenerationError) {
+      throw error;
+    }
+
+    const responseError = error as HttpErrorLike;
+    const wrappedError = error instanceof Error
+      ? error
+      : new Error(responseError.message || 'Unknown error');
+
+    if (responseError.response) {
+      const status = responseError.response.status;
+      const message = responseError.response.data?.error?.message || responseError.message || 'Unknown error';
+      
+      let errorCode = 'HTTP_ERROR';
+      if (status === 401) errorCode = 'AUTHENTICATION_ERROR';
+      if (status === 403) errorCode = 'CONTENT_FILTER_ERROR';
+      if (status === 429) errorCode = 'RATE_LIMIT_ERROR';
+      if (status === 400) errorCode = 'INVALID_REQUEST';
+
+      throw new ImageGenerationError(
+        `${operation} failed: ${message}`,
+        this.name,
+        errorCode,
+        wrappedError,
+        params
+      );
+    }
+
+    throw new ImageGenerationError(
+      `${operation} failed: ${responseError.message || 'Unknown error'}`,
+      this.name,
+      'UNKNOWN_ERROR',
+      wrappedError,
+      params
+    );
+  }
+
+  // Required BaseAdapter methods (stub implementations for image-only adapters)
+  generateUncached(): Promise<never> {
+    return Promise.reject(new Error('Use generateImage() for image generation. This adapter only supports image generation.'));
+  }
+
+  generateStream(): Promise<never> {
+    return Promise.reject(new Error('Streaming not supported for image generation'));
+  }
+
+  getCapabilities(): ProviderCapabilities {
+    return this.getImageCapabilities();
+  }
+
+  async getModelPricing(modelId: string): Promise<CostDetails | null> {
+    return await this.getImageModelPricing(modelId);
+  }
+}

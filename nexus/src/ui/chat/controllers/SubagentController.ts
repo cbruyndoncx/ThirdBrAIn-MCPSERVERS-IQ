@@ -1,0 +1,611 @@
+/**
+ * SubagentController - Manages subagent infrastructure and lifecycle
+ * Location: /src/ui/chat/controllers/SubagentController.ts
+ *
+ * Extracted from ChatView to follow Single Responsibility Principle.
+ * Owns SubagentExecutor, BranchService, MessageQueueService and coordinates
+ * their initialization and event handling.
+ *
+ * ARCHITECTURE NOTE (Dec 2025):
+ * A branch IS a conversation with parent metadata. SubagentController creates
+ * branch conversations for subagents and coordinates their execution.
+ */
+
+import { App, Component } from 'obsidian';
+import { BranchService } from '../../../services/chat/BranchService';
+import { MessageQueueService } from '../../../services/chat/MessageQueueService';
+import { SubagentExecutor } from '../../../services/chat/SubagentExecutor';
+import { AgentStatusMenu, createSubagentEventHandlers, getSubagentEventBus } from '../components/AgentStatusMenu';
+import { AgentStatusModal } from '../components/AgentStatusModal';
+import type { ChatService } from '../../../services/chat/ChatService';
+import type { ConversationService } from '../../../services/ConversationService';
+import type { DirectToolExecutor } from '../../../services/chat/DirectToolExecutor';
+import type { Tool } from '../../../services/llm/adapters/types';
+import { shouldPassToolSchemasToProvider } from '../../../services/llm/utils/ToolSchemaSupport';
+import type { PromptManagerAgent } from '../../../agents/promptManager/promptManager';
+import type { HybridStorageAdapter } from '../../../database/adapters/HybridStorageAdapter';
+import type { LLMService } from '../../../services/llm/core/LLMService';
+import type { ChatRuntimeEvent } from '../../../services/llm/runtime/ChatRuntimeEvent';
+import type { ToolSchemaInfo, AgentStatusItem, BranchViewContext, SubagentBranchMetadata } from '../../../types/branch/BranchTypes';
+import type { ConversationData, ToolCall, ChatMessage } from '../../../types/chat/ChatTypes';
+import type { StreamingController } from './StreamingController';
+import type { ToolEventCoordinator } from '../coordinators/ToolEventCoordinator';
+import { isSubagentMetadata } from '../../../types/branch/BranchTypes';
+
+interface SubagentResultPayload {
+  success?: boolean;
+  result?: unknown;
+  status?: string;
+  error?: string;
+  iterations?: number;
+}
+
+/**
+ * Dependencies for SubagentController initialization
+ */
+export interface SubagentControllerDependencies {
+  app: App;
+  chatService: ChatService;
+  directToolExecutor: DirectToolExecutor;
+  promptManagerAgent: PromptManagerAgent;
+  storageAdapter: HybridStorageAdapter;
+  llmService: LLMService;
+}
+
+/**
+ * Context provider for subagent execution
+ * Returns current conversation and model settings
+ */
+export interface SubagentContextProvider {
+  getCurrentConversation: () => ConversationData | null;
+  getSelectedModel: () => { providerId?: string; modelId?: string } | null;
+  getSelectedPrompt: () => { name?: string; systemPrompt?: string } | null;
+  getLoadedWorkspaceData: () => Record<string, unknown> | null;
+  getContextNotes: () => string[];
+  getThinkingSettings: () => { enabled?: boolean; effort?: 'low' | 'medium' | 'high' } | null;
+  getSelectedWorkspaceId: () => string | null;
+}
+
+/**
+ * Events emitted by SubagentController
+ */
+export interface SubagentControllerEvents {
+  onStreamingUpdate: (branchId: string, messageId: string, chunk: string, isComplete: boolean, fullContent: string) => void;
+  onToolCallsDetected: (branchId: string, messageId: string, toolCalls: ToolCall[]) => void;
+  onStatusChanged: () => void;
+  onConversationNeedsRefresh?: (conversationId: string) => void;
+}
+
+export class SubagentController {
+  private branchService: BranchService | null = null;
+  private messageQueueService: MessageQueueService | null = null;
+  private subagentExecutor: SubagentExecutor | null = null;
+  private agentStatusMenu: AgentStatusMenu | null = null;
+
+  private currentBranchContext: BranchViewContext | null = null;
+  private initialized = false;
+  private navigationCallback: ((branchId: string) => void) | null = null;
+  private continueCallback: ((branchId: string) => void) | null = null;
+
+  constructor(
+    private app: App,
+    private component: Component,
+    private events: SubagentControllerEvents
+  ) {}
+
+  private isOpenAITool(tool: unknown): tool is Tool {
+    return typeof tool === 'object'
+      && tool !== null
+      && 'type' in tool
+      && (tool as { type?: unknown }).type === 'function'
+      && 'function' in tool;
+  }
+
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  }
+
+  private parseSubagentResult(content: string): SubagentResultPayload | null {
+    try {
+      const parsed: unknown = JSON.parse(content || '{}');
+      if (!this.isRecord(parsed)) {
+        return null;
+      }
+
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private formatSubagentResultValue(value: unknown): string {
+    if (typeof value === 'string') {
+      return value;
+    }
+
+    if (value === undefined || value === null) {
+      return 'Task completed successfully.';
+    }
+
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return 'Task completed successfully.';
+    }
+  }
+
+  /**
+   * Set navigation callbacks (called by ChatView after initialization)
+   */
+  setNavigationCallbacks(callbacks: {
+    onNavigateToBranch: (branchId: string) => void;
+    onContinueAgent: (branchId: string) => void;
+  }): void {
+    this.navigationCallback = callbacks.onNavigateToBranch;
+    this.continueCallback = callbacks.onContinueAgent;
+  }
+
+  /**
+   * Initialize subagent infrastructure
+   * This is async and non-blocking - subagent features available once complete
+   */
+  initialize(
+    deps: SubagentControllerDependencies,
+    contextProvider: SubagentContextProvider,
+    streamingController: StreamingController,
+    toolEventCoordinator: ToolEventCoordinator,
+    settingsButtonContainer?: HTMLElement,
+    settingsButton?: HTMLElement
+  ): void {
+    if (this.initialized) return;
+
+    try {
+      // Create BranchService with ConversationService (unified model)
+      // BranchService is now a facade over ConversationService
+      const conversationService = deps.chatService.getConversationService() as unknown as ConversationService;
+      this.branchService = new BranchService({
+        conversationService,
+      });
+
+      // Create MessageQueueService with processor
+      this.messageQueueService = new MessageQueueService();
+      this.setupMessageQueueProcessor(deps.chatService);
+
+      // Create SubagentExecutor
+      this.subagentExecutor = new SubagentExecutor({
+        branchService: this.branchService,
+        messageQueueService: this.messageQueueService,
+        directToolExecutor: deps.directToolExecutor,
+        streamingGenerator: this.createStreamingGenerator(deps.llmService, deps.directToolExecutor),
+        getToolSchemas: this.createToolSchemaFetcher(deps.directToolExecutor),
+      });
+
+      // Set event handlers
+      this.setupEventHandlers(streamingController, toolEventCoordinator);
+
+      // Wire up to PromptManagerAgent
+      deps.promptManagerAgent.setSubagentExecutor(
+        this.subagentExecutor,
+        () => this.buildSubagentContext(contextProvider)
+      );
+
+      // Initialize status menu if a container is provided. The optional
+      // insertBefore target is used by the legacy header mount; the glass
+      // status bar appends directly into its dedicated agent slot.
+      if (settingsButtonContainer) {
+        this.agentStatusMenu = new AgentStatusMenu(
+          settingsButtonContainer,
+          this.subagentExecutor,
+          { onOpenModal: () => this.openAgentStatusModal(contextProvider) },
+          this.component,
+          settingsButton
+        );
+        this.agentStatusMenu.render();
+      }
+
+      this.initialized = true;
+    } catch (error) {
+      console.error('[SubagentController] Failed to initialize:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Set up the message queue processor for subagent results
+   */
+  private setupMessageQueueProcessor(
+    chatService: ChatService
+  ): void {
+    if (!this.messageQueueService) return;
+
+    this.messageQueueService.setProcessor(async (message) => {
+      if (message.type !== 'subagent_result') {
+        return;
+      }
+
+      try {
+        const result = this.parseSubagentResult(message.content);
+        if (!result) {
+          console.error('[SubagentController] Invalid subagent result payload');
+          return;
+        }
+        const metadata = message.metadata || {};
+
+        const conversationId = metadata.conversationId;
+        if (!conversationId) {
+          console.error('[SubagentController] No conversationId in metadata');
+          return;
+        }
+
+        // Format result for display
+        const taskLabel = metadata.subagentTask || 'Task';
+        const resultContent = result.success
+          ? `[Subagent "${taskLabel}" completed]\n\nResult:\n${this.formatSubagentResultValue(result.result)}`
+          : `[Subagent "${taskLabel}" ${result.status === 'max_iterations' ? 'paused (max iterations)' : 'failed'}]\n\n${typeof result.error === 'string' && result.error ? result.error : 'Unknown error'}`;
+
+        // Check if viewing parent conversation
+        // Add result as user message
+        await chatService.addMessage({
+          conversationId,
+          role: 'user',
+          content: resultContent,
+          metadata: {
+            type: 'subagent_result',
+            branchId: metadata.branchId,
+            subagentId: metadata.subagentId,
+            success: result.success,
+            iterations: result.iterations,
+            isAutoGenerated: true,
+          },
+        });
+
+        // Trigger LLM response in background
+        const parentConversation = await chatService.getConversation(conversationId);
+        if (parentConversation) {
+          try {
+            const generator = chatService.generateResponseStreaming(
+              parentConversation.id,
+              resultContent,
+              {}
+            );
+            for await (const chunk of generator) {
+              if (chunk.event.type === 'turn.completed') {
+                break;
+              }
+            }
+            // Notify UI to refresh conversation display
+            this.events.onConversationNeedsRefresh?.(conversationId);
+          } catch (llmError) {
+            console.error('[SubagentController] LLM response failed:', llmError);
+          }
+        } else {
+          console.error('[SubagentController] Could not load parent conversation');
+        }
+      } catch (error) {
+        console.error('[SubagentController] Processor error:', error);
+      }
+    });
+  }
+
+  /**
+   * Create the streaming generator for SubagentExecutor
+   */
+  private createStreamingGenerator(
+    llmService: LLMService,
+    directToolExecutor: DirectToolExecutor
+  ): (
+    messages: ChatMessage[],
+    options: {
+      provider?: string;
+      model?: string;
+      systemPrompt?: string;
+      abortSignal?: AbortSignal;
+      workspaceId?: string;
+      sessionId?: string;
+      operationOrigin?: import('../../../types/tools/ToolOperationTypes').ToolExecutionOrigin;
+      operationScopeId?: string;
+    }
+  ) => AsyncGenerator<ChatRuntimeEvent, void, unknown> {
+    const isOpenAITool = this.isOpenAITool.bind(this);
+
+    return async function* (
+      messages: ChatMessage[],
+      options: {
+        provider?: string;
+        model?: string;
+        systemPrompt?: string;
+        abortSignal?: AbortSignal;
+        workspaceId?: string;
+        sessionId?: string;
+        operationOrigin?: import('../../../types/tools/ToolOperationTypes').ToolExecutionOrigin;
+        operationScopeId?: string;
+      }
+    ) {
+      try {
+        const tools = shouldPassToolSchemasToProvider(options?.provider)
+          ? (await directToolExecutor.getAvailableTools()).filter((tool): tool is Tool => isOpenAITool(tool))
+          : [];
+        const streamOptions = {
+          provider: options?.provider,
+          model: options?.model,
+          systemPrompt: options?.systemPrompt,
+          sessionId: options?.sessionId,
+          workspaceId: options?.workspaceId,
+          operationOrigin: options?.operationOrigin,
+          operationScopeId: options?.operationScopeId,
+          tools,
+        };
+
+        for await (const event of llmService.generateResponseStream(messages, streamOptions)) {
+          if (options?.abortSignal?.aborted) {
+            yield { type: 'turn.aborted', reason: 'Generation aborted by user' };
+            return;
+          }
+          yield event;
+        }
+      } catch (error) {
+        console.error('[SubagentController] Streaming error:', error);
+        throw error;
+      }
+    };
+  }
+
+  /**
+   * Create tool schema fetcher for SubagentExecutor
+   */
+  private createToolSchemaFetcher(directToolExecutor: DirectToolExecutor) {
+    return async (agentName: string, toolSlugs: string[]): Promise<ToolSchemaInfo[]> => {
+      try {
+        const tools = await directToolExecutor.getAvailableTools();
+        return tools.filter((tool): tool is ToolSchemaInfo => (
+          this.isRecord(tool)
+          && typeof tool.name === 'string'
+          && toolSlugs.includes(tool.name)
+        ));
+      } catch {
+        return [];
+      }
+    };
+  }
+
+  /**
+   * Set up event handlers for SubagentExecutor
+   */
+  private setupEventHandlers(
+    streamingController: StreamingController,
+    toolEventCoordinator: ToolEventCoordinator
+  ): void {
+    if (!this.subagentExecutor) return;
+
+    const eventHandlers = createSubagentEventHandlers();
+
+    // Track streaming state per message
+    let streamingInitialized = false;
+    let currentStreamingMessageId = '';
+
+    this.subagentExecutor.setEventHandlers({
+      ...eventHandlers,
+      onSubagentError: (subagentId: string, error: string) => {
+        console.error('[SubagentController] Error:', subagentId, error);
+        eventHandlers.onSubagentError?.(subagentId, error);
+      },
+      onStreamingUpdate: (branchId: string, messageId: string, chunk: string, isComplete: boolean, fullContent: string) => {
+        // Only update if viewing this branch
+        if (this.currentBranchContext?.branchId !== branchId) return;
+
+        // Reset tracking if message changed
+        if (messageId !== currentStreamingMessageId) {
+          streamingInitialized = false;
+          currentStreamingMessageId = messageId;
+        }
+
+        if (!streamingInitialized) {
+          streamingController.startStreaming(messageId);
+          streamingInitialized = true;
+        }
+
+        if (chunk) {
+          streamingController.updateStreamingChunk(messageId, chunk);
+        }
+
+        if (isComplete) {
+          streamingController.finalizeStreaming(messageId, fullContent);
+          streamingInitialized = false;
+          currentStreamingMessageId = '';
+        }
+
+        this.events.onStreamingUpdate(branchId, messageId, chunk, isComplete, fullContent);
+      },
+      onToolCallsDetected: (branchId: string, messageId: string, toolCalls: ToolCall[]) => {
+        if (this.currentBranchContext?.branchId !== branchId) return;
+        toolEventCoordinator.handleToolCallsDetected(
+          messageId,
+          toolCalls as Parameters<typeof toolEventCoordinator.handleToolCallsDetected>[1]
+        );
+        this.events.onToolCallsDetected(branchId, messageId, toolCalls);
+      },
+    });
+  }
+
+  /**
+   * Build context for subagent execution from current state
+   */
+  private buildSubagentContext(contextProvider: SubagentContextProvider) {
+    const currentConversation = contextProvider.getCurrentConversation();
+    const messages = currentConversation?.messages || [];
+    const lastMessage = messages[messages.length - 1];
+    const workspaceId = contextProvider.getSelectedWorkspaceId() || undefined;
+    const sessionId = currentConversation?.metadata?.chatSettings?.sessionId || undefined;
+    const selectedModel = contextProvider.getSelectedModel();
+    const selectedPrompt = contextProvider.getSelectedPrompt();
+    const workspaceData = contextProvider.getLoadedWorkspaceData();
+    const contextNotes = contextProvider.getContextNotes() || [];
+    const thinkingSettings = contextProvider.getThinkingSettings();
+
+    return {
+      conversationId: currentConversation?.id || 'unknown',
+      messageId: lastMessage?.id || 'unknown',
+      workspaceId,
+      sessionId,
+      source: 'internal' as const,
+      isSubagentBranch: false,
+      provider: selectedModel?.providerId,
+      model: selectedModel?.modelId,
+      agentPrompt: selectedPrompt?.systemPrompt,
+      agentName: selectedPrompt?.name,
+      workspaceData: workspaceData ?? undefined,
+      contextNotes,
+      thinkingEnabled: thinkingSettings?.enabled,
+      thinkingEffort: thinkingSettings?.effort,
+    };
+  }
+
+  /**
+   * Get streaming branch messages for live UI updates
+   */
+  getStreamingBranchMessages(branchId: string): ChatMessage[] | null {
+    return this.subagentExecutor?.getStreamingBranchMessages(branchId) || null;
+  }
+
+  /**
+   * Cancel a running subagent
+   */
+  cancelSubagent(subagentId: string): boolean {
+    if (!this.subagentExecutor) return false;
+    const cancelled = this.subagentExecutor.cancelSubagent(subagentId);
+    if (cancelled) {
+      this.agentStatusMenu?.refresh();
+    }
+    return cancelled;
+  }
+
+  /**
+   * Get agent status list for UI
+   */
+  getAgentStatusList(): AgentStatusItem[] {
+    return this.subagentExecutor?.getAgentStatusList() || [];
+  }
+
+  /**
+   * Clear agent status (call when switching conversations)
+   */
+  clearAgentStatus(): void {
+    this.subagentExecutor?.clearAgentStatus();
+    getSubagentEventBus().trigger('status-changed');
+  }
+
+  /**
+   * Set current branch context (for event filtering)
+   */
+  setCurrentBranchContext(context: BranchViewContext | null): void {
+    this.currentBranchContext = context;
+  }
+
+  /**
+   * Get current branch context
+   */
+  getCurrentBranchContext(): BranchViewContext | null {
+    return this.currentBranchContext;
+  }
+
+  /**
+   * Update branch header context metadata
+   */
+  updateBranchHeaderMetadata(subagentId: string, updates: Partial<SubagentBranchMetadata>): void {
+    const contextMetadata = this.currentBranchContext?.metadata;
+    if (isSubagentMetadata(contextMetadata) && contextMetadata.subagentId === subagentId) {
+      Object.assign(contextMetadata, updates);
+    }
+  }
+
+  /**
+   * Get branch service (for external queries)
+   */
+  getBranchService(): BranchService | null {
+    return this.branchService;
+  }
+
+  /**
+   * Get subagent executor (for external queries)
+   */
+  getSubagentExecutor(): SubagentExecutor | null {
+    return this.subagentExecutor;
+  }
+
+  /**
+   * Open the agent status modal
+   */
+  private openAgentStatusModal(contextProvider: SubagentContextProvider): void {
+    if (!this.subagentExecutor) {
+      console.warn('[SubagentController] SubagentExecutor not available');
+      return;
+    }
+
+    const currentConversation = contextProvider.getCurrentConversation();
+    const modal = new AgentStatusModal(
+      this.app,
+      this.subagentExecutor,
+      {
+        onViewBranch: (branchId) => {
+          if (this.navigationCallback) {
+            this.navigationCallback(branchId);
+          } else {
+            console.warn('[SubagentController] No navigation callback set');
+          }
+        },
+        onContinueAgent: (branchId) => {
+          if (this.continueCallback) {
+            this.continueCallback(branchId);
+          }
+        },
+      },
+      this.branchService,
+      currentConversation?.id ?? null
+    );
+    modal.open();
+  }
+
+  /**
+   * Open status modal with custom callbacks
+   */
+  openStatusModal(
+    contextProvider: SubagentContextProvider,
+    callbacks: {
+      onViewBranch: (branchId: string) => void;
+      onContinueAgent: (branchId: string) => void;
+    }
+  ): void {
+    if (!this.subagentExecutor) {
+      console.warn('[SubagentController] SubagentExecutor not available');
+      return;
+    }
+
+    const currentConversation = contextProvider.getCurrentConversation();
+    const modal = new AgentStatusModal(
+      this.app,
+      this.subagentExecutor,
+      callbacks,
+      this.branchService,
+      currentConversation?.id ?? null
+    );
+    modal.open();
+  }
+
+  /**
+   * Check if initialized
+   */
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+
+  /**
+   * Cleanup resources
+   */
+  cleanup(): void {
+    this.agentStatusMenu?.cleanup();
+    this.subagentExecutor = null;
+    this.branchService = null;
+    this.messageQueueService = null;
+    this.initialized = false;
+  }
+}

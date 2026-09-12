@@ -1,0 +1,147 @@
+/**
+ * Location: src/agents/taskManager/tools/tasks/updateTask.ts
+ * Purpose: Tool to update task fields, status, or manage dependencies.
+ *
+ * Used by: TaskManagerAgent (via lazy tool registration)
+ * Dependencies: TaskService
+ */
+
+import { BaseTool } from '../../../baseTool';
+import { TaskService } from '../../services/TaskService';
+import { UpdateTaskParameters, UpdateTaskResult } from '../../types';
+import { JSONSchema } from '../../../../types/schema/JSONSchemaTypes';
+import { createErrorMessage } from '../../../../utils/errorUtils';
+import { ToolStatusTense } from '../../../interfaces/ITool';
+import { verbs } from '../../../utils/toolStatusLabels';
+import { formatTaskRefForLabel } from '../../utils/taskRefs';
+
+export class UpdateTaskTool extends BaseTool<UpdateTaskParameters, UpdateTaskResult> {
+  constructor(private taskService: TaskService) {
+    super(
+      'update',
+      'Update Task',
+      'Update task fields (title, description, status, priority, dueDate, assignee, tags), manage DAG dependencies (addDependencies/removeDependencies), and manage note links (addNoteLinks/removeNoteLinks). Dependency additions are validated for cycles. Requires a taskId or short taskRef (from createTask or listTasks).',
+      '1.0.0'
+    );
+  }
+
+  async execute(params: UpdateTaskParameters): Promise<UpdateTaskResult> {
+    try {
+      if (!params.taskId) {
+        return this.prepareResult(false, undefined, 'taskId is required');
+      }
+
+      const hasMetadataRequest = params.metadata !== undefined
+        || params.metadataMode !== undefined
+        || params.removeMetadataKeys !== undefined;
+
+      // Update task fields
+      const hasFieldUpdates = params.title !== undefined
+        || params.description !== undefined
+        || params.status !== undefined
+        || params.priority !== undefined
+        || params.dueDate !== undefined
+        || params.assignee !== undefined
+        || params.tags !== undefined
+        || hasMetadataRequest;
+
+      if (hasFieldUpdates) {
+        await this.taskService.updateTask(params.taskId, {
+          title: params.title,
+          description: params.description,
+          status: params.status,
+          priority: params.priority,
+          dueDate: params.dueDate,
+          assignee: params.assignee,
+          tags: params.tags,
+          metadata: params.metadata,
+          metadataMode: params.metadataMode,
+          removeMetadataKeys: params.removeMetadataKeys
+        });
+      }
+
+      // Add dependencies
+      if (params.addDependencies && params.addDependencies.length > 0) {
+        for (const depId of params.addDependencies) {
+          await this.taskService.addDependency(params.taskId, depId);
+        }
+      }
+
+      // Remove dependencies
+      if (params.removeDependencies && params.removeDependencies.length > 0) {
+        for (const depId of params.removeDependencies) {
+          await this.taskService.removeDependency(params.taskId, depId);
+        }
+      }
+
+      // Add note links
+      if (params.addNoteLinks && params.addNoteLinks.length > 0) {
+        for (const link of params.addNoteLinks) {
+          await this.taskService.linkNote(params.taskId, link.notePath, link.linkType ?? 'reference');
+        }
+      }
+
+      // Remove note links
+      if (params.removeNoteLinks && params.removeNoteLinks.length > 0) {
+        for (const notePath of params.removeNoteLinks) {
+          await this.taskService.unlinkNote(params.taskId, notePath);
+        }
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: createErrorMessage('Failed to update task: ', error) };
+    }
+  }
+
+  getParameterSchema(): JSONSchema {
+    return this.getMergedSchema({
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'Task ID or short taskRef to update (REQUIRED — from createTask or listTasks)' },
+        title: { type: 'string', description: 'New task title' },
+        description: { type: 'string', description: 'New task description' },
+        status: { type: 'string', enum: ['todo', 'in_progress', 'done', 'cancelled'], description: 'New task status (setting to done auto-records completedAt timestamp)' },
+        priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'], description: 'New task priority' },
+        dueDate: { type: 'number', description: 'New due date as Unix timestamp in milliseconds (e.g., Date.now() + 86400000 for tomorrow)' },
+        assignee: { type: 'string', description: 'New assignee name or identifier' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Replace entire tags array with these values' },
+        addDependencies: { type: 'array', items: { type: 'string' }, description: 'Task IDs or taskRefs to add as DAG dependencies — this task cannot start until these are done. Cycles are rejected with an error.' },
+        removeDependencies: { type: 'array', items: { type: 'string' }, description: 'Task IDs or taskRefs to remove from this task\'s dependencies' },
+        addNoteLinks: {
+          type: 'array',
+          description: 'Vault notes to link to this task',
+          items: {
+            type: 'object',
+            properties: {
+              notePath: { type: 'string', description: 'Vault note path, e.g. "folder/note.md"' },
+              linkType: { type: 'string', enum: ['reference', 'output', 'input'], description: 'Type of link (default: reference). input=the task DEPENDS ON / CONSUMES this note (required source material; a precondition — forms a data-flow edge). output=the task PRODUCES this note (the artifact/result — forms a data-flow edge). reference=related/contextual note the task does NOT consume (association only, not part of the data flow).' }
+            },
+            required: ['notePath']
+          }
+        },
+        removeNoteLinks: { type: 'array', items: { type: 'string' }, description: 'Vault note paths to unlink from this task' },
+        metadata: { type: 'object', description: 'Custom metadata. Shallow-merged by default: supplied top-level keys overwrite matching keys and all other stored keys survive. Nested objects are replaced whole. Use metadataMode "replace" with {} to clear all metadata.', additionalProperties: true },
+        metadataMode: { type: 'string', enum: ['merge', 'replace'], description: 'How to apply metadata. "merge" is the default. "replace" stores exactly the supplied metadata object and requires metadata; it cannot be combined with removeMetadataKeys.' },
+        removeMetadataKeys: { type: 'array', items: { type: 'string' }, description: 'Top-level metadata keys to delete after applying a merge patch. Merge mode only.' }
+      },
+      required: ['taskId']
+    });
+  }
+
+  getStatusLabel(params: Record<string, unknown> | undefined, tense: ToolStatusTense): string | undefined {
+    const v = verbs('Updating task', 'Updated task', 'Failed to update task');
+    const taskId = typeof params?.taskId === 'string' ? formatTaskRefForLabel(params.taskId) : 'task';
+    return `${v[tense]} ${taskId}`;
+  }
+
+  getResultSchema(): JSONSchema {
+    return {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        error: { type: 'string' }
+      }
+    };
+  }
+}

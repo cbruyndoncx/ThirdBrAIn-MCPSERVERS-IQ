@@ -1,0 +1,794 @@
+# Nexus Changelog
+
+## September 2026
+
+
+**v5.18.6** — GPT-6 Astra and GPT Image 2.5
+
+- GPT-6 Astra is available in the OpenAI, OpenRouter, and ChatGPT/Codex model lists. OpenAI requests omit the sampling parameters Astra rejects. Live completions and tool calls were verified through OpenAI and OpenRouter; ChatGPT/Codex verification remains pending a refreshed login and compatible client.
+- GPT Image 2.5 Sunburst and Flare are available through the OpenAI image provider for generation and reference-image editing. Both use explicit medium quality, reject unsupported image dimensions before making a request, and price text and image input tokens separately.
+- Existing chat and image model defaults are preserved. Both image models passed live generation and edit checks at 1024×1024 medium quality.
+
+---
+
+**v5.18.5** — OpenAI image generation you can actually pick, reference images everywhere, and a CLI that waits for its images
+
+**OpenAI image generation is reachable**
+- The OpenAI image adapter shipped in 5.18.4 but nothing constructed it, so OpenAI never appeared as an image provider in chat, the `generateImage` tool, or `prompt execute`. It is now built from an enabled OpenAI key like Google and OpenRouter, listed in the chat image-provider dropdown, offered in the tool's provider enum, and accepted by the batch parser. The `generateImage` tool also registers when only an OpenAI key is configured ([#381](https://github.com/ProfSynapse/nexus/pull/381)).
+- Google is no longer hidden from the image-provider dropdown on mobile. Every image adapter goes through Obsidian's request layer, so the list is the same on desktop and phone.
+
+**Reference images work on the OpenAI provider**
+- Passing `referenceImages` to an OpenAI image model used to be rejected outright. They now go through OpenAI's image-edits endpoint, up to 16 PNG, JPG or WebP files read from the vault. A missing file, unsupported format, or too many images fails before any request is made. Verified live on `gpt-image-1-mini` and `gpt-image-2`.
+
+**Nano Banana 2 is the default image model, and the retiring one is migrated**
+- The default image model is now `gemini-3.1-flash-image` (Nano Banana 2) everywhere a default is written. If your saved default is still `gemini-2.5-flash-image`, which Google shuts down on 2026-10-02, it is moved to Nano Banana 2 on the provider you had, so it keeps working past the shutdown. Any other saved choice is untouched.
+
+**The CLI waits for slow tool calls**
+- `nexus use` gave up after 20 seconds on every tool call, so an image edit or a slow model reported a timeout while the plugin finished the work and the file landed in the vault a minute later. The handshake and discovery calls keep their 20 seconds; a tool call now gets 10 minutes, and `NEXUS_CLI_TOOL_TIMEOUT_MS` changes that budget ([#382](https://github.com/ProfSynapse/nexus/pull/382)).
+
+---
+
+**v5.18.4** — image generation that works again on OpenRouter, is billed once, and lands in chat even when batched
+
+**OpenRouter image generation works again**
+- OpenRouter moved image generation to a dedicated Image API in June, and since then three of the seven OpenRouter image models — including the default — failed with "No endpoints found that support the requested output modalities". The adapter now calls the Image API, reads the real format and dimensions from the returned bytes, sends only the parameters each model accepts, and retries only on transient errors so a rejected parameter or a moderation block is never paid for twice ([#380](https://github.com/ProfSynapse/nexus/pull/380)).
+- Eight new OpenRouter image models, each verified with a live generation: Gemini 3.1 Flash Image, Gemini 3.1 Flash Lite Image, Gemini 3 Pro Image, GPT-5 Image Mini, GPT Image 2, Seedream 4.5, Seedream 5 Lite and FLUX.2 Klein 4B. Prices are corrected against the live listing.
+
+**Every image is generated and billed once**
+- Each generation was silently run twice, once for the result and once more for the bytes to save. One call now serves both.
+
+**Gemini and OpenAI image adapters**
+- The Gemini adapter gains the GA ids for Gemini 3.1 Flash Image, Flash Lite Image and Gemini 3 Pro Image, with docs-verified prices and a per-model list of which image sizes are actually accepted. A 512 request now produces a real 512-class image instead of a 1K image billed at the 1K rate. The actual charge is read back from the response.
+- The default image model is now Gemini 3.1 Flash Lite Image. Gemini 2.5 Flash Image shuts down on 2026-10-02; if you have it saved as your default it keeps working until then.
+- The OpenAI image adapter moves to the Images API with GPT Image 2 as its default alongside 1.5, 1 and 1 Mini, and always sends an explicit size so a mini model is not billed at a large size it never asked for.
+
+**Generated images show up in chat when batched**
+- An image generated inside a multi-command `useTools` batch never appeared in the conversation; only a lone `generateImage` did. Batched results now render one image bubble each, above the text, and failed entries are skipped.
+
+---
+
+**v5.18.3** — Claude Fable 5.1 on every Anthropic-backed provider
+
+**New models**
+- Claude Fable 5.1, Anthropic's newest model, is now available from the Anthropic provider, the Claude Code provider (subscription-billed, no API key), and through OpenRouter and Requesty. It carries a 1M-token context window and a 128K-token output limit. No provider default changes, so your current model stays selected until you pick it ([#379](https://github.com/ProfSynapse/nexus/pull/379)).
+
+---
+
+## August 2026
+
+**v5.18.2** — a tool ticker that keeps running, and thinking text that reads straight on mobile
+
+**The tool ticker stays alive for the whole conversation**
+- The line that reports what the assistant is doing went dark after the first completed turn, so every turn after it ran with no visible sign of activity at all. It now re-arms on each turn and keeps reporting for the length of the chat. The line also shows the goal sentence behind a `useTools` call instead of a run of per-tool labels — revealed word by word, each entry held briefly before the next replaces it — and a failure still names the tool that failed ([#378](https://github.com/ProfSynapse/nexus/pull/378)).
+
+**Thinking blocks read left-aligned on mobile**
+- On phones the text inside a Thinking block was centered. Obsidian's mobile stylesheet centers chat bubble content, and only the message body carried an override; the reasoning block, its summary and its content now carry the same guard and read left-aligned like the rest of the message ([#377](https://github.com/ProfSynapse/nexus/pull/377)).
+
+---
+
+**v5.18.1** — Groq chat that survives tool use, a way to remove frontmatter, and the Claude 5 family
+
+**Frontmatter properties can finally be removed**
+- `content set-property` could write a key but never remove one — passing null wrote `property: null` into the note instead of dropping the line. The new `content remove-property` removes a property outright, or drops a single item from a list property, with the key itself going when the last item does. A property or value that is not there is an error naming what actually is, so a typo cannot report success — and the change is undoable like every other content write ([#365](https://github.com/ProfSynapse/nexus/pull/365)).
+
+**Tool-using chat on Groq works again**
+- Groq models were sent none of the conversation history when continuing after a tool call, so chat on Groq went silently blank the moment a tool was used. The history now carries through the continuation ([#368](https://github.com/ProfSynapse/nexus/pull/368)). The Groq model list was also refreshed against the live catalog: Qwen 3.6 27B added, five dead models pruned, and the provider default is now GPT-OSS 120B.
+- The same gap sat latent in the Requesty and Perplexity providers, one setting away from the identical silent-blank failure. Every compatible provider now builds its messages through the one shared, history-aware path ([#370](https://github.com/ProfSynapse/nexus/pull/370)).
+
+**New models**
+- The Claude Code provider — the subscription-billed CLI, with no API key — now offers the Claude 5 family (Fable 5, Opus 5 and Sonnet 5) and defaults to Sonnet 5 ([#372](https://github.com/ProfSynapse/nexus/pull/372)).
+- The Anthropic provider gains Claude Opus 5, and Sonnet 5's pricing is corrected to the documented $2/$10 per million tokens ([#373](https://github.com/ProfSynapse/nexus/pull/373)).
+- GLM 5.3 Flash is available through OpenRouter ([#366](https://github.com/ProfSynapse/nexus/pull/366)).
+
+---
+
+**v5.18.0** — deletes that stick, search that respects the scope you gave it, and thinking you can actually see
+
+**Reasoning shows up the same way on every provider**
+- Models that think before answering now surface that thinking consistently across Anthropic, Gemini, OpenAI, OpenRouter and LM Studio. Each provider reports reasoning in its own shape, and Nexus only understood some of them, so whether you saw a model's reasoning depended on which provider you happened to be using ([#354](https://github.com/ProfSynapse/nexus/pull/354)).
+- **Claude's thinking no longer breaks when a tool is involved.** Anthropic signs each thinking block and requires it back, unchanged, when the conversation continues after a tool call. Nexus was not replaying those blocks, so a thinking model that used a tool could fail outright partway through a turn. The signed and redacted blocks are now preserved and replayed exactly.
+- Spacing around assistant messages and the "generating" status text was tightened, including the gap that appeared when a reply paused mid-stream.
+
+**A retried command cannot run twice**
+- Every command that changes something now writes a durable receipt before it runs. Retry the exact same command with the same operation id and Nexus replays the receipt instead of doing the work again; reuse that id for a *different* command and it is rejected rather than silently overwriting something. Receipts survive a reload and a cache rebuild, because they live in your vault's event log rather than only in the cache ([#356](https://github.com/ProfSynapse/nexus/pull/356)).
+- Agents that batch several commands to run at once are now stopped when the batch mixes reads with writes. Nexus names the command that is unsafe to parallelise and asks for the batch to be retried in order, so two commands can no longer race over the same note.
+- **Nothing about read-only commands is recorded.** Receipts cover commands that change things; reading a note never copies its contents into the event log.
+
+**Deleting something now removes everything it owned**
+- Permanently deleting a workspace removed the workspace and nothing else. Its sessions, saved states, memory traces, projects and tasks all survived, and rebuilding the cache brought the entire orphaned set back — so a workspace stayed deleted only until the next rebuild. Deletion now removes everything the workspace owned, including its event streams ([#347](https://github.com/ProfSynapse/nexus/pull/347)).
+- Deleting a session did not survive a rebuild at all. Nothing recorded that the deletion had happened, so the session reappeared the next time the cache was rebuilt, bringing its states and traces with it. Session deletion is now written to your vault's event log like every other change ([#348](https://github.com/ProfSynapse/nexus/pull/348)).
+- **Permanent deletion remains something only you can do, from the interface.** Agents still get the reversible archive, never a destructive delete.
+
+**Search respects the scope you gave it**
+- Scoping a semantic search to a folder could return nothing at all, with no hint as to why. The scope was applied *after* the results had been chosen: Nexus took the strongest matches from the whole vault, trimmed them, and only then filtered down to your folder — so if nothing in that folder happened to rank near the top of the vault, you got an empty answer for a folder full of relevant notes. The scope is now part of the search itself ([#340](https://github.com/ProfSynapse/nexus/pull/340)).
+
+**Chat search comes back in seconds after a cache rebuild**
+- Rebuilding the cache discards the embeddings that make your chat history searchable, and rebuilding them used to be the *last* thing Nexus did — queued behind every note in the vault. On a large vault that left chat search dead for hours after a rebuild. Conversations are now rebuilt first, ahead of traces and notes, so they come back in seconds; and a rebuild you trigger mid-session now re-derives them straight away instead of waiting for the next restart ([#361](https://github.com/ProfSynapse/nexus/pull/361)).
+
+**Fixes**
+- **Subagents work again after a plugin reload.** Chat is rebuilt by Obsidian before Nexus has finished starting its services, and the chat view was holding on to the empty slot where the chat service would later appear. Subagent setup then failed every time the plugin reloaded, so asking an agent to delegate work answered "Subagent executor not initialized" and the agent status panel stayed empty until the chat tab was closed and reopened. Chat now looks the service up when it needs it ([#358](https://github.com/ProfSynapse/nexus/pull/358)).
+- **Gemini's thinking is now actually visible.** Reasoning displayed for every other provider but never for Gemini: Google only returns a model's thought summaries when the request asks for them, and Nexus never asked. Gemini models now stream their reasoning into chat like the rest ([#357](https://github.com/ProfSynapse/nexus/pull/357)).
+- Saved states could disappear after a storage migration that had not finished. Nexus stopped reading the destination folder until the migration was verified, while already writing there — so a state's metadata was listed but its contents could not be loaded, and fresh states only appeared to work because they were still held in memory ([#355](https://github.com/ProfSynapse/nexus/pull/355)).
+- Switching between providers is more reliable. Each provider now owns its own setup and cleanup, so disposing of one can no longer interfere with the one replacing it.
+- **Nexus no longer keeps indexing after you reload it.** Background indexing belonging to the previous instance carried on running against a database that had already closed, logging a failure per item for minutes — and the burst grew with every reload ([#360](https://github.com/ProfSynapse/nexus/pull/360)).
+- A stalled startup rebuild could leave chat and search unavailable indefinitely, with nothing reported. The watchdog meant to catch exactly that was armed on only one of the two startup paths; it now covers both ([#341](https://github.com/ProfSynapse/nexus/pull/341)).
+- Recovering from a corrupt cache reported success even when the recovery had failed, so a vault could look healthy while its cache was not ([#342](https://github.com/ProfSynapse/nexus/pull/342)).
+- An empty `workspaceId` now fails the same way an omitted one does. It previously fell through to the default workspace, so a template that rendered to an empty value behaved completely differently from one that left the field out ([#345](https://github.com/ProfSynapse/nexus/pull/345)).
+- Looking up a saved state by name searched only the first page of states, so a state beyond that page appeared not to exist ([#359](https://github.com/ProfSynapse/nexus/pull/359)).
+- Listing saved states no longer re-reads every state's full history. On a workspace with 200 states the first listing after a restart took half a second and parsed 180,000 events; it now takes about 6 ms and reads none ([#346](https://github.com/ProfSynapse/nexus/pull/346)).
+
+**Models**
+- **GLM 5.3** (OpenRouter and Requesty) and **Qwen3.8 27B** (OpenRouter) ([#353](https://github.com/ProfSynapse/nexus/pull/353)).
+
+**Under the hood**
+- Nexus's tool catalogue is now generated from the running code and versioned with each release, and the build fails if the two drift apart. This does not change any command you type — it means the documentation an agent reads can no longer disagree with what the tools actually accept ([#353](https://github.com/ProfSynapse/nexus/pull/353)).
+- When the storage layer is unavailable at startup, Nexus now says so instead of leaving embeddings silently uninitialised — an absent index used to be indistinguishable from one that was still warming up ([#363](https://github.com/ProfSynapse/nexus/pull/363)).
+- Streaming was rebuilt on a typed event contract with a single place that decides what a turn looks like, replacing envelopes that each provider filled in slightly differently. A turn that fails or is aborted is now recorded as failed instead of quietly reported as success.
+
+---
+
+**v5.17.2** — Nexus now declares the Obsidian version it actually needs
+
+**Requires Obsidian 1.10.0 or later**
+- Nexus uses Obsidian's Bases API for the `base` agent, and that API arrived in Obsidian 1.10.0 — but the plugin claimed to run on 1.8.7. That claim was wrong, and Obsidian's automated review flagged 23 places where it showed. The manifest now says 1.10.0.
+- **If you are on an older Obsidian, you do not lose Nexus.** Obsidian will offer you 5.17.1, the last release that supported 1.8.7, instead of failing the update. To move past it, update Obsidian — 1.10.0 was released in October 2025, three versions back.
+- Nothing about how Nexus behaves changed here. The Bases code was already guarded so it never ran on an app without Bases; what was wrong was the version the plugin advertised, not the way it worked ([#352](https://github.com/ProfSynapse/nexus/pull/352)).
+
+---
+
+**v5.17.1** — Nexus passes Obsidian's build check again, and the README finally says what it talks to
+
+**The plugin builds in Obsidian's own environment**
+- Obsidian's community platform rebuilds every published version in a clean container to scan it, and 5.17.0 failed that build before it compiled anything: one of the checks wired into `npm run build` needed a Python interpreter that the container does not have. It is a Node script now, so nothing outside Node and npm is required to build Nexus ([#221](https://github.com/ProfSynapse/nexus/issues/221)). This is why 5.17.0's safety scorecard showed no results for malware, vulnerable dependencies, obfuscation or network use — those four scans only run once the build succeeds, so one missing interpreter suppressed all of them.
+
+**You can now see what Nexus contacts, and when**
+- The README has a **Network Use** section listing every external host, grouped by the action that triggers it — provider APIs, the one-time downloads that optional desktop features need, and the update check. Nothing is contacted when the plugin loads, and there is no telemetry or analytics of any kind ([#351](https://github.com/ProfSynapse/nexus/pull/351)).
+- It also separates the things that only look like network calls: attribution headers sent *to* a provider, and buttons that open a page in your browser. Automated scans list those next to real requests, which makes Nexus look like it reaches sites it never touches.
+
+**Fixes**
+- Requests to AI providers identified themselves as "Synaptic Lab Kit", a different project, with a referer pointing at a domain that no longer exists. Anyone reading their OpenRouter or Requesty dashboard saw traffic attributed to the wrong application. They now identify as Nexus.
+
+---
+
+**v5.17.0** — Obsidian Bases, web capture that works on mobile, and streams that fail out loud instead of going blank
+
+**Bases are part of the vault your agent can work with**
+- A new `base` agent covers `.base` files end to end: `base read` returns the saved
+  config, `base write` creates one, `base update` changes an existing one, `base list`
+  finds them, and `base analyze` runs the base and returns the rows you would see if
+  you opened it — filters applied and formulas evaluated by Obsidian itself, not
+  re-implemented ([#330](https://github.com/ProfSynapse/nexus/issues/330)).
+- `write` and `update` validate before anything reaches disk and reject with every
+  problem listed at once — an undefined formula referenced by a view's order, a filter
+  group with two operators — so a broken base is never written and then discovered
+  later in the UI.
+- The tools appear only in vaults where Bases is enabled. If you turn Bases on, they
+  show up after the next plugin reload; they are never offered as tools that can only
+  answer "not available".
+
+**Saving a web page no longer depends on the Web Viewer**
+- `web capture-markdown` used to open a Web Viewer tab, run the core plugin's
+  save-to-vault command, and then go looking for whatever file it produced. That made
+  it desktop-only, quietly useless when Web Viewer was turned off, and it moved your
+  workspace around to do a read. It now extracts the article itself and keeps the page
+  metadata ([#338](https://github.com/ProfSynapse/nexus/pull/338)).
+- **This is the first web capability that works on mobile.** Pages are fetched
+  directly by default; on desktop, a page that comes back empty or JavaScript-rendered
+  falls back to the live browser view automatically, so signed-in and app-like pages
+  still capture. `--transport fetch` or `--transport browser` forces one or the other.
+
+**Chat says what went wrong instead of going blank**
+- Several providers report failures — a rejected key, a content block, a model that
+  is not available to you — inside a normal-looking successful response. Nexus only
+  read those for LM Studio, so for every other provider the reply just stopped: empty
+  bubble, nothing in the console, no way to tell a failure from a model with nothing
+  to say. Every provider now surfaces the real error
+  ([#336](https://github.com/ProfSynapse/nexus/pull/336)).
+- Anthropic had a second version of the same problem, where the error was thrown
+  somewhere it could never escape and the stream simply ended normally.
+
+**Models and providers**
+- **Gemini 3.7 Flash** on both Google and OpenRouter
+  ([#326](https://github.com/ProfSynapse/nexus/pull/326)), and **DeepSeek V4 Pro
+  (0813)** on OpenRouter ([#327](https://github.com/ProfSynapse/nexus/pull/327)). Both
+  are opt-in; no default changes to reach them.
+- **Perplexity** models were listed in the picker but missing from the model registry,
+  so every Perplexity call came back unpriced. They are now registered and costed.
+- A fresh install used to start on `gpt-4o`, a model no longer in the registry — the
+  picker could not match it and cost was always blank. New installs start on the
+  current OpenAI flagship instead. The GitHub Copilot default moved to a model that
+  actually resolves, and its model list no longer advertises names and context windows
+  that did not match what the gateway serves.
+
+**Fixes**
+- Deleting a workspace during the first seconds after startup appeared to work and
+  then undid itself — the row vanished from the UI and came back on the next read.
+  Writes were quietly falling back to a store nothing reads while the plugin was still
+  hydrating; they now wait, like reads already did. The same fix covers creating and
+  updating a workspace and deleting a session, a saved state or a conversation
+  ([#333](https://github.com/ProfSynapse/nexus/issues/333)).
+- Rebuilding the cache no longer breaks note search for the rest of the session. The
+  note index tables were not part of the schema a rebuild recreates, so they were
+  dropped while indexing carried on writing to them.
+- After reloading the plugin, the CLI socket worked for about twenty seconds and then
+  disappeared with nothing logged — the departing instance deleted the socket the
+  incoming one had just claimed. Nexus now releases its own socket at unload and
+  verifies the file still belongs to it before removing it
+  ([#339](https://github.com/ProfSynapse/nexus/pull/339)).
+- On a brand-new vault the startup gate never opened, so everything waiting on the
+  index burned its full timeout before giving up, and a genuine storage failure
+  surfaced as `Database not initialized` with no trace of the real cause.
+- Adding a few hundred notes at once and then reloading no longer fills the console
+  with `Database not initialized`. The note index kept listening for vault changes
+  after the plugin unloaded and went on writing to a database that had already closed
+  — one leftover listener per reload, so the noise grew with every reload of the
+  session.
+- PDF support (24 MB of it) was being loaded during plugin startup, on mobile
+  included; it now loads the first time you actually compose a PDF.
+- The OAuth device-code panel rendered with collapsed padding and spacing because the
+  spacing values it referenced did not exist.
+- `prompt sub` declared two options, `--agent` and `--tools`, that were impossible to
+  pass — both collapsed to the same empty flag name. They are now `--persona` and
+  `--toolset`.
+- The `skills` and `data` agents were missing from the generated tool catalog, so
+  documentation naming their commands could not be checked and their schemas were
+  absent from the reference export.
+
+---
+
+**v5.16.4** — Multiline and backslash-heavy content survives the trip to any tool, and the CLI stops claiming it's on your PATH
+
+**Multiline content reaches every tool**
+- `--<flag>-stdin` and `--<flag>-file <path>` now hydrate *any* value-taking tool flag, not just `--content`. The shipped guidance had been telling agents to use these transports for things like `--conversation-context`, where they did not exist ([#324](https://github.com/ProfSynapse/nexus/pull/324)).
+- The two errors an unescaped embedded quote produces — "Unclosed double quote" and "Too many positional arguments" — read as if multiline itself were unsupported. Both now name the real cause and state that multiline values are supported and must not be flattened.
+- One `-stdin` per command (stdin reads once), several `-file` transports may coexist, and a flag cannot arrive both directly and through a transport.
+
+**Backslashes arrive as written**
+- `useTools` accepts an optional top-level `values` map. Content is escaped once at the JSON layer and referenced from the tool string as `@key`, with substitution after tokenization and no escape processing — so `C:\temp\notes`, LaTeX `\alpha`, and regex `\d` arrive intact instead of decaying into tabs, newlines, and dropped characters.
+- Quoting the token (`"@key"`) passes the literal text. With no `values` map, `@`-tokens pass through untouched. A missing key, or a declared key the command never references, fails loud rather than silently dropping prepared content.
+
+**The CLI tells the truth about your PATH**
+- On macOS and Linux, settings reported "Installed and on your PATH" whenever the symlink existed — whether or not any shell could resolve `nexus`. It now asks your login shell, so the status matches what your terminal does ([#325](https://github.com/ProfSynapse/nexus/pull/325)).
+- When the shell can't resolve it, settings shows the exact line to add, which profile file it belongs in (`~/.zshrc`, `~/.bash_profile`, fish's `config.fish`), how to reload, and a Copy button. Nexus does not edit your shell profile.
+- A same-named `nexus` earlier on your PATH is now reported as shadowing on every platform, not just Windows.
+- Some existing installs will flip from "on your PATH" to "not yet on your PATH". Those were already unusable from a terminal; the status was wrong, not the install.
+
+---
+
+**v5.16.3** — Workspace names resolve consistently from agent context to task execution
+
+- Workspace names returned by `getTools` are now accepted by `useTools` even when the boot-time workspace snapshot was empty. The validator checks the live workspace list instead of rejecting a real name and then suggesting that same name back ([#318](https://github.com/ProfSynapse/nexus/pull/318)).
+- The reserved **Assistant guides** workspace is accepted by the tool envelope without being exposed in ordinary workspace listings ([#321](https://github.com/ProfSynapse/nexus/pull/321)).
+- Task commands resolve workspace names case-insensitively all the way through. If two workspaces differ only by capitalization, the error now pairs each name with its exact ID so the caller can retry unambiguously ([#321](https://github.com/ProfSynapse/nexus/pull/321)).
+
+---
+
+**v5.16.2** — Search ranks the note you meant, and CLI agents stop inventing workspaces
+
+**Search returns the note you named**
+- A note *called* what you searched for now comes first, instead of ranking behind notes that merely mention the phrase. Searching `citation gap audit` used to return the note literally named `citation-gap-audit.md` at rank 12.
+- Hyphens and underscores no longer hide a filename from a spaced query. `citation gap audit`, `citation-gap-audit`, and `citation_gap_audit` all find each other now.
+- A filename that happens to share scattered letters with your query no longer outranks a note whose text contains the query verbatim. Those two scores were on different scales, so a coincidental name match could beat a real one ([#309](https://github.com/ProfSynapse/nexus/issues/309)).
+- Every result now carries a `matchType` — `content`, `path`, or `semantic` — so you can tell a body hit from a filename hit without guessing.
+
+**CLI agents work from your real workspaces**
+- `nexus --vault <name> use … -- storage list` reached the vault as `list`, with the agent name silently stripped, whenever `--vault` came before `use`. Fixed, and malformed commands now fail loudly with the corrected form instead of half-parsing.
+- Agents are shown your actual workspace list at the moment they choose one, rather than inferring a name from your phrasing and then retry-looping on the failures.
+- The shipped CLI guidance and playbooks no longer name tools that don't exist, and a test now fails the build if they drift again.
+
+**Fixes**
+- `task update --metadata` and `update-project --metadata` shallow-merge again, as their schemas promise, instead of replacing the stored object. Explicit `metadataMode: "replace"` and `removeMetadataKeys` cover the cases that want the old behavior ([#305](https://github.com/ProfSynapse/nexus/issues/305)).
+- `memory load-state` returns a state's current tags instead of the tags it carried when the snapshot was taken ([#306](https://github.com/ProfSynapse/nexus/issues/306)).
+- Moving or deleting a note while its embedding is queued no longer prints an ENOENT stack trace — twice — to the console. Re-embedding is debounced by ten seconds, so the window was easy to hit; a note that moved is now treated as the routine event it is.
+- The OpenRouter OAuth key label reads "Nexus" rather than the legacy "Claudesidian MCP", and parameters set before authorizing are no longer dropped.
+- The README carries the MCP Toplist rank badge.
+
+---
+
+## July 2026
+
+**v5.16.1** — Republish of 5.16.0
+
+No functional change. 5.16.0's first release build failed lint, so the default branch briefly advertised a version with no matching GitHub release; the Obsidian developer platform kept reporting "no release matches your manifest version" even after the release published. This version republishes identical plugin code to give the platform a clean version to pick up.
+
+---
+
+**v5.16.0** — Composed live voice, workspace search, and shell-safe CLI content
+
+**Live voice beyond native agents**
+- Live voice gains a second shape: a **composed pipeline**, where the provider handles only realtime transcription and the reply comes from your normal Nexus chat model, tools, and speech model. Native agents (OpenAI GPT Realtime, Gemini Flash Live) are unchanged. See the [native chat guide](../guide/native-chat.md#live-voice).
+- **AssemblyAI Universal 3.5 Pro Realtime** and **OpenAI GPT Live Transcribe** both ship as pipelines. Talking over a reply interrupts it and discards the answer you spoke over, so a stale response is never spoken.
+- For pipeline models the voice dropdown reads *"Uses speech default"* and is disabled — the voice comes from your speech model, not the realtime provider.
+
+**Search workspaces instead of listing them**
+- New `memory search-workspaces <query>` tool ranks workspaces by name, description, and folder, so an agent looking for one workspace no longer pays for a full inventory dump. Partial words match. `--load` opens the workspace directly, but only when the query resolves to exactly one match.
+
+**Models**
+- Chat: **Gemini 3.6 Flash** and **Gemini 3.5 Flash-Lite** (Google and OpenRouter).
+- Transcription: **`gpt-transcribe`** (cheaper and more accurate than Whisper on real-world audio) and **`gpt-4o-transcribe-diarize`** (the first OpenAI model here that labels speakers). `whisper-1` remains the OpenAI default because it is the only one that still returns word timestamps, which ingestion relies on.
+- OpenRouter: **Deepgram Nova-3** transcription and **Deepgram Aura-2** speech synthesis. AssemblyAI async transcription now prefers **Universal 3.5 Pro**.
+- **Gemini 3 parameter fix:** the whole Gemini 3 family now correctly omits `temperature`/`topK`/`topP` and uses thinking levels. Previously only the two newest models did, so Gemini 3.1 Pro — the default — was silently being sent sampling parameters Google asks callers to leave alone on reasoning work.
+
+**CLI**
+- New `--content-stdin` and `--content-file <path>` transports keep multiline Markdown, YAML, and embedded quotes out of shell argv, where the Windows `.cmd` wrapper and nested quoting could otherwise corrupt them.
+- `nexus --help` now lists your live vaults and their socket paths, so there is no separate `nexus vaults` call before choosing a `--vault` value.
+
+**Fixes**
+- Chat voice input no longer drops trailing words. Recording slices were being transcribed individually, but MediaRecorder does not guarantee each slice is independently playable; the complete recording is now combined before transcription.
+
+---
+
+**v5.15.4** — Realtime 2.1, Kimi K3, and Voxtral transcription; CLI Node discovery on macOS
+
+**v5.15.3** — Preserve quoted CLI values across shells
+
+**v5.15.2** — Harden Windows CLI discovery and installation
+
+**v5.15.1** — Harden Windows CLI install and storage cutover
+
+---
+
+**v5.15.0** — Local CLI bridge for shell agents (`nexus`)
+
+**Drive your vault from the shell — no MCP config**
+- New **Local CLI** bridge: install a machine-global `nexus` command from **Settings → Get started → External agents** so shell-based coding agents (Claude Code, Cursor, Codex) can discover and run your vault's tools directly, with no `connector.js` / MCP server entry to configure. It speaks the same two-tool protocol over the same local socket the MCP connector uses; the plugin server is unchanged. Everything installs outside your vault and is fully reversible. See the [Nexus CLI guide](../guide/nexus-cli.md).
+- A provider picker wires the CLI into the agents you choose — a Claude Code skill, a Cursor skill, and/or a Codex `AGENTS.md` pointer — defaulting to whatever it detects on your machine.
+- The **Get started → MCP integration** path is renamed **External agents** (MCP clients + CLI coding agents).
+
+**Vault-path confinement (security hardening)**
+- Caller-supplied paths for every write tool now pass through a single fused confinement resolver that rejects directory traversal (`..`), absolute, and home-expansion paths — closing a hole where `content write` / `storage createFolder` could escape the vault. An eslint architecture guard prevents new direct-mutation call sites from bypassing it.
+- **Windows hardening:** trailing-dot/space path segments (which Windows collapses to `..` at the syscall layer) are now rejected before they can escape; reserved device names (`CON`/`NUL`/`COM1`…), NTFS alternate-data-stream (`:`) paths, and control characters are rejected; and untrusted writes into executable-content directories (the Obsidian config folder, `.git`) are blocked to prevent config/hook code execution.
+
+**Local CLI installer & socket hardening**
+- The installer no longer overwrites (or, on uninstall, deletes) a pre-existing `nexus` command from another tool. The CLI verifies socket ownership before connecting, and the plugin's local socket is created owner-only with no permission-window race. On Windows the provider picker now reflects wired agents correctly and refreshes stale skill copies after an update.
+- On Windows, **Install CLI** now adds `%LOCALAPPDATA%\nexus` to the current user's PATH automatically. Uninstall removes the entry only when Nexus originally added it, and the status display now distinguishes a present shim from a command that is actually resolvable on PATH.
+- `nexus vaults` now discovers open Windows vaults through the local named-pipe namespace. This replaces the broken Node filesystem enumeration, which always returned `ENOTDIR`; `--vault <name>` remains available when local PowerShell policy blocks enumeration.
+- Windows provider-skill copies now carry an ownership marker. Install, refresh, and uninstall preserve any unmarked same-named skill directory; successful uninstall also removes the PATH marker and remaining CLI payload instead of leaving a partial installation behind.
+- Installation now requires a reachable Node.js 18+ runtime and reports when another `nexus` command takes precedence on PATH. JSON-RPC responses are shape-checked before use so valid non-object JSON cannot crash the CLI.
+- `nexus use` now has a structured, cross-shell form: put context flags before `--` and the tool command after it. This preserves multiword PowerShell values without nested quoting; fragmented legacy commands now fail with an actionable correction, and `--dry-run` shows the reconstructed request without connecting or executing. After the initial user-approved installation, an updated desktop plugin now refreshes the already-installed Nexus-owned CLI and agent guidance automatically on load.
+
+**Storage cutover fix**
+- Once vault-root migration is verified (or no migration is needed), startup no longer merges legacy flat JSONL roots into normal reads. This prevents deleted legacy files and cloud-sync placeholders from being reopened after cutover; legacy roots remain enabled only while migration is pending or failed.
+
+**v5.14.2** — Clearer MCP integration setup
+
+- Reworked **Settings → Get started → MCP integration** so the `connector.js` bridge file is explained up front and the one-click buttons ("Connect Claude Desktop" / "Connect Codex") clearly generate it and wire it into the agent config for you.
+- After connecting, a confirmation card now shows what was created (the connector file + config entry) and the restart step; revisits collapse to a compact connected state.
+- Manual setup is now a collapsible with numbered steps — create the connector first, then add the config, then restart — so the connector file can't be skipped. Added an "Other agents" section (Cursor, Cline, Gemini CLI, Copilot…) linking to the full setup guide.
+
+**v5.14.0** — Mistral OCR (native) + PDF image extraction
+
+**PDF OCR now returns the full document** (fixes silent truncation)
+- The "Mistral OCR" ingestion option (via OpenRouter) was reading the carrier model's chat completion instead of the OCR result, so PDFs came back paraphrased and truncated — as if a model had been handed the file and asked to rewrite it. OCR text is now read from the file-parser annotations, so you get the complete, faithful document.
+
+**Native Mistral OCR**
+- New OCR option that calls Mistral's OCR API (`api.mistral.ai/v1/ocr`) directly — no carrier model in the loop, per-page markdown, and exact image correlation. Enable the **Mistral** provider with an API key and pick **Mistral OCR (native)** as the OCR model. The OpenRouter route remains available as **Mistral OCR (via OpenRouter)**.
+
+**Embedded images are extracted**
+- OCR now saves images embedded in PDFs into a per-note asset folder (e.g. `report.pdf` → `report/img-0.jpeg`) and rewrites the OCR's image references into inline Obsidian `![[embed]]` links. The folder is namespaced per source file, so images from different PDFs never collide, and re-ingesting overwrites cleanly.
+
+## June 2026
+
+**v5.13.2** — Claude Sonnet 5
+
+- Added **Claude Sonnet 5** (`claude-sonnet-5`) to the Anthropic, OpenRouter, and Requesty providers — 1M context, 128K max output, vision + tools + streaming + adaptive thinking. Pick it from the model dropdown for any of those three providers.
+
+**v5.13.1** — Lint/store-compliance fixes
+
+- Removed inline `eslint-disable` comments for `obsidianmd/ui/sentence-case` (rejected by the Obsidian community-store scanner) from the LM Studio / Ollama provider modals, handling the casing via the project acronym allowlist instead. No user-visible behavior change beyond one reworded Ollama help string.
+
+**v5.13.0** — Local models that think, call tools, and stream reliably
+
+**Local models can now drive tools (Ollama)** (PR #281)
+- The Ollama provider previously assumed the local API couldn't do function calling — so local models couldn't be used for agentic chats. It now sends tool schemas, parses native `tool_calls`, and supports JSON/structured output, matching the LM Studio adapter. A capable local model can now actually use Nexus's tools.
+- **Model discovery**: Nexus now lists every model you have installed in Ollama (via `/api/tags`) instead of only the single model you'd configured.
+
+**Local models show their thinking** (PR #283)
+- Reasoning-capable local models (LM Studio + Ollama) now stream their thinking live into a collapsible **Thinking** block in chat, persisted with the message and visible in the tool-inspection view — the same way cloud reasoning models already worked.
+
+**Local streaming no longer goes blank** (PR #283)
+- Fixed the blank-output / "stuck in reasoning" / reload-every-turn failures on LM Studio. Fatal errors that LM Studio delivers as an in-stream frame over HTTP 200 (e.g. a speculative-decoding rejection on batched-MLX models) were silently swallowed, leaving an empty bubble. Nexus now surfaces those errors and, when a draft/speculative model is rejected, automatically retries without it so the chat still produces output. The model-load path also stops needlessly reloading the model on every turn.
+
+**Content edits tolerate punctuation drift** (PR #282)
+- `content replace` (and the `replace` prompt action) matched anchors with limited normalization, so an anchor copied verbatim from a note could still fail to match over curly vs. straight quotes, dash variants, invisible/zero-width characters, or trailing whitespace. Matching now folds all of these (comparison only — your file bytes and replacement text are written verbatim). On a near miss, the closest line and a narrow re-read range are suggested instead of a generic "not found".
+
+**Chat keeps you posted while tools run** (PRs #279, #280)
+- A "still working" ticker now appears during the silent gaps of a streaming turn (e.g. while tools execute or when a local model goes straight to a tool call with no text), rendered inside the assistant bubble so it stays attached to the message and survives mid-stream re-renders.
+
+**v5.12.2** — Query your notes with SQL, Antigravity provider, new image model
+
+**Notes query index (new)** (PR #274)
+- **Query your vault's notes and frontmatter like a database** — a new read-only `search query-notes` tool exposes every markdown file as queryable SQL rows (path, folder, title, tags, links, frontmatter, dates, size). Filter, aggregate, and sort across your whole vault with plain SQL — no separate query language to learn.
+- Frontmatter properties are individually indexed, so filtering on arbitrary fields (e.g. `status`, `due`, `rating`) is fast even on large vaults.
+- The index is built in the background at startup and kept fresh as you edit — your notes stay the source of truth, nothing is duplicated or re-indexed on disk. Verified on a 15,773-note vault; degrades gracefully above 250k notes (50k on mobile).
+
+**Antigravity (`agy`) replaces the Gemini CLI provider** (PR #278)
+- The provider formerly backed by the deprecated `gemini` CLI now runs on Google's **Antigravity** CLI (`agy`). It's relabeled **Antigravity CLI / Google (Antigravity)** in the model pickers; your existing settings carry over unchanged.
+- This runtime is **text-completion only** — it does not support tool/function calling. Nexus now shows a settings notice and a runtime warning if you point a tool-using flow at it, so you won't get silent no-ops. Pick a tool-capable provider for agentic chats.
+- Models are presented as two base models (Gemini 3.5 Flash, Gemini 3.1 Pro) with the existing effort slider choosing the thinking level — no more separate high/medium/low model entries.
+
+**New model**
+- **GPT-5.4 Image 2** is now available as an image model through **OpenRouter** (PR #177). Select it from the image-model picker.
+
+**Fixes**
+- **Task board / workspace counts were undercounting** on large workspaces (PR #275, #272): boards and workspace summaries computed their counts from only the first 200 tasks while the total showed the real number, so workspaces with more than 200 tasks (or lots of archived-project tasks) displayed wrong breakdowns. Both now read every page. Archived-project tasks no longer crowd out visible ones.
+- **Stuck chat spinner cleared** (PR #276): an assistant reply that finished empty, errored before the first token, or hit the safety net could leave the loading spinner spinning forever. It now always clears.
+- **Hung CLI providers now time out** (PR #276): a CLI runtime that streamed progress but never exited could hang a chat indefinitely. An idle watchdog (default 120s, re-armed on every chunk so long legitimate runs are never cut) now ends stalled runs cleanly.
+- **Single wikilink no longer corrupted on set-property** (PR #273): passing a lone `[[Note]]` to a CLI array/property slot was eating a bracket pair and writing `[Note]`. Single values (including wikilinks) are now preserved verbatim; multi-item arrays still unwrap correctly.
+
+**Under the hood**
+- The `useTools` MCP call now enforces the context contract it always documented: `memory` and `goal` are required (an empty or placeholder value returns a clear steering error instead of silently proceeding); `workspaceId`/`sessionId` still default silently and `constraints` stays optional (PR #270). Agent tool-use guidance was also refined for better discovery → read → act behavior.
+
+**v5.12.1** — New models + provider cleanup
+
+**New models**
+- **GLM 5.2** and **Kimi K2.7 Code** are now available through both **OpenRouter** and **Requesty**. Slugs and pricing were verified live and all four entries pass the provider smoke test.
+
+**Model list cleanup**
+- Removed a batch of superseded older models across providers to keep the model pickers current: Claude 4.5 Opus/Sonnet, Gemini 2.5 and Gemini 3.0 Preview, the GPT-5 / GPT-5.1 generation, and Groq's Llama 3.x + Gemma 2 models.
+- The Google and Groq provider defaults moved to current models (`gemini-3.1-pro-preview` and `llama-4-maverick`, respectively). If you had one of the removed models selected, pick a current one from the dropdown.
+
+**Fix**
+- Fixed a build-breaking parse error introduced in v5.12.0 (#268): an unescaped backtick in the agent CLI-guidance prompt template.
+
+**v5.12.0** — Adaptive Search: semantic search that learns from you, on-device
+
+**Adaptive Search (new)** (PR #265)
+- **Search that learns from which notes you actually open** — when you run a semantic search and then open one of the results, Nexus treats that as a small signal of what was useful, and gradually tunes how *future searches* are interpreted to fit your vault. It tunes the query, never your notes — nothing is re-indexed.
+- **It can't make your search worse.** Every so often, while idle, Nexus runs a short "dream" consolidation: it mines recent search-then-open history, trains a few candidate tunings, tests each against held-out searches, and adopts the winner *only if it measurably beats* what you already have. Otherwise it changes nothing. Until something is provably learned, search behaves exactly as before — zero change on day one — and any adopted tuning is fully reversible.
+- **Fully local and private.** Training runs entirely on-device against your own usage. No queries, behavior, or notes ever leave your machine.
+- **On by default**, desktop-only — it rides on the existing local embedding model from Semantic search. Opt out with `embeddings.retrievalLearning: false`. Trigger a pass yourself anytime via the command palette: **"Consolidate retrieval memory (dream now)."** You'll get a brief notice only when an improvement is actually adopted.
+- Guards against filter bubbles on purpose: it learns most from the searches it got *wrong*, rejects tunings that narrow your results, and keeps occasional wildcard results so new connections still surface. See the [Adaptive Search guide](../guide/adaptive-search.md).
+
+**Task Board** (PR #267)
+- **Delete a task directly from the board** — each card now has a delete icon next to edit, with a confirmation prompt.
+- **Fixed the board showing "No tasks" on a cold start** — it now waits for the local cache to finish hydrating before rendering, instead of briefly appearing empty.
+
+**Under the hood**
+- The MCP agent is now nudged to batch multiple known file reads into a single parallel call, reducing round-trips during multi-file operations (PR #266). Agent-facing guidance only — no behavior change for your data.
+
+**v5.11.2** — Security hardening, secure API key storage, model catalog refresh
+
+**Security & privacy** (plugin audit, PRs #250–#256)
+- **Opt-in secure API key storage** (PR #254) — a new "Store API keys in secure storage" toggle in the Providers tab moves LLM API keys, OAuth refresh tokens, and app credentials out of the synced `data.json` and into Obsidian's device-local `app.secretStorage` (requires Obsidian 1.11.4+; off by default — keys must be re-entered once per device when enabled).
+- MCP Unix socket is now `0600` instead of world-writable; WebLLM CDN imports pinned to `@0.2.80`; web tools reject non-`http(s)` URLs (blocks `file://` reads from LLM-supplied links) (PR #255).
+- Runtime validation for LLM-supplied tool arguments — malformed `createTask` input now returns a clean error instead of persisting bad data (PR #252).
+- Silent JSON-parse failures in the storage layer are now logged with repository/column/row context (PR #256).
+- Removed unused dependencies (`winston`, `uuid`, `tough-cookie`, npm copies of CDN-loaded WebLLM/transformers): 854 → 746 packages, 0 vulnerabilities (PR #251).
+
+**Models** (PR #258)
+- **Claude Fable 5** added to Anthropic, OpenRouter, and Requesty.
+- Requesty catalog refreshed (GPT-5.5/5.4 family, Gemini 3.5/3.1/2.5, Claude 4.x/Fable 5); default model is now `anthropic/claude-sonnet-4-6`. Live-smoke verified, including a post-merge slug fix: Gemini 3.5 Flash on Requesty is `vertex/gemini-3.5-flash`.
+
+**Fixes**
+- `updateSession` no longer drops `startTime`; `updateMessage` now validates its conversation id instead of silently applying cross-conversation (PR #264).
+- Reopening a done task clears its stale `completedAt` timestamp.
+- Release workflow now fails on tag/manifest/package/versions.json mismatch; `versions.json` backfilled (PR #255).
+
+**Internal**
+- LLM adapter deduplication with 83 characterization tests pinning provider behavior (PRs #253, #257); `HybridStorageAdapter` split into assembly + maintenance services, surfacing the two fixes above (PRs #260–#263).
+
+**v5.11.1** — Plugin review & audit compliance fixes.
+
+**v5.11.0** — Live voice + read-aloud
+- **Live voice chat**: OpenAI realtime (WebRTC) and Google Gemini live voice support, with transcripts appended to chat and prior-context priming (PRs #243, #248, #249).
+- **Read aloud**: unified save + embed audio UX; voice audio settings (PRs #241, #245).
+- Video generation artifact jobs (PR #242); short task refs (PR #239); slimmer YAML frontmatter bundle (PR #246); removed unused HTTP MCP transport (PR #247); security dep updates (MCP SDK 1.29.0).
+
+**v5.10.0** — Skills & Data Analysis Apps + Workspaces tab redesign
+
+**New Apps** (opt-in via Settings → Apps)
+- **Skills Protocol** (PRs #228, #233) — author, index, and load agent Skills from your vault. Discovery + SQLite v13 index, full create/update/archive lifecycle (hard delete is UI-only), an automatic sync watcher, recursive `loadSkill` structure, and a Settings → Apps management UI. Vault-local only — never reaches OS-home provider folders. Hardened by a 3-auditor pre-merge pass (path-traversal/destructive-write fixes wired at every write/copy/remove boundary).
+- **Data Analysis** (PR #229, desktop-only) — `runPython` runs pandas against vault CSV/Excel data in a sandboxed Pyodide worker, plus lossless `.xlsx` round-trip: workbooks project into editable CSVs and write back **automatically** (debounced vault watcher), preserving formulas/charts/images/pivots byte-for-byte via the vendored `hucre` engine. Mirror and write-back are fully automatic — the app exposes just `runPython` + `listCapabilities` (PRs #232, #234).
+
+**Workspaces tab redesign — Wave 3 complete** (PRs #223, #226, #235)
+- Redesigned Projects list, Project detail, and a new per-task **Task detail** page with Dependencies (Depends-on / Blocks) and Linked-notes sections.
+- New Workflow editor and File picker ported to the shared `BoxedSection` shell.
+- Mobile layout pass: responsive `@media (max-width:480px)` breakpoint, sticky-header degradation fallback, and WCAG tap-target sizing.
+
+**Smarter AI context**
+- Task linked-notes are now **readable** by the AI across `listTasks`, `queryTasks`, and `loadWorkspace`, with a documented `input`/`output`/`reference` link taxonomy and link-type assignment at task creation (PR #236).
+- Workspace recent activity is now grouped by session and carries the memory/goal/constraints captured with each trace — the model sees *why*, not just *what* (PR #227).
+
+**Integrations & infrastructure**
+- Codex MCP setup added to the integration screen (PR #225).
+- New `App.onload()` lifecycle hook so apps start background work only when genuinely loaded + enabled (PR #230).
+- Connector now reuses the shared agent registry instead of double-initializing — fixes duplicate file watchers / double spreadsheet write-back (PR #231).
+
+> **Note**: The Skills and Data Analysis apps are opt-in and dormant until enabled in Settings → Apps. Both are verified by unit tests + build; live in-Obsidian smoke-testing is ongoing.
+
+## May 2026
+
+**v5.9.0** — Pattern-anchored `content replace` (BREAKING)
+
+**Pattern-anchored replace** (lockstep migration: `content replace` + `executePrompts.replace`)
+- **BREAKING**: `content replace` schema replaces the 5-field shape (`path`, `oldContent`, `newContent`, `startLine`, `endLine`) with a 4-field shape (`path`, `start`, `end`, `content`). No backwards-compat shim — old payloads return a clean validation error so the model can self-correct on the next call.
+- `start` and `end` are text anchors matched against whole lines in the file. Multi-line anchors join lines with `\n`. Both anchors must match exactly one location each; ambiguity returns an error that lists the matching line numbers and asks the model to extend the anchor.
+- `content` replaces the inclusive range from `start` through `end`. Empty `content` deletes the range.
+- Eliminates the ~10K-token `oldContent` fingerprint for large ranges and survives sequential edits without re-reading: anchors are content-based, so prior edits that shift line numbers do not invalidate them.
+- `executePrompts.replace` action migrates in the same release: schema is `start` + `end` + `content`, mirroring the agent tool. The `position` deprecated alias and the line-range mode are both removed.
+- NFKC + CRLF normalization (PR #183/#184/#187 intent) preserved on the new anchor-compare path — anchors authored in a different Unicode form than the file bytes still match.
+- Schema descriptions updated end-to-end; no source code, JSDoc, or LLM-facing description still references `oldContent`/`newContent`/`startLine`/`endLine` on the replace path.
+
+## April 2026
+
+**Apr 28**: v5.8.6 — Content safety, GPT-5.5 support, Windows Claude Code auth
+
+**Content safety and replacement matching** (PRs #183, #184, #187)
+- `content replace` now compares `oldContent` with NFC/NFKC tolerance so visually identical accented or compatibility-normalized text can be matched without forcing overwrite.
+- Replace still writes only the requested `newContent`; untouched file bytes are preserved.
+- Leading Obsidian frontmatter is validated before content write/create/overwrite; malformed or non-mapping YAML is rejected without rewriting valid bytes.
+- Regression tests now protect against editor/tool normalization collapsing NFD fixtures into tautologies.
+
+**Model/provider updates** (PR #188)
+- Added GPT-5.5 and GPT-5.5 Pro to OpenAI and OpenRouter model registries.
+- Added GPT-5.5 to Codex defaults and adapter fallbacks.
+- Added a reusable live provider/model smoke test for future model updates.
+
+**Windows CLI auth fix** (PR #189)
+- Claude Code auth detection now prefers `.cmd`/`.bat` npm wrappers on Windows.
+- `%APPDATA%\npm` is included in common CLI discovery with wrapper-first ordering.
+- Claude headless spawning now uses the shared wrapper-aware process path.
+
+**Apr 20**: v5.8.2 — ToolManager content alignment + repo line-ending normalization
+
+**ToolManager content alignment** (PR #170)
+- CLI-first MCP contract finalized: `useTools`/`getTools` now accept only top-level `tool` string + top-level context fields; legacy nested `{context, calls}` and `{request}` arrays now rejected with a clear error message
+- CLI parser decodes `\uXXXX` escapes inside quoted strings (e.g., `"\u2014"` → `—`); double-escaped `\\u2014` kept literal
+- `executePrompts` actions aligned with modern `insert`/`replace`/`write` contract: `replace` takes `oldContent` + `startLine` + `endLine` for line-range edits; `position` still accepted but deprecated (normalized to startLine/endLine); `append`/`prepend` route to `insert`
+- Behavioral tightening: `position < 1` now rejected (was `< 0`)
+- 10 new tests in `ExecutePromptsActionAlignment.test.ts`; existing ToolManager/ExecutePrompts suites updated
+
+**Line-ending normalization** (PR #169)
+- Added `.gitattributes` establishing LF as canonical across the repo
+- Renormalized all tracked text files to LF (whitespace-only, no behavior change)
+- `.codex-temp/` and `.vscode/` added to `.gitignore`
+
+**Apr 8**: v5.7.0 — Plugin-Scoped Storage Migration, Mobile Support, Major Refactors
+
+> **Note**: Mobile support is experimental and may have bugs.
+
+**Plugin-Scoped Storage Migration** (commit 52185ae9)
+- Storage moved from `.nexus/` to `.obsidian/plugins/<plugin-folder>/data/` — enables Obsidian Sync across devices
+- Automatic migration on first launch: copies JSONL data from `.nexus/` to plugin data dir; `.nexus/` kept as read-only fallback, never deleted
+- JSONLWriter supports multiple read roots for cross-device sync discovery
+- "Nexus: Refresh synced data" command for mobile users whose vault syncs after init
+- Two-stage migration with cache.db path routing (commit 5a2bd087)
+- Race condition fix, migration perf improvements, conversation delete sync (commit e088e513)
+
+**Mobile Support (Experimental)** (PRs #102, #103, #111)
+- PR #102: Fixed crash-on-launch on iOS/Android — Node.js built-ins don't exist on Obsidian mobile
+- Created `desktopRequire()` utility at `src/utils/desktopRequire.ts` for lazy module loading
+- Converted 15 files from top-level imports to dynamic `import()` / lazy `require()`
+- Replaced Node.js `EventEmitter` with Obsidian's cross-platform `Events` class
+- PR #103: Removed `node:stream` import from mobile streaming fallback
+- PR #111: Fixed CORS error when loading Node.js modules in Electron renderer
+- Desktop-only features (OAuth, CLI, MCP transports, ingestion, composer, web tools, semantic search) gracefully skip on mobile
+- Native chat works on mobile; MCP, local providers, and semantic search remain desktop-only
+
+**Major Refactors** (all files brought below 600-line threshold)
+- PR #119: ChatView (1120+ lines) split into 4 coordinators: ChatSessionCoordinator, ChatSendCoordinator, ChatBranchViewCoordinator, ChatSubagentIntegration
+- PR #113: SQLiteCacheManager split into 6 focused collaborators
+- PR #112: ModelAgentManager split into 5 collaborators
+- PR #117: TaskBoardView split into data/filter/grouping/edit/sync/renderer collaborators (1008 → 453 lines)
+- PR #115: MessageBubble split with branch/streaming/image helpers
+- All refactors include unit coverage; public APIs preserved
+
+**Fixes**
+- PR #107: Removed context guard that blocked workspace selection in chat settings
+- PR #114: Fixed type errors in WorkflowRunService and ModelAgentManager
+- PR #118: Fixed SQLite WASM alias resolution in production builds
+- Task board page scrolling restored (commit b1ebd58c)
+- Embedding init now awaits storage adapter ready (commit 88a0cf49)
+
+**Provider Updates** (PR #119)
+- Perplexity adapter reworked with updated model support and pricing
+- HybridStorageAdapter conversation list fixes
+- ToolContinuationService refactor with ToolSchemaSupport extraction
+
+**Apr 6**: v5.6.9 — Conversation list pagination + search (PR #99)
+- "Load More" pagination for conversation sidebar with true database OFFSET/LIMIT
+- FTS title search in sidebar for filtering conversations
+- 63 new tests
+
+**Apr 6**: v5.6.8 — Chat UI bug fixes (PR #98)
+- 13 chat UI fixes from PR #97 audit: click-blocking invisible pill, text not selectable, branch copy returning wrong content, input auto-resize, tool accordion, and more
+- Dead code removal
+
+**Apr 5**: v5.6.7 — Multi-provider transcription + task board fixes (PRs #95, #96)
+- Shared `TranscriptionService` layer with 5 providers / 7 models: OpenAI (Whisper, GPT-4o Transcribe), Groq, Mistral (Voxtral), Deepgram, AssemblyAI
+- Task board fixes #92–#94
+
+**Apr 2**: v5.6.6 — CustomPromptStorageService dual-write fix (PR #89, issue #88)
+- Removed early returns that skipped `data.json` write after SQLite ops, preventing prompt loss on restart
+
+**Apr 1**: v5.6.5 — Plugin store compliance (PR #87)
+- Resolved all ~190 obsidian-releases bot lint violations for plugin store submission
+
+**Apr 1**: v5.6.4 — Type safety + linting (PR #86)
+- `any` → `unknown` type migration across codebase
+- ESLint v9 upgrade + obsidianmd community linter integration
+
+## March 2026
+
+**Mar 29**: v5.6.3 — DOCX, PPTX, XLSX ingestion support
+
+**Mar 29**: v5.6.2 — Vault ingestion modes, PDF.js fix
+
+**Mar 29**: v5.6.1 — Ingestion multi-provider, app UX fixes, Mistral multi-turn
+- **Ingestion**: `IngestModelCatalog` + `IngestCapabilityService` — explicit catalog of OCR/transcription models; UI now shows provider+model dropdowns; supports OpenAI (Whisper, GPT-4o Transcribe), Groq (Whisper), Google Gemini multimodal audio, OpenRouter (Mistral OCR, Gemini); `enableIngestion` toggle in settings
+- **App UX**: `AppManager` refactored — config is source of truth; apps install as disabled (credentials first); `BaseAppAgent.supportsValidation()` + `getValidationActionLabel()`; `AppsTab` shows real manifest descriptions
+- **Mistral**: passes `conversationHistory` for multi-turn; `supportsImages: true`
+
+**Mar 29**: Web Tools Agent ✅ (PR #82)
+- New `WebToolsAgent` with 5 desktop-only tools: `openWebpage`, `capturePagePdf`, `capturePagePng`, `captureToMarkdown`, `extractLinks`
+- Electron BrowserWindow (`webViewer.ts`) renders pages headlessly; captures via `webContents.printToPDF()`, `capturePage()`, and DOM extraction
+- `captureToMarkdown`: strips boilerplate (nav/header/footer/ads), converts HTML→Markdown via Turndown
+- `extractLinks`: full link inventory with URL, text, and type (internal/external/anchor/resource)
+- Desktop-only (`Platform.isDesktop` guard) — requires Electron APIs
+
+**Mar 29**: Nexus Ingester ✅ (PR #83)
+- New `IngestManagerAgent` with `ingest` + `listCapabilities` tools
+- Drag PDF/audio files onto chat → confirmation modal → extraction/transcription → `.md` note alongside original
+- PDF modes: text (pdfjs-dist `getTextContent()`) + vision (pdfjs-dist page render → OCR via vision API); default 20-page limit
+- Audio: Whisper API via OpenAI + Groq only (Ollama/LM Studio excluded — no endpoint; Google deferred to v2)
+- pdfjs-dist bundled via LoopbackPort (no worker file needed); `decodeAudioData` try-catch fallback + >25MB size guard
+- VisionMessageFormatter: 4 provider families (OpenAI, Anthropic, Google, Ollama format)
+- UI: IngestDropOverlay, IngestProgressBanner, IngestConfirmModal, IngestEventBinder + DefaultsTab settings
+- 175 tests across 9 test files
+- Plan: `docs/plans/nexus-ingester-plan.md`
+
+**Mar 29**: Composer App ✅ (PR #81)
+- New `ComposerAgent` with `compose` + `listFormats` tools following BaseAppAgent pattern
+- IFormatComposer strategy pattern: markdown concat, PDF merge (pdf-lib 1.17.1), audio concat/mix (OfflineAudioContext)
+- Audio output: WAV (native PCM), WebM/Opus (MediaRecorder), MP3 (wasm-media-encoders 0.7.0, MIT)
+- Audio mixing: multi-track with per-track volume, offset, fadeIn/fadeOut via Web Audio API
+- Security: isValidPath() path traversal prevention, aggregate file size limit (default 200MB), atomic overwrite, bounds validation
+- 87 tests (7 files); pdf-lib + wasm-media-encoders pinned to exact versions
+
+**Mar 25**: v5.5.0 — Task Board, Compaction Frontier, Tool Refactors, Provider Updates ✅ (PRs #65–72)
+- **CLI providers stdin** (PR #65): Claude Code + Gemini CLI now pass prompts via stdin; Windows argv safety guard (24K limit)
+- **SystemPromptBuilder refactor** (PR #66): Cleaner composition pipeline, `CompactionFrontierRecord` injection, new guide
+- **Task Board UI** (PR #67): Native Obsidian kanban view (todo/in-progress/done), `openTasks` agent tool, `TaskBoardEvents` pub/sub for live refresh
+- **ContextBudgetService** (PR #72): Unified context window budget tracking + compaction thresholds across all providers
+- **CompactionFrontierService** (PR #68): Bounded stack of compacted context records; meta-compaction; transcript recovery; pre-send spinner in ChatInput
+- **Tool display refactor** (PR #69): `toolDisplayNormalizer` + `toolDisplayFormatter` extracted from `ProgressiveToolAccordion`; structured `ToolDisplayGroup`/`ToolDisplayStep` types
+- **Tool execution refactor** (PR #70): `ToolBatchExecutionService` extracted from `useTools` (430→122 lines); enriched `DirectToolExecutor` event shape
+- **Provider updates** (PR #71): GPT-5.4 Mini + Nano, GitHub Copilot live model discovery, `StreamingOrchestrator` responseId persistence, `ModelDropdownRenderer` fallback fix
+
+**Mar 23**: Claude Code Integration + Replace/Insert Tools ✅ (v5.4.0, PRs #57, #58)
+- Claude Code as native chat provider: uses local Claude CLI subscription login (no API key needed)
+- New `anthropic-claude-code` adapter with headless Claude Code runner and binary discovery
+- Claude Code models (Haiku 4.5, Sonnet 4.6, Opus 4.6) labeled "(Claude Code)" in model dropdown
+- Tool call traces and reasoning surfaced in existing chat accordions
+- Replaced unified `update` tool with `replace` + `insert` tools (inspired by community PR #56)
+- `replace`: validates `oldContent` at startLine/endLine, sliding-window search on mismatch
+- `insert`: positional insert (N), prepend (1), append (-1)
+
+**Mar 13**: Settings UI Redesign ✅ (PR #42)
+- CSS spacing token system: 7 `--space-*` tokens (4px base), replacing ~15 hardcoded values
+- New `SearchableCardManager` component: composition wrapper with search/filter + group headers
+- All 4 card tabs migrated (Workspaces, Providers, Apps, Prompts) + GetStartedTab
+- BreadcrumbNav: chevron icon separators, CSS specificity fix for Obsidian button defaults
+- Card hover: `box-shadow` → `background-color` transition (theme-aware)
+- BackButton: `div` → `button` element (keyboard accessibility)
+- `CardManagerConfig.onAdd`/`addButtonText` now optional
+- WorkspacesTab decomposed: 1,611 → 855 lines + WorkspaceListRenderer + WorkspaceDetailRenderer
+- 132 new tests across 6 files
+- Plan: `docs/plans/settings-ui-redesign-plan.md`
+
+**Mar 8**: SDK→HTTP Migration ✅ (commit 103a9e73)
+- Removed provider SDKs (OpenAI, Anthropic, Google, Groq, Mistral) — direct HTTP via shared ProviderHttpClient
+- Real-time streaming via Node.js https + `processNodeStream()` (replaces buffered requestUrl approach)
+- New: `ProviderHttpClient.ts` (shared HTTP + streaming + HTTPS enforcement + retry), `BufferedSSEStreamProcessor.ts`
+- Fixed: Google finish reason mapping, MALFORMED_FUNCTION_CALL error surfacing, OpenAI SSE multi-line parser, Anthropic stale betas field, Mistral param names, error body truncation (security)
+- 796 tests (+34 new)
+- UI: ChatInput tri-state button, MessageManager interrupt-before-send
+
+**Mar 8**: v5.1.0 Release ✅
+- SDK→HTTP migration: Removed all LLM provider SDKs, direct HTTP via `ProviderHttpClient` + Obsidian `requestUrl`
+- Real streaming on desktop (Node.js https), buffered fallback on mobile
+- TaskManager DI wiring fixed (was never registered in runtime init path)
+- Deleted unused agent factory system (`ServiceFactory.ts`, -409 lines)
+- Self-documenting TaskManager tool schemas (result objects fully defined)
+- Wired TaskService into MemoryManager for loadWorkspace task summaries
+
+**Mar 8**: TaskManager Agent ✅ (PR #37)
+- New agent: workspace-scoped project/task management with DAG dependencies
+- Data model: Workspace → Project → Task, with `dependsOn[]` DAG edges + `parentTaskId` subtask tree
+- 10 tools: createProject, listProjects, updateProject, archiveProject, createTask, listTasks, updateTask, moveTask, queryTasks, linkNote
+- Services: TaskService (facade) + DAGService (pure computation: cycle detection, topological sort, next actions, blocked tasks)
+- DB: 4 new tables (projects, tasks, task_dependencies, task_note_links), schema v8→v9, JSONL+SQLite hybrid
+- Integration: auto-loads task summary via loadWorkspace, CacheableEntityType extended with 'project'/'task'
+- 857 tests (236 new across 5 test files)
+- Plan: `docs/plans/task-manager-agent-plan.md`, Architecture: `docs/architecture/task-manager-agent-architecture.md`
+
+**Mar 4**: New Models + Bug Fixes ✅ (v4.4.5 → v4.4.6)
+- Added Claude Sonnet 4.6, Gemini 3.1 Pro/Flash Lite, GPT-5.3 Chat/Codex; removed legacy Claude 4 Opus/Sonnet
+- Fixed ConversationTitleModal focus trap, default temperature loading, prompt selector key, `syncWorkspacePrompt()` name vs id
+
+## February 2026
+
+**Feb 28**: Dynamic Image Model Defaults ✅ (v4.4.4)
+- Image generation defaults now resolve from user settings instead of hardcoded values
+- Priority chain: explicit param > user settings > first available provider/model > fallback
+- `generateImage`: new `resolveDefaults()`, `getAvailableProviderNames()`, dynamic schema/errors
+- `executeTypes`: provider optional + accepts openrouter, model widened to string
+
+**Feb 26**: Dynamic Image Model Loading ✅ (v4.4.3)
+- Image model dropdowns now load dynamically from adapters (removed hardcoded `IMAGE_MODELS`)
+- `generateImage` tool schema builds model enum at runtime from configured providers
+
+**Feb 26**: New Image Models + FLUX Validation Fix ✅ (v4.4.2)
+- Added `gemini-3.1-flash-image-preview`: Google direct + OpenRouter, 512px-4K, 14 ref images
+- Added `gpt-5-image` (OpenRouter only): GPT-5 with image generation, 400K context
+- Fixed FLUX models (`flux-2-pro`, `flux-2-flex`) failing validation
+
+**Feb 23**: Workspace Settings Display Fix ✅ (v4.4.1)
+- Root cause: `renderWorkspacesTab()` passed stale `prefetchedWorkspaces` (populated before SQLite ready)
+- Fix: pass `prefetchedWorkspaces: null` → WorkspacesTab always shows loading skeleton → awaits SQLite
+
+**Feb 22**: Tool Call History Fix ✅ (v4.4.0)
+- `MessageStreamHandler.ts` — post-loop safety net: forces `state=complete` + accumulated toolCalls
+- `ConversationService.ts` — try-catch around `JSON.parse(tc.function.arguments)` in `convertToLegacyConversation`
+- `MessageRepository.ts` — defensive try-catch in `rowToMessage()` for toolCallsJson/metadataJson/alternativesJson
+
+**Feb 22**: TypeScript Build Fix ✅ (PR #31)
+- `IPCTransportManager.ts` — changed socket param from `NodeJS.ReadWriteStream` to `net.Socket`
+
+**Feb 22**: OpenAI CORS Bypass + Validation Fixes ✅ (PR #29)
+- `nodeFetch.ts` — Node.js `https.request()` passed as custom `fetch` to OpenAI SDK; bypasses CORS on `/v1/responses`
+- 619 tests (adds 55 nodeFetch unit tests)
+
+**Feb 22**: Provider OAuth Connect ✅ (PR #26 — v4.3.4)
+- OpenAI Codex OAuth via ChatGPT: connect button, token refresh, model listing with `(ChatGPT)` suffix
+- **Codex Responses API gotchas (CRITICAL)**:
+  - No `previous_response_id` support — must use stateless full input array continuation
+  - `delta` is plain string, not object — `typeof event.delta === 'string'` check required
+  - CORS from `app://obsidian.md` — must use Node.js `require('https').request()` not `fetch()`
+  - `for await` unreliable in Electron — use explicit `chunkQueue`/`chunkWaiter` event-listener queue
+  - `instructions` field always required — cannot be conditional on conversationHistory
+  - Model won't use tools without `tool_choice: "auto"` + explicit tool-use preamble in instructions
+
+**Feb 21**: IPC Transport Fix ✅ (v4.3.2)
+- Fixed `handleSocketConnection` never wiring socket `close`/`end` to `transport.close()`
+- FD leak on failed `connect()` also fixed (socket destroyed on rejection)
+
+**Feb 20**: New Model Definitions ✅ (PR #22 — v4.3.1)
+- Added Claude Sonnet 4.6 (`claude-sonnet-4-6`): 200K ctx, 64K out, $3/$15/M
+- Added Gemini 3.1 Pro Preview (`gemini-3.1-pro-preview`): 1M ctx, 65K out, $2/$12/M
+
+**Feb 9**: Conversation Memory Search ✅ (PR #19 — merged)
+- Semantic search across conversation turns and tool call traces via `searchMemory` tool
+- Two modes: Discovery (workspace-scoped) and Scoped (session-filtered, N-turn window)
+- QA pair model + ContentChunker (500-char/100-overlap) + sqlite-vec KNN + multi-signal reranking
+- Real-time indexing via ConversationEmbeddingWatcher + background backfill
+- 351 tests pass (205 new), all coverage thresholds met
+- Plan: `docs/plans/conversation-memory-search-plan.md`
+
+**Feb 5**: Startup Performance Fix ✅ (PR #15)
+- Non-blocking startup ~200ms (75x improvement from ~15s)
+- Root cause: deadlock between ChatView.onOpen() and onLayoutReady
+
+**Feb 5**: Chat Stop/Retry/Branch Bug Fixes ✅ (PR #16)
+- 12 bugs fixed across stop, retry, and branch navigation
+- 142 unit tests across 7 new test files
+
+**Feb 5**: Inline AI Editing Feature ✅ (PR #14)
+- Right-click or hotkey to edit selected text via LLM
+- State machine pattern, streaming preview, Jest test infrastructure (41 tests)
+
+## January 2026
+
+**Jan 24**: ExecutePrompts improvements (optional provider/model, reference images, CommandManager cleanup)
+**Jan 12**: MCP integration settings fix (invalid config handling)
+**Jan 4**: CanvasManager agent (4 tools), SQLite transaction fix, memory leak fixes (7), embeddings toggle
+
+## December 2025
+
+**Dec 22**: Subagent UI + architecture
+**Dec 20**: Auto-compaction + dual models + WebLLM
+**Dec 17**: Two-Tool Architecture (95% token reduction)
+**Dec 16**: Local embeddings + dead code cleanup (~4,000 lines removed)
+**Dec 9**: Mobile + branching persistence
+**Dec 3**: SQLite + JSONL hybrid storage

@@ -1,0 +1,761 @@
+import { Plugin, TFile, prepareFuzzySearch } from 'obsidian';
+import { BaseTool } from '../../baseTool';
+import { getErrorMessage } from '../../../utils/errorUtils';
+import { BRAND_NAME } from '../../../constants/branding';
+import { isGlobPattern, globToRegex, normalizePath, isWithinPathScope } from '../../../utils/pathUtils';
+import { EmbeddingService } from '../../../services/embeddings/EmbeddingService';
+import { EmbeddingManager } from '../../../services/embeddings/EmbeddingManager';
+import { CommonParameters } from '../../../types';
+import type { ToolStatusTense } from '../../interfaces/ITool';
+import { labelQuery, verbs } from '../../utils/toolStatusLabels';
+
+type SearchContentSchema = ReturnType<BaseTool<ContentSearchParams, ContentSearchResult>['getMergedSchema']>;
+
+/**
+ * Extended plugin interface that includes optional embedding manager
+ */
+interface PluginWithEmbeddings extends Plugin {
+  embeddingManager?: EmbeddingManager;
+}
+
+/**
+ * How a result was matched.
+ *
+ * - `content` — the query was found in the file body.
+ * - `path`    — only the filename matched; the body does not contain the query.
+ * - `semantic` — surfaced by vector similarity, not by literal matching.
+ *
+ * Callers previously had no way to tell these apart: a filename-only hit was
+ * detectable only by its `content` field falling back to `"File: <path>"`,
+ * which was a side effect of the snippet extractor rather than a contract.
+ */
+export type SearchMatchType = 'content' | 'path' | 'semantic';
+
+/**
+ * Internal search result with scoring
+ * Used internally for ranking before returning clean results to caller
+ */
+interface ScoredSearchResult {
+  filePath: string;
+  frontmatter?: Record<string, unknown>;
+  content?: string;
+  matchType: SearchMatchType;
+  _score: number; // Internal property for sorting
+}
+
+export interface ContentSearchParams extends CommonParameters {
+  query: string;
+  semantic?: boolean;  // Default: false (keyword search). Set true for vector/embedding search
+  limit?: number;
+  includeContent?: boolean;
+  snippetLength?: number;
+  paths?: string[];
+}
+
+export interface ContentSearchResult {
+  success: boolean;
+  results: Array<{
+    filePath: string;
+    frontmatter?: Record<string, unknown>;
+    content?: string;  // Keyword search only
+    matchType: SearchMatchType;
+  }>;
+  error?: string;
+}
+
+/** Score for a verbatim occurrence of the whole query. */
+const EXACT_PHRASE_SCORE = 0.9;
+/**
+ * Score for a filename that contains the whole query verbatim.
+ *
+ * Above EXACT_PHRASE_SCORE on purpose. In a note-taking vault, "the note is
+ * NAMED this" is a stronger signal than "some note mentions this", so looking
+ * up `2026-08-06 Standup` must return the note called that ahead of a meeting
+ * log that references it in passing.
+ *
+ * Without this, both land on EXACT_PHRASE_SCORE and the winner is decided by
+ * whichever file the vault happened to enumerate first.
+ */
+const TITLE_EXACT_SCORE = 0.95;
+/** Ceiling for "every query word is present, but not as a phrase". */
+const ALL_WORDS_SCORE = 0.8;
+/** Floor for "at least one query word is present". */
+const PARTIAL_MATCH_FLOOR = 0.3;
+/**
+ * Ceiling for a fuzzy-only filename hit — a scattered subsequence match on a
+ * name that contains none of the query terms.
+ *
+ * Deliberately below PARTIAL_MATCH_FLOOR. Obsidian's `prepareFuzzySearch`
+ * returns small negative scores even for weak scattered matches, so the old
+ * `1 + score/100` normalization put nearly every filename hit around 0.95 —
+ * above the 0.9 an exact phrase in the body could ever reach. Files containing
+ * none of the query terms therefore outranked files containing it verbatim.
+ *
+ * Fuzzy is kept, because it is the only signal that tolerates typos and
+ * abbreviations, but it now ranks below every deliberate match rather than
+ * above them.
+ */
+const FUZZY_ONLY_CEILING = 0.25;
+
+/**
+ * Fold the separators used in filenames into spaces.
+ *
+ * Vault filenames are routinely kebab- or snake-cased (`citation-gap-audit`),
+ * while the query is typed as words (`citation gap audit`). Compared verbatim
+ * the phrase is not a substring of the name, so the note LITERALLY NAMED for
+ * the query fell to the word tier and lost to any body that happened to
+ * contain the phrase — observed at rank 12 in a real vault.
+ *
+ * Applied to the filename side only. Body matching stays byte-exact so the
+ * snippet offsets it returns keep pointing at the real text.
+ */
+function foldSeparators(text: string): string {
+  return text.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Reduce one `paths` entry to the longest fixed prefix that every path it can
+ * match must begin with, or `null` when it constrains nothing.
+ *
+ * This exists so a scope can be pushed down into the embedding query, where the
+ * candidate window is taken. A literal path is already a prefix. A glob is
+ * truncated at the last folder boundary before its first metacharacter, so
+ * `_Base/**\/*.md` reduces to `_Base/` while `**\/notes/*.md` reduces to
+ * nothing.
+ *
+ * The reduction is intentionally conservative: a prefix here must never exclude
+ * a path the caller's own pattern would have accepted, since the real matching
+ * is still done by the post-filter afterwards.
+ */
+function pathScopePrefix(path: string): string | null {
+  const normalized = normalizePath(path);
+
+  if (!isGlobPattern(normalized)) {
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  const firstGlob = normalized.search(/[*?[\]{}]/);
+  const lastSeparator = normalized.lastIndexOf('/', firstGlob);
+  if (lastSeparator < 0) {
+    return null;
+  }
+
+  return normalized.slice(0, lastSeparator + 1);
+}
+
+/**
+ * Fixed prefixes covering every entry in `paths`, or `undefined` when the scope
+ * cannot be expressed as prefixes.
+ *
+ * The entries are OR'd, so one unbounded entry (a bare `/`, or a glob with a
+ * wildcard in its first segment) makes the whole union unbounded. Returning
+ * `undefined` in that case leaves the query unscoped and the post-filter in
+ * charge, which is the pre-existing behaviour.
+ */
+function pathScopePrefixes(paths: string[]): string[] | undefined {
+  if (paths.length === 0) {
+    return undefined;
+  }
+
+  const prefixes: string[] = [];
+  for (const path of paths) {
+    const prefix = pathScopePrefix(path);
+    if (prefix === null) {
+      return undefined;
+    }
+    prefixes.push(prefix);
+  }
+
+  return prefixes;
+}
+
+/**
+ * Score how well `text` matches the query, using one tier ladder.
+ *
+ * Filenames and file bodies are both scored through this function so their
+ * scores are commensurable by construction. Previously the filename was scored
+ * on the fuzzy scale and the body on this tier ladder, and the two were
+ * compared directly despite never having been calibrated against each other.
+ *
+ * Returns `matchIndex`/`matchLength` so callers can extract a snippet without
+ * re-running the search.
+ */
+function scoreTextMatch(
+  normalizedQuery: string,
+  normalizedText: string
+): { found: boolean; exact: boolean; score: number; matchIndex: number; matchLength: number } {
+  const exactIndex = normalizedText.indexOf(normalizedQuery);
+  if (exactIndex !== -1) {
+    return {
+      found: true,
+      exact: true,
+      score: EXACT_PHRASE_SCORE,
+      matchIndex: exactIndex,
+      matchLength: normalizedQuery.length
+    };
+  }
+
+  // Split on separators as well as whitespace, so a query typed as
+  // `citation-gap-audit` still decomposes into words and can match a body that
+  // writes them spaced. The exact-phrase branch above stays byte-exact, so the
+  // offsets it reports keep pointing at real text.
+  const queryWords = normalizedQuery.split(/[\s\-_]+/).filter(word => word.length > 2);
+  const wordMatches = queryWords.filter(word => normalizedText.includes(word));
+
+  if (wordMatches.length === 0) {
+    return { found: false, exact: false, score: 0, matchIndex: -1, matchLength: 0 };
+  }
+
+  const matchRatio = wordMatches.length / queryWords.length;
+  const score = Math.max(PARTIAL_MATCH_FLOOR, matchRatio * ALL_WORDS_SCORE);
+  const firstMatch = wordMatches[0];
+
+  return {
+    found: true,
+    exact: false,
+    score,
+    matchIndex: normalizedText.indexOf(firstMatch),
+    matchLength: firstMatch.length
+  };
+}
+
+/**
+ * Content search tool with both semantic (vector) and keyword search capabilities
+ *
+ * - semantic: true → Uses embedding-based vector similarity search (best for conceptual queries)
+ * - semantic: false → Uses Obsidian's fuzzy + keyword search (best for exact matches)
+ */
+export class SearchContentTool extends BaseTool<ContentSearchParams, ContentSearchResult> {
+  private plugin: Plugin;
+  private embeddingService: EmbeddingService | null = null;
+
+  constructor(plugin: Plugin) {
+    super(
+      'content',
+      'Content Search',
+      'Search vault files. Set semantic=true for AI-powered conceptual search using local embeddings (best for concepts/related ideas), or semantic=false for keyword/fuzzy search (best for exact matches). Semantic search is desktop-only and becomes available once the embedding system initializes in the background (first run may take longer while the model downloads).',
+      '2.0.0'
+    );
+    this.plugin = plugin;
+  }
+
+  getStatusLabel(params: Record<string, unknown> | undefined, tense: ToolStatusTense): string | undefined {
+    return labelQuery(verbs('Searching notes', 'Searched notes', 'Failed to search notes'), params, tense);
+  }
+
+  /**
+   * Set the embedding service for semantic search
+   */
+  setEmbeddingService(service: EmbeddingService): void {
+    this.embeddingService = service;
+  }
+
+  /**
+   * Lazily get the embedding service from the plugin
+   * This handles the timing issue where EmbeddingManager initializes after VaultLibrarian
+   */
+  private getEmbeddingService(): EmbeddingService | null {
+    // Return cached service if available
+    if (this.embeddingService) {
+      return this.embeddingService;
+    }
+
+    // Try to get from plugin's embeddingManager
+    try {
+      const pluginWithEmbeddings = this.plugin as PluginWithEmbeddings;
+      if (pluginWithEmbeddings.embeddingManager) {
+        const service = pluginWithEmbeddings.embeddingManager.getService();
+        if (service) {
+          this.embeddingService = service; // Cache for future use
+          return service;
+        }
+      }
+    } catch (error) {
+      void error;
+    }
+
+    return null;
+  }
+
+  async execute(params: ContentSearchParams): Promise<ContentSearchResult> {
+    const startTime = performance.now();
+
+    try {
+      if (!params.query || params.query.trim().length === 0) {
+        return this.prepareResult(false, undefined, 'Query parameter is required and cannot be empty');
+      }
+
+      const searchParams = {
+        query: params.query.trim(),
+        semantic: params.semantic ?? false, // Default to keyword search (always available)
+        limit: params.limit || 10,
+        includeContent: params.includeContent !== false,
+        snippetLength: params.snippetLength || 200,
+        paths: params.paths || []
+      };
+
+      // Use semantic search if requested
+      if (searchParams.semantic) {
+        return await this.performSemanticSearch(searchParams, startTime);
+      }
+
+      // Otherwise use keyword/fuzzy search
+      return await this.performKeywordFuzzySearch(searchParams, startTime);
+
+    } catch (error) {
+      console.error(`[${BRAND_NAME}] Content search failed:`, error);
+      return this.prepareResult(false, undefined, `Search failed: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Perform semantic (vector) search using embeddings
+   */
+  private async performSemanticSearch(
+    searchParams: { query: string; limit: number; paths: string[]; includeContent: boolean; snippetLength: number },
+    startTime: number
+  ): Promise<ContentSearchResult> {
+    // Lazily get the embedding service (handles timing issues)
+    const embeddingService = this.getEmbeddingService();
+
+    if (!embeddingService) {
+      return this.prepareResult(false, undefined, 'Semantic search is not available yet. The embedding system may still be initializing (and may need to download the embedding model on first run). Try again in a moment, or use semantic=false for keyword search.');
+    }
+
+    if (!embeddingService.isServiceEnabled()) {
+      return this.prepareResult(false, undefined, 'Embedding service is disabled (mobile platform or initialization failed). Use semantic=false for keyword search.');
+    }
+
+    // Check if we have any embeddings
+    const stats = await embeddingService.getStats();
+    if (stats.noteCount === 0) {
+      return this.prepareResult(false, undefined, 'No embeddings found. The vault is likely still being indexed. Please wait for indexing to complete, or use semantic=false for keyword search.');
+    }
+
+    try {
+      // Push the scope down into the vector query. The candidate window there
+      // is global and small, so a scope applied only to its OUTPUT can empty a
+      // perfectly good result set: at limit 10 the query ranked the whole vault
+      // and kept 60 rows, and if none of them were under the requested folder
+      // the caller got zero results and no reason why (#323).
+      //
+      // Not every scope reduces to a prefix, so the post-filter below stays as
+      // the second pass that does the real matching.
+      const scopePrefixes = pathScopePrefixes(searchParams.paths);
+
+      const semanticResults = await embeddingService.semanticSearch(
+        searchParams.query,
+        searchParams.limit * 2, // Get extra for the glob post-filter below
+        scopePrefixes
+      );
+
+      if (semanticResults.length === 0) {
+        if (scopePrefixes) {
+          // The query itself was scoped, so an empty candidate set means the
+          // requested folders hold no embedded notes — an honest answer, not a
+          // broken index. Reporting a database fault here would be a false
+          // alarm that only appears once the scope reaches the query.
+          return this.prepareResult(true, { results: [] });
+        }
+        return this.prepareResult(false, undefined, 'Semantic search returned no results. This may indicate an issue with the vector database. Please check the console for errors.');
+      }
+
+      // Filter by paths if specified
+      let filteredResults = semanticResults;
+      if (searchParams.paths.length > 0) {
+        const globPatterns = searchParams.paths
+          .filter(p => isGlobPattern(p))
+          .map(p => globToRegex(p));
+
+        const literalPaths = searchParams.paths
+          .filter(p => !isGlobPattern(p))
+          .map(p => normalizePath(p));
+
+        filteredResults = semanticResults.filter(result => {
+          // Anchored to a folder boundary: `_Base` must not admit `_Baseball/`.
+          const matchesLiteral = literalPaths.some(path => isWithinPathScope(result.notePath, path));
+          const matchesGlob = globPatterns.some(regex => regex.test(result.notePath));
+          return matchesLiteral || matchesGlob;
+        });
+      }
+
+      // Convert to lean result format (just filePath + frontmatter)
+      const results: ContentSearchResult['results'] = [];
+      for (const result of filteredResults.slice(0, searchParams.limit)) {
+        const file = this.plugin.app.vault.getAbstractFileByPath(result.notePath);
+        if (file instanceof TFile) {
+          // Get frontmatter only
+          let frontmatter: Record<string, unknown> | undefined;
+          const fileCache = this.plugin.app.metadataCache.getFileCache(file);
+          if (fileCache?.frontmatter) {
+            frontmatter = { ...fileCache.frontmatter };
+            delete frontmatter.position;
+          }
+
+          const entry: ContentSearchResult['results'][number] = {
+            filePath: result.notePath,
+            // Vector similarity, not a literal hit — the query may appear
+            // nowhere in the file at all, by design.
+            matchType: 'semantic'
+          };
+          if (frontmatter && Object.keys(frontmatter).length > 0) {
+            entry.frontmatter = frontmatter;
+          }
+          results.push(entry);
+        }
+      }
+
+      void startTime;
+
+      return this.prepareResult(true, {
+        results
+      });
+
+    } catch (error) {
+      console.error(`[${BRAND_NAME}] Semantic search failed:`, error);
+      return this.prepareResult(false, undefined, `Semantic search failed: ${getErrorMessage(error)}. Try semantic=false for keyword search.`);
+    }
+  }
+
+  /**
+   * Perform keyword/fuzzy search (original behavior)
+   */
+  private async performKeywordFuzzySearch(
+    searchParams: { query: string; limit: number; paths: string[]; includeContent: boolean; snippetLength: number },
+    startTime: number
+  ): Promise<ContentSearchResult> {
+    // Get all markdown files
+    let allFiles = this.plugin.app.vault.getMarkdownFiles();
+
+    // Filter by paths if specified
+    if (searchParams.paths.length > 0) {
+      const globPatterns = searchParams.paths
+        .filter(p => isGlobPattern(p))
+        .map(p => globToRegex(p));
+
+      const literalPaths = searchParams.paths
+        .filter(p => !isGlobPattern(p))
+        .map(p => normalizePath(p));
+
+      allFiles = allFiles.filter(file => {
+        // Anchored to a folder boundary: `_Base` must not admit `_Baseball/`.
+        const matchesLiteral = literalPaths.some(path => isWithinPathScope(file.path, path));
+        const matchesGlob = globPatterns.some(regex => regex.test(file.path));
+        return matchesLiteral || matchesGlob;
+      });
+    }
+
+    // Perform combined fuzzy + keyword search
+    const searchResults = await this.performCombinedSearch(
+      searchParams.query,
+      allFiles,
+      searchParams.limit,
+      searchParams.includeContent,
+      searchParams.snippetLength
+    );
+
+    void startTime;
+
+    return this.prepareResult(true, {
+      results: searchResults
+    });
+  }
+
+  /**
+   * Perform combined fuzzy and keyword search with result ranking
+   */
+  private async performCombinedSearch(
+    query: string,
+    files: TFile[],
+    limit: number,
+    includeContent: boolean,
+    snippetLength: number
+  ): Promise<ContentSearchResult['results']> {
+    const normalizedQuery = query.toLowerCase();
+    const fuzzySearch = prepareFuzzySearch(normalizedQuery);
+    const allResults: ScoredSearchResult[] = [];
+
+    for (const file of files) {
+      const results = await this.searchInFile(
+        file,
+        query,
+        normalizedQuery,
+        fuzzySearch,
+        includeContent,
+        snippetLength
+      );
+      allResults.push(...results);
+    }
+
+    // Sort by internal score (higher is better) and take top results
+    allResults.sort((a, b) => (b._score || 0) - (a._score || 0));
+    // Strip internal score before returning
+    const finalResults = allResults.slice(0, limit).map(r => {
+      const { _score: score, ...rest } = r;
+      void score;
+      return rest;
+    });
+    return finalResults;
+  }
+
+  /**
+   * Search within a single file using multiple methods
+   */
+  private async searchInFile(
+    file: TFile,
+    originalQuery: string,
+    normalizedQuery: string,
+    fuzzySearch: (text: string) => { score: number } | null,
+    includeContent: boolean,
+    snippetLength: number
+  ): Promise<ScoredSearchResult[]> {
+    const results: ScoredSearchResult[] = [];
+    let maxScore = 0;
+    let contentSnippet = '';
+
+    // 1. Filename match, scored on the SAME tier ladder as the body so the two
+    //    are comparable. A fuzzy hit is a weak fallback for typos and
+    //    abbreviations and is capped below every literal match.
+    const filename = file.basename;
+    // Both sides folded, so `citation-gap-audit` and `Citation Gap Audit` are
+    // each reachable from either spelling of the query.
+    const filenameMatch = scoreTextMatch(foldSeparators(normalizedQuery), foldSeparators(filename));
+    // A title carrying the query verbatim outranks a body that merely mentions
+    // it; weaker filename tiers stay on the shared ladder.
+    let pathScore = filenameMatch.exact ? TITLE_EXACT_SCORE : filenameMatch.score;
+
+    if (!filenameMatch.found) {
+      const fuzzyResult = fuzzySearch(filename);
+      if (fuzzyResult) {
+        // Normalize fuzzy score (fuzzy scores are negative, closer to 0 is better)
+        const normalized = Math.max(0, Math.min(1, 1 + (fuzzyResult.score / 100)));
+        pathScore = normalized * FUZZY_ONLY_CEILING;
+      }
+    }
+
+    maxScore = Math.max(maxScore, pathScore);
+
+    // 2. Keyword search in file content and extract frontmatter
+    let keywordScore = 0;
+    let frontmatter: Record<string, unknown> | undefined = undefined;
+
+    if (includeContent) {
+      try {
+        const fileContent = await this.plugin.app.vault.read(file);
+
+        // Extract frontmatter using Obsidian's metadata cache
+        const fileCache = this.plugin.app.metadataCache.getFileCache(file);
+        if (fileCache?.frontmatter) {
+          frontmatter = { ...fileCache.frontmatter };
+          // Remove the position property as it's internal metadata
+          delete frontmatter.position;
+        }
+
+        const keywordResult = this.performKeywordSearch(originalQuery, normalizedQuery, fileContent, snippetLength);
+
+        if (keywordResult.found) {
+          keywordScore = keywordResult.score;
+          contentSnippet = keywordResult.snippet;
+
+          if (keywordScore > maxScore) {
+            maxScore = keywordScore;
+          }
+        }
+      } catch (error) {
+        void error;
+      }
+    } else {
+      // Even if not including content, still extract frontmatter
+      try {
+        const fileCache = this.plugin.app.metadataCache.getFileCache(file);
+        if (fileCache?.frontmatter) {
+          frontmatter = { ...fileCache.frontmatter };
+          delete frontmatter.position;
+        }
+      } catch (error) {
+        void error;
+      }
+    }
+
+    // 3. Combined scoring for files that match both on name and in the body.
+    if (pathScore > 0 && keywordScore > 0) {
+      // Weighted combination: 60% keyword + 40% path.
+      //
+      // Guarded by Math.max because the blend alone can DEMOTE: an exact phrase
+      // in the body (0.9) paired with a weak name hit (0.1) blended to 0.58,
+      // ranking that file below an identical file whose name did not match at
+      // all. Matching a second way must never cost a result its position.
+      maxScore = Math.max(maxScore, (keywordScore * 0.6) + (pathScore * 0.4));
+    }
+
+    // Only include files with matches
+    if (maxScore > 0) {
+      // `content` is the honest signal here: it is only non-empty when the body
+      // actually matched. `matchType` states it outright rather than leaving
+      // callers to infer it from the snippet fallback below.
+      const matchType: SearchMatchType = keywordScore > 0 ? 'content' : 'path';
+
+      // If no content snippet from keyword search, use file path
+      if (!contentSnippet && includeContent) {
+        contentSnippet = `File: ${file.path}`;
+      }
+
+      const entry: ScoredSearchResult = {
+        filePath: file.path,
+        content: contentSnippet,
+        matchType,
+        _score: maxScore
+      };
+      if (frontmatter && Object.keys(frontmatter).length > 0) {
+        entry.frontmatter = frontmatter;
+      }
+      results.push(entry);
+    }
+
+    return results;
+  }
+
+  /**
+   * Perform keyword search in file content
+   */
+  private performKeywordSearch(
+    originalQuery: string,
+    normalizedQuery: string,
+    content: string,
+    snippetLength: number
+  ): { found: boolean; score: number; snippet: string } {
+    const normalizedContent = content.toLowerCase();
+
+    // Same tier ladder the filename is scored on — see scoreTextMatch.
+    const match = scoreTextMatch(normalizedQuery, normalizedContent);
+
+    if (!match.found) {
+      return { found: false, score: 0, snippet: '' };
+    }
+
+    // An exact phrase hit spans the original query; a word hit spans that word.
+    const matchLength = match.exact ? originalQuery.length : match.matchLength;
+
+    return {
+      found: true,
+      score: match.score,
+      snippet: this.extractSnippet(content, match.matchIndex, matchLength, snippetLength)
+    };
+  }
+
+  /**
+   * Extract content snippet around a match
+   */
+  private extractSnippet(content: string, matchIndex: number, matchLength: number, snippetLength: number): string {
+    const halfSnippet = Math.floor(snippetLength / 2);
+    const start = Math.max(0, matchIndex - halfSnippet);
+    const end = Math.min(content.length, matchIndex + matchLength + halfSnippet);
+
+    let snippet = content.substring(start, end);
+
+    // Add ellipsis if truncated
+    if (start > 0) snippet = '...' + snippet;
+    if (end < content.length) snippet = snippet + '...';
+
+    return snippet.trim();
+  }
+
+  /**
+   * Get parameter schema for MCP tool definition
+   */
+  getParameterSchema(): SearchContentSchema {
+    const toolSchema = {
+      type: 'object',
+      title: 'Content Search Params',
+      description: 'Search vault files. REQUIRED: Set "semantic" parameter to choose search mode.',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query to find files and content.'
+        },
+        semantic: {
+          type: 'boolean',
+          description: 'true = AI-powered conceptual search (desktop only, best for concepts/related ideas). false = keyword/fuzzy search (default, best for exact matches).',
+          default: false
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of results to return (default: 10)',
+          minimum: 1,
+          maximum: 50,
+          default: 10
+        },
+        includeContent: {
+          type: 'boolean',
+          description: 'For keyword search only: include content snippets (default: true). Ignored for semantic search.',
+          default: true
+        },
+        snippetLength: {
+          type: 'number',
+          description: 'For keyword search only: length of content snippets (default: 200). Ignored for semantic search.',
+          minimum: 50,
+          maximum: 1000,
+          default: 200
+        },
+        paths: {
+          type: 'array',
+          description: 'Restrict search to specific folder paths. Supports glob patterns.',
+          items: { type: 'string' }
+        }
+      },
+      required: ['query'],
+      additionalProperties: false
+    };
+
+    return this.getMergedSchema(toolSchema);
+  }
+
+  /**
+   * Get result schema for MCP tool definition
+   */
+  getResultSchema(): SearchContentSchema {
+    return {
+      type: 'object',
+      properties: {
+        success: {
+          type: 'boolean',
+          description: 'Whether the search was successful'
+        },
+        results: {
+          type: 'array',
+          description: 'Search results ranked by relevance',
+          items: {
+            type: 'object',
+            properties: {
+              filePath: {
+                type: 'string',
+                description: 'Path to the file'
+              },
+              frontmatter: {
+                type: 'object',
+                description: 'File frontmatter if present',
+                additionalProperties: true
+              },
+              content: {
+                type: 'string',
+                description: 'Content snippet (keyword search only)'
+              },
+              matchType: {
+                type: 'string',
+                enum: ['content', 'path', 'semantic'],
+                description: 'How this file matched. "content" = the query was found in the file body (see the content snippet). "path" = only the filename matched; the body does NOT contain the query, so read the file before relying on it. "semantic" = surfaced by vector similarity, so the query may not appear literally at all.'
+              }
+            },
+            required: ['filePath', 'matchType']
+          }
+        },
+        error: {
+          type: 'string',
+          description: 'Error message if failed'
+        }
+      },
+      required: ['success', 'results'],
+      additionalProperties: false
+    };
+  }
+}

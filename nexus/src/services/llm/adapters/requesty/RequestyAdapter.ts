@@ -1,0 +1,288 @@
+/**
+ * Requesty AI Adapter with true streaming support
+ * OpenAI-compatible streaming interface for 150+ models via router
+ * Based on Requesty streaming documentation
+ */
+
+import { BRAND_NAME } from '../../../../constants/branding';
+import { BaseAdapter } from '../BaseAdapter';
+import {
+  GenerateOptions,
+  StreamChunk,
+  LLMResponse,
+  ModelInfo,
+  ProviderCapabilities,
+  ModelPricing
+} from '../types';
+import { extractStreamErrorMessage } from '../../streaming/streamErrorFrames';
+import { REQUESTY_MODELS, REQUESTY_DEFAULT_MODEL } from './RequestyModels';
+import { mapOpenAiCompatFinishReason, buildMessagesWithConversationHistory } from '../shared/OpenAICompatHelpers';
+import { staticModelToModelInfo, getStaticModelPricing } from '../shared/StaticModelHelpers';
+
+/**
+ * Requesty API response structure (OpenAI-compatible)
+ */
+interface RequestyToolCall {
+  id?: string;
+  type?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+  arguments?: string;
+  name?: string;
+  displayName?: string;
+  technicalName?: string;
+  result?: unknown;
+  success?: boolean;
+  error?: string;
+}
+
+interface RequestyMessage {
+  content?: string;
+  toolCalls?: RequestyToolCall[];
+}
+
+interface RequestyChoice {
+  message?: RequestyMessage;
+  delta?: {
+    content?: string;
+    tool_calls?: RequestyToolCall[];
+  };
+  finish_reason?: string;
+}
+
+interface RequestyUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+}
+
+interface RequestyChatCompletionResponse {
+  choices: RequestyChoice[];
+  usage?: RequestyUsage;
+}
+
+type RequestySSEChoice = {
+  delta?: {
+    content?: string;
+    tool_calls?: RequestyToolCall[];
+  };
+  finish_reason?: string;
+};
+
+type RequestySSEParsedEvent = {
+  choices?: RequestySSEChoice[];
+  usage?: RequestyUsage;
+};
+
+export class RequestyAdapter extends BaseAdapter {
+  readonly name = 'requesty';
+  readonly baseUrl = 'https://router.requesty.ai/v1';
+
+  constructor(apiKey: string, model?: string) {
+    super(apiKey, model || REQUESTY_DEFAULT_MODEL);
+    this.initializeCache();
+  }
+
+  async generateUncached(prompt: string, options?: GenerateOptions): Promise<LLMResponse> {
+    try {
+      // Tool execution requires streaming - use generateStreamAsync instead
+      if (options?.tools && options.tools.length > 0) {
+        throw new Error('Tool execution requires streaming. Use generateStreamAsync() instead.');
+      }
+
+      // Use basic chat completions
+      return await this.generateWithChatCompletions(prompt, options);
+    } catch (error) {
+      this.handleError(error, 'generation');
+    }
+  }
+
+  /**
+   * Generate streaming response using async generator
+   * Uses unified stream processing with automatic tool call accumulation
+   */
+  async* generateStreamAsync(prompt: string, options?: GenerateOptions): AsyncGenerator<StreamChunk, void, unknown> {
+    try {
+      const nodeStream = await this.requestStream({
+        url: `${this.baseUrl}/chat/completions`,
+        operation: 'streaming generation',
+        method: 'POST',
+        headers: {
+          ...this.buildHeaders(),
+          'Authorization': `Bearer ${this.apiKey}`,
+          // Attribution only — these are header VALUES that show up in Requesty's
+          // dashboard, not request targets. Nothing is ever fetched from the
+          // referer. They read 'synaptic-lab-kit.com' / 'Synaptic Lab Kit' until
+          // 2026-08-15: a paste from another project, pointing at a domain that
+          // no longer resolves. Keep them in step with the OpenRouter adapters.
+          'HTTP-Referer': 'https://synapticlabs.ai',
+          'X-Title': BRAND_NAME
+        },
+        body: JSON.stringify({
+          model: options?.model || this.currentModel,
+          messages: buildMessagesWithConversationHistory(prompt, options),
+          temperature: options?.temperature,
+          max_tokens: options?.maxTokens,
+          response_format: options?.jsonMode ? { type: 'json_object' } : undefined,
+          stop: options?.stopSequences,
+          tools: options?.tools,
+          stream: true
+        }),
+        timeoutMs: 120_000
+      });
+
+      yield* this.processNodeStream(nodeStream, {
+        debugLabel: 'Requesty',
+        extractContent: (parsed) => {
+          const event = parsed as RequestySSEParsedEvent;
+          return event.choices?.[0]?.delta?.content || null;
+        },
+        extractToolCalls: (parsed) => {
+          const event = parsed as RequestySSEParsedEvent;
+          return event.choices?.[0]?.delta?.tool_calls || null;
+        },
+        extractFinishReason: (parsed) => {
+          const event = parsed as RequestySSEParsedEvent;
+          return event.choices?.[0]?.finish_reason || null;
+        },
+        // The router is OpenAI-compatible and forwards upstream failures as an
+        // {"error":{...}} frame over HTTP 200.
+        extractError: (parsed) => extractStreamErrorMessage(parsed, 'Requesty streaming error'),
+        extractUsage: (parsed) => {
+          const event = parsed as RequestySSEParsedEvent;
+          return event.usage;
+        },
+        accumulateToolCalls: true,
+        toolCallThrottling: {
+          initialYield: true,
+          progressInterval: 50
+        }
+      });
+    } catch (error) {
+      console.error('[RequestyAdapter] Streaming error:', error);
+      throw error;
+    }
+  }
+
+  listModels(): Promise<ModelInfo[]> {
+    try {
+      // Thinking is surfaced per-upstream-model at the router, not advertised here.
+      return Promise.resolve(REQUESTY_MODELS.map(model => ({
+        ...staticModelToModelInfo(model),
+        supportsThinking: false
+      })));
+    } catch (error) {
+      this.handleError(error, 'listing models');
+      return Promise.resolve([]);
+    }
+  }
+
+  getCapabilities(): ProviderCapabilities {
+    const baseCapabilities = {
+      supportsStreaming: true,
+      streamingMode: 'streaming' as const,
+      supportsJSON: true,
+      supportsImages: true,
+      supportsFunctions: true,
+      supportsThinking: false,
+      maxContextWindow: 200000,
+      supportedFeatures: [
+        'messages',
+        'function_calling',
+        'vision',
+        'streaming',
+        'json_mode',
+        'router_fallback'
+      ]
+    };
+
+    return baseCapabilities;
+  }
+
+  /**
+   * Generate using standard chat completions
+   */
+  private async generateWithChatCompletions(prompt: string, options?: GenerateOptions): Promise<LLMResponse> {
+    const requestBody: Record<string, unknown> = {
+      model: options?.model || this.currentModel,
+      messages: buildMessagesWithConversationHistory(prompt, options),
+      temperature: options?.temperature,
+      max_tokens: options?.maxTokens,
+      response_format: options?.jsonMode ? { type: 'json_object' } : undefined,
+      stop: options?.stopSequences
+    };
+
+    // Add tools if provided
+    if (options?.tools) {
+      requestBody.tools = options.tools;
+    }
+
+    const response = await this.request<RequestyChatCompletionResponse>({
+      url: `${this.baseUrl}/chat/completions`,
+      operation: 'generation',
+      method: 'POST',
+      headers: {
+        ...this.buildHeaders(),
+        'Authorization': `Bearer ${this.apiKey}`,
+        // See the note on the streaming request above: attribution headers, not
+        // request targets.
+        'HTTP-Referer': 'https://synapticlabs.ai',
+        'X-Title': BRAND_NAME
+      },
+      body: JSON.stringify(requestBody),
+      timeoutMs: 60_000
+    });
+
+    this.assertOk(response, `Requesty generation failed: HTTP ${response.status}`);
+
+    const data = response.json;
+    if (!data) {
+      throw new Error('No response from Requesty');
+    }
+    const choice = data.choices[0];
+    
+    if (!choice) {
+      throw new Error('No response from Requesty');
+    }
+    
+    let text = choice.message?.content || '';
+    const usage = this.extractUsage(data);
+    const finishReason = mapOpenAiCompatFinishReason(choice.finish_reason || null);
+
+    // If tools were provided and we got tool calls, return placeholder text
+    if (options?.tools && choice.message?.toolCalls && choice.message.toolCalls.length > 0) {
+      text = text || '[AI requested tool calls but tool execution not available]';
+    }
+
+    return this.buildLLMResponse(
+      text,
+      options?.model || this.currentModel,
+      usage,
+      { provider: 'requesty' },
+      finishReason
+    );
+  }
+
+  // Private methods
+  private extractToolCalls(message: RequestyMessage | undefined): RequestyToolCall[] {
+    return message?.toolCalls || [];
+  }
+
+  protected extractUsage(response: RequestyChatCompletionResponse): { promptTokens: number; completionTokens: number; totalTokens: number } | undefined {
+    const usage = response.usage;
+    if (usage) {
+      return {
+        promptTokens: usage.prompt_tokens || 0,
+        completionTokens: usage.completion_tokens || 0,
+        totalTokens: usage.total_tokens || 0
+      };
+    }
+    return undefined;
+  }
+
+  getModelPricing(modelId: string): Promise<ModelPricing | null> {
+    return Promise.resolve(getStaticModelPricing(REQUESTY_MODELS, modelId));
+  }
+}

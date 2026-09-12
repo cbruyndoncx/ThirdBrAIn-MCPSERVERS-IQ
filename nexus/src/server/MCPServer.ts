@@ -1,0 +1,376 @@
+/**
+ * MCPServer - Refactored following SOLID principles
+ * Main orchestrator for MCP server operations
+ */
+
+import { App, Plugin, Events } from 'obsidian';
+import { IMCPServer, ServerStatus } from '../types';
+import { IAgent } from '../agents/interfaces/IAgent';
+import { SessionContextManager } from '../services/SessionContextManager';
+import { CustomPromptStorageService } from "../agents/promptManager/services/CustomPromptStorageService";
+import { Server as MCPSDKServer } from '@modelcontextprotocol/sdk/server/index.js';
+import { RequestRouter } from '../handlers/RequestRouter';
+import { logger } from '../utils/logger';
+
+// Import specialized services
+import { ServerConfiguration } from './services/ServerConfiguration';
+import { AgentRegistry } from './services/AgentRegistry';
+import { HttpTransportStatus, getDisabledHttpTransportStatus } from './transport/HttpTransportStatus';
+import { IPCTransportManager } from './transport/IPCTransportManager';
+import { StdioTransportManager } from './transport/StdioTransportManager';
+import { RequestHandlerFactory } from './handlers/RequestHandlerFactory';
+import { ServerLifecycleManager } from './lifecycle/ServerLifecycleManager';
+import { AgentExecutionManager } from './execution/AgentExecutionManager';
+
+type ToolCallParams = Record<string, unknown>;
+type ServerTransportStatus = {
+    http: HttpTransportStatus;
+    ipc: ReturnType<IPCTransportManager['getTransportStatus']>;
+};
+
+type ServerInfo = {
+    configuration: ReturnType<ServerConfiguration['getConfigurationSummary']>;
+    status: ReturnType<MCPServer['getDetailedStatus']>;
+    agents: ReturnType<MCPServer['getAgentStatistics']>;
+    transports: ServerTransportStatus;
+    handlers: ReturnType<RequestHandlerFactory['getHandlerStatistics']>;
+    execution: ReturnType<AgentExecutionManager['getExecutionStatistics']>;
+};
+
+/**
+ * Refactored MCP Server following SOLID principles
+ * Orchestrates specialized services for server operations
+ */
+export class MCPServer implements IMCPServer {
+    // Core SDK server
+    private server: MCPSDKServer;
+    
+    // Specialized services following Dependency Injection principle
+    private configuration: ServerConfiguration;
+    private agentRegistry: AgentRegistry;
+    private stdioTransportManager: StdioTransportManager;
+    private ipcTransportManager: IPCTransportManager;
+    private requestHandlerFactory: RequestHandlerFactory;
+    private lifecycleManager: ServerLifecycleManager;
+    private executionManager: AgentExecutionManager;
+    
+    // Request routing
+    private requestRouter!: RequestRouter;
+
+    constructor(
+        private app: App,
+        _plugin: Plugin,
+        private events: Events,
+        private sessionContextManager?: SessionContextManager,
+        serverName?: string,
+        private customPromptStorage?: CustomPromptStorageService,
+        private onToolCall?: (toolName: string, params: unknown) => Promise<void>,
+        private onToolResponse?: (toolName: string, params: unknown, response: unknown, success: boolean, executionTime: number) => Promise<void>
+    ) {
+        // Initialize configuration service
+        this.configuration = new ServerConfiguration(app, { serverName });
+        
+        // Initialize core SDK server
+        this.server = this.createMCPSDKServer();
+        
+        // Initialize specialized services
+        this.agentRegistry = new AgentRegistry();
+        this.stdioTransportManager = new StdioTransportManager(this.server);
+        this.ipcTransportManager = new IPCTransportManager(
+            this.configuration,
+            this.stdioTransportManager,
+            () => this.createPerConnectionServer()
+        );
+        this.executionManager = new AgentExecutionManager(this.agentRegistry, sessionContextManager);
+
+        // Initialize request routing
+        this.initializeRequestRouter();
+        
+        // Initialize request handlers
+        this.requestHandlerFactory = new RequestHandlerFactory(
+            this.server,
+            this.requestRouter,
+            this.onToolCall
+        );
+        
+        // Initialize lifecycle manager
+        this.lifecycleManager = new ServerLifecycleManager(
+            this.agentRegistry,
+            this.ipcTransportManager,
+            this.events
+        );
+        
+        // Setup handlers
+        this.requestHandlerFactory.initializeHandlers();
+    }
+
+    /**
+     * Create the MCP SDK server instance
+     */
+    private createMCPSDKServer(): MCPSDKServer {
+        try {
+            const serverOptions = this.configuration.getServerOptions() as unknown as ConstructorParameters<typeof MCPSDKServer>[1];
+            return new MCPSDKServer(
+                this.configuration.getServerInfo(),
+                serverOptions
+            );
+        } catch (error) {
+            logger.systemError(error as Error, 'MCP SDK Server Creation');
+            throw error;
+        }
+    }
+
+    /**
+     * Create a fully-configured MCPSDKServer for a single IPC connection.
+     *
+     * Each IPC socket gets its own Protocol instance so multiple clients
+     * (Claude Desktop, Cursor, etc.) can connect simultaneously without
+     * the "Already connected to a transport" conflict.
+     */
+    createPerConnectionServer(): MCPSDKServer {
+        const serverOptions = this.configuration.getServerOptions() as unknown as ConstructorParameters<typeof MCPSDKServer>[1];
+        const server = new MCPSDKServer(
+            this.configuration.getServerInfo(),
+            serverOptions
+        );
+        const handlers = new RequestHandlerFactory(
+            server,
+            this.requestRouter,
+            this.onToolCall
+        );
+        handlers.initializeHandlers();
+        return server;
+    }
+
+    /**
+     * Initialize the request router
+     */
+    private initializeRequestRouter(): void {
+        try {
+            this.requestRouter = new RequestRouter(
+                this.app,
+                this.agentRegistry.getAgents(),
+                true, // isVaultEnabled
+                this.configuration.getSanitizedVaultName(),
+                this.sessionContextManager,
+                this.customPromptStorage,
+                this.onToolResponse
+            );
+        } catch (error) {
+            logger.systemError(error as Error, 'Request Router Initialization');
+            throw error;
+        }
+    }
+
+    /**
+     * Start the MCP server
+     */
+    async start(): Promise<void> {
+        await this.lifecycleManager.startServer();
+    }
+
+    /**
+     * Stop the MCP server
+     */
+    async stop(): Promise<void> {
+        await this.lifecycleManager.stopServer();
+    }
+
+    /**
+     * Release the IPC socket without waiting for the rest of the shutdown.
+     *
+     * Synchronous on purpose: it has to complete inside the same turn as
+     * onunload(), before Obsidian starts loading the replacement instance.
+     * stop() still does the full teardown afterwards. See #337.
+     */
+    releaseIpcSocket(): void {
+        this.ipcTransportManager.closeListener();
+    }
+
+    /**
+     * Check if the server is running
+     */
+    isRunning(): boolean {
+        return this.lifecycleManager.isRunning();
+    }
+
+    /**
+     * Get the current server status
+     */
+    getStatus(): ServerStatus {
+        return this.lifecycleManager.getStatus();
+    }
+
+    /**
+     * Register an agent with the server
+     */
+    registerAgent(agent: IAgent): void {
+        this.agentRegistry.registerAgent(agent);
+    }
+
+    /**
+     * Get an agent by name
+     */
+    getAgent(name: string): IAgent {
+        return this.agentRegistry.getAgent(name);
+    }
+
+    /**
+     * Get all registered agents
+     */
+    getAgents(): Map<string, IAgent> {
+        return this.agentRegistry.getAgents();
+    }
+
+    /**
+     * Get server configuration summary
+     */
+    getConfigurationSummary(): ReturnType<ServerConfiguration['getConfigurationSummary']> {
+        return this.configuration.getConfigurationSummary();
+    }
+
+    /**
+     * Get server diagnostics
+     */
+    getDiagnostics(): ReturnType<ServerLifecycleManager['getDiagnostics']> {
+        return this.lifecycleManager.getDiagnostics();
+    }
+
+    /**
+     * Perform health check
+     */
+    performHealthCheck(): ReturnType<ServerLifecycleManager['performHealthCheck']> {
+        return this.lifecycleManager.performHealthCheck();
+    }
+
+    /**
+     * Get execution statistics
+     */
+    getExecutionStatistics(): ReturnType<AgentExecutionManager['getExecutionStatistics']> {
+        return this.executionManager.getExecutionStatistics();
+    }
+
+    /**
+     * Get request handler statistics
+     */
+    getRequestHandlerStatistics(): ReturnType<RequestHandlerFactory['getHandlerStatistics']> {
+        return this.requestHandlerFactory.getHandlerStatistics();
+    }
+
+    /**
+     * Restart the server
+     */
+    async restart(): Promise<void> {
+        await this.lifecycleManager.restartServer();
+    }
+
+    /**
+     * Force shutdown (emergency stop)
+     */
+    async forceShutdown(): Promise<void> {
+        await this.lifecycleManager.forceShutdown();
+    }
+
+    /**
+     * Get detailed server status
+     */
+    getDetailedStatus(): ReturnType<ServerLifecycleManager['getDetailedStatus']> {
+        return this.lifecycleManager.getDetailedStatus();
+    }
+
+    /**
+     * Get agent statistics
+     */
+    getAgentStatistics(): ReturnType<AgentRegistry['getAgentStatistics']> {
+        return this.agentRegistry.getAgentStatistics();
+    }
+
+    /**
+     * Get transport status
+     */
+    getTransportStatus(): ServerTransportStatus {
+        return {
+            http: getDisabledHttpTransportStatus(),
+            ipc: this.ipcTransportManager.getTransportStatus()
+        };
+    }
+
+    /**
+     * Compatibility shim for callers that still ask for an HTTP MCP URL.
+     * MCP transport is IPC-only, so there is no HTTP endpoint to return.
+     */
+    getServerUrl(): string {
+        return '';
+    }
+
+    /**
+     * Validate execution parameters
+     */
+    validateExecutionParameters(agentName: string, mode: string, params: ToolCallParams): ReturnType<AgentExecutionManager['validateExecutionParameters']> {
+        return this.executionManager.validateExecutionParameters(agentName, mode, params);
+    }
+
+    /**
+     * Get execution context info
+     */
+    getExecutionContextInfo(sessionId?: string): ReturnType<AgentExecutionManager['getExecutionContextInfo']> {
+        return this.executionManager.getExecutionContextInfo(sessionId);
+    }
+
+    /**
+     * Update server configuration
+     */
+    updateConfiguration(updates: { capabilities?: unknown }): void {
+        if (updates.capabilities) {
+            this.configuration.updateCapabilities(updates.capabilities);
+        }
+    }
+
+    /**
+     * Reinitialize request router with current agents
+     * Call this after agents have been registered
+     */
+    reinitializeRequestRouter(): void {
+        try {
+            this.requestRouter = new RequestRouter(
+                this.app,
+                this.agentRegistry.getAgents(),
+                true, // isVaultEnabled
+                this.configuration.getSanitizedVaultName(),
+                this.sessionContextManager,
+                this.customPromptStorage,
+                this.onToolResponse // Callback should be available as class property
+            );
+            
+            // Register WorkspaceSchemaProvider after RequestRouter is created with agents
+            this.requestRouter.registerWorkspaceSchemaProvider().catch(error => {
+                logger.systemError(error as Error, 'WorkspaceSchemaProvider Registration');
+            });
+            
+            // Reinitialize request handlers with new router
+            this.requestHandlerFactory = new RequestHandlerFactory(
+                this.server,
+                this.requestRouter,
+                this.onToolCall
+            );
+            this.requestHandlerFactory.initializeHandlers();
+        } catch (error) {
+            logger.systemError(error as Error, 'Request Router Reinitialization');
+            throw error;
+        }
+    }
+
+    /**
+     * Get server info
+     */
+    getServerInfo(): ServerInfo {
+        return {
+            configuration: this.configuration.getConfigurationSummary(),
+            status: this.getDetailedStatus(),
+            agents: this.getAgentStatistics(),
+            transports: this.getTransportStatus(),
+            handlers: this.getRequestHandlerStatistics(),
+            execution: this.getExecutionStatistics()
+        };
+    }
+}

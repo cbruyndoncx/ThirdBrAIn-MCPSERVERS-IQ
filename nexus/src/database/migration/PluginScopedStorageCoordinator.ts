@@ -1,0 +1,349 @@
+import { App, Plugin, normalizePath } from 'obsidian';
+import type { MCPSettings } from '../../types/plugin/PluginTypes';
+import type { CacheBackendState } from './CacheBackendMigration';
+import {
+  resolveVaultRoot,
+  type VaultRootResolution
+} from '../storage/VaultRootResolver';
+import {
+  resolvePluginStorageRoot,
+  ResolvedPluginStorageRoot
+} from '../storage/PluginStoragePathResolver';
+import { pluginDataLock } from '../../utils/pluginDataLock';
+
+const STORAGE_VERSION = 2;
+const STORAGE_CATEGORIES = ['workspaces', 'conversations', 'tasks'] as const;
+
+type StoredPluginData = MCPSettings & {
+  pluginStorage?: PluginScopedStorageState;
+};
+
+export type SourceOfTruthLocation = 'legacy-dotnexus' | 'plugin-data' | 'vault-root';
+export type PluginScopedMigrationState = 'not_needed' | 'pending' | 'verified' | 'failed';
+
+export interface PluginScopedStorageState {
+  storageVersion: number;
+  sourceOfTruthLocation: SourceOfTruthLocation;
+  migration: {
+    state: PluginScopedMigrationState;
+    startedAt?: number;
+    completedAt?: number;
+    verifiedAt?: number;
+    lastError?: string;
+    legacySourcesDetected: string[];
+    activeDestination: string;
+  };
+  /**
+   * Cache-backend migration state (cache.db file → IndexedDB on desktop).
+   * Independent from the plugin-scoped JSONL migration above. Optional for
+   * backwards compatibility with persisted state from prior versions.
+   */
+  cacheBackend?: CacheBackendState;
+}
+
+export interface PluginScopedStoragePlan {
+  vaultWriteBasePath: string;
+  legacyReadBasePaths: string[];
+  pluginCacheDbPath: string;
+  state: PluginScopedStorageState;
+  roots: ResolvedPluginStorageRoot;
+  vaultRoot: VaultRootResolution;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function buildUniquePaths(...basePaths: string[]): string[] {
+  return Array.from(new Set(basePaths.filter(path => typeof path === 'string' && path.trim().length > 0)));
+}
+
+/**
+ * Runtime storage-plan coordinator for plugin-scoped infrastructure.
+ *
+ * The primary event store now lives in a vault-root data directory.
+ * SQLite remains local in plugin data, while legacy plugin-data and `.nexus`
+ * roots stay available as read fallbacks during migration.
+ */
+export class PluginScopedStorageCoordinator {
+  readonly roots: ResolvedPluginStorageRoot;
+
+  constructor(
+    private readonly app: App,
+    private readonly plugin: Plugin,
+    private readonly legacyBasePath: string
+  ) {
+    this.roots = resolvePluginStorageRoot(app, plugin);
+  }
+
+  /**
+   * Return a storage plan quickly. Never blocks on file copy I/O.
+   *
+   * The runtime always writes synced event data into the configured vault-root
+   * path, while SQLite remains local in plugin data. Legacy plugin-data and
+   * `.nexus` roots stay on the read path during migration.
+   */
+  async prepareStoragePlan(): Promise<PluginScopedStoragePlan> {
+    const pluginData = await this.loadPluginData();
+    const vaultRoot = resolveVaultRoot(pluginData, { configDir: this.app.vault.configDir });
+    const vaultWriteBasePath = vaultRoot.dataPath;
+    const previousRootDataPaths = (pluginData.storage?.previousRootPaths ?? [])
+      .map(root => normalizePath(`${root}/data`));
+    const legacyReadBasePaths = buildUniquePaths(
+      this.roots.dataRoot,
+      ...this.roots.compatibilityDataRoots,
+      this.legacyBasePath,
+      ...previousRootDataPaths
+    );
+    const legacySourcesDetected = await this.collectExistingLegacySources(legacyReadBasePaths);
+    const vaultRootHasEventData = await this.hasEventData(vaultWriteBasePath);
+    const state = this.buildRuntimeState(pluginData, vaultWriteBasePath, legacySourcesDetected, vaultRootHasEventData);
+    await this.saveState(state);
+    return {
+      vaultWriteBasePath,
+      legacyReadBasePaths,
+      pluginCacheDbPath: normalizePath(`${this.roots.dataRoot}/cache.db`),
+      state,
+      roots: this.roots,
+      vaultRoot
+    };
+  }
+
+  private buildRuntimeState(
+    pluginData: StoredPluginData,
+    vaultWriteBasePath: string,
+    legacySourcesDetected: string[],
+    vaultRootHasEventData: boolean
+  ): PluginScopedStorageState {
+    const persistedState = pluginData.pluginStorage;
+
+    if (persistedState?.migration.state === 'verified') {
+      if (!vaultRootHasEventData && legacySourcesDetected.length > 0) {
+        return this.createPendingState(
+          vaultWriteBasePath,
+          legacySourcesDetected,
+          persistedState.migration.startedAt,
+          'Vault-root data is missing; migration will rerun.'
+        );
+      }
+      return this.normalizePersistedState(persistedState, vaultWriteBasePath, legacySourcesDetected);
+    }
+
+    if (legacySourcesDetected.length === 0) {
+      return this.createNotNeededState(vaultWriteBasePath);
+    }
+
+    return this.createPendingState(
+      vaultWriteBasePath,
+      legacySourcesDetected,
+      persistedState?.migration.startedAt,
+      persistedState?.migration.lastError
+    );
+  }
+
+  private async saveState(state: PluginScopedStorageState): Promise<void> {
+    await pluginDataLock.acquire(async () => {
+      const pluginData = await this.loadPluginData();
+      // Preserve cacheBackend across JSONL-migration state writes. saveState()
+      // operates on PluginScopedStorageState (the JSONL-migration shape) and
+      // does not carry cacheBackend in `state`; without this merge, every boot
+      // would clobber the persisted cacheBackend record from runCacheBackendMigration,
+      // forcing the cache-backend FSM to re-run on every restart (issue: Windows
+      // janitor file-lock + saveState clobber → infinite migration loop).
+      const existingCacheBackend = pluginData.pluginStorage?.cacheBackend;
+      pluginData.pluginStorage = existingCacheBackend !== undefined
+        ? { ...state, cacheBackend: existingCacheBackend }
+        : state;
+      await this.plugin.saveData(pluginData);
+    });
+  }
+
+  async persistMigrationState(
+    plan: PluginScopedStoragePlan,
+    migrationState: PluginScopedMigrationState,
+    options: {
+      completedAt?: number;
+      verifiedAt?: number;
+      lastError?: string;
+    } = {}
+  ): Promise<PluginScopedStorageState> {
+    const pluginData = await this.loadPluginData();
+    const nextState = this.buildPersistedState(
+      pluginData.pluginStorage,
+      plan.vaultWriteBasePath,
+      plan.state.migration.legacySourcesDetected,
+      migrationState,
+      options
+    );
+    await this.saveState(nextState);
+    return nextState;
+  }
+
+  /**
+   * Read the persisted cache-backend state (independent of the JSONL
+   * migration state). Returns undefined on first launch or if persisted
+   * state predates the cache-backend extension.
+   */
+  async readCacheBackendState(): Promise<CacheBackendState | undefined> {
+    const data = await this.loadPluginData();
+    return data.pluginStorage?.cacheBackend;
+  }
+
+  /**
+   * Persist the cache-backend state. Merges into the existing pluginStorage
+   * record so the JSONL-migration fields survive untouched.
+   */
+  async writeCacheBackendState(state: CacheBackendState): Promise<void> {
+    await pluginDataLock.acquire(async () => {
+      const data = await this.loadPluginData();
+      const existing = data.pluginStorage ?? this.createNotNeededState('');
+      data.pluginStorage = { ...existing, cacheBackend: state };
+      await this.plugin.saveData(data);
+    });
+  }
+
+  private async loadPluginData(): Promise<StoredPluginData> {
+    const data = await this.plugin.loadData() as StoredPluginData | null;
+    if (!isRecord(data)) {
+      return {} as StoredPluginData;
+    }
+
+    return data;
+  }
+
+  private async collectExistingLegacySources(basePaths: string[]): Promise<string[]> {
+    const detected: string[] = [];
+
+    for (const basePath of basePaths) {
+      if (await this.hasEventData(basePath)) {
+        detected.push(basePath);
+      }
+    }
+
+    return detected;
+  }
+
+  private async hasEventData(basePath: string): Promise<boolean> {
+    for (const category of STORAGE_CATEGORIES) {
+      const categoryPath = normalizePath(`${basePath}/${category}`);
+      if (await this.app.vault.adapter.exists(categoryPath)) {
+        const listing = await this.app.vault.adapter.list(categoryPath);
+        const hasFiles = listing.files.some(filePath => normalizePath(filePath).startsWith(`${categoryPath}/`));
+        const hasFolders = listing.folders.some(folderPath => normalizePath(folderPath).startsWith(`${categoryPath}/`));
+        if (hasFiles || hasFolders) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private buildPersistedState(
+    persistedState: PluginScopedStorageState | undefined,
+    vaultWriteBasePath: string,
+    legacySourcesDetected: string[],
+    migrationState: PluginScopedMigrationState,
+    options: {
+      completedAt?: number;
+      verifiedAt?: number;
+      lastError?: string;
+    } = {}
+  ): PluginScopedStorageState {
+    const baseState = persistedState ?? this.createNotNeededState(vaultWriteBasePath);
+
+    if (migrationState === 'not_needed') {
+      return this.createNotNeededState(vaultWriteBasePath);
+    }
+
+    if (migrationState === 'pending') {
+      return this.createPendingState(
+        vaultWriteBasePath,
+        legacySourcesDetected,
+        baseState.migration.startedAt,
+        baseState.migration.lastError
+      );
+    }
+
+    if (migrationState === 'verified') {
+      return {
+        storageVersion: STORAGE_VERSION,
+        sourceOfTruthLocation: 'vault-root',
+        migration: {
+          state: 'verified',
+          startedAt: baseState.migration.startedAt,
+          completedAt: options.completedAt ?? Date.now(),
+          verifiedAt: options.verifiedAt ?? Date.now(),
+          lastError: undefined,
+          legacySourcesDetected,
+          activeDestination: vaultWriteBasePath
+        }
+      };
+    }
+
+    return {
+      storageVersion: STORAGE_VERSION,
+      sourceOfTruthLocation: 'legacy-dotnexus',
+      migration: {
+        state: 'failed',
+        startedAt: baseState.migration.startedAt ?? Date.now(),
+        completedAt: options.completedAt ?? Date.now(),
+        verifiedAt: undefined,
+        lastError: options.lastError,
+        legacySourcesDetected,
+        activeDestination: vaultWriteBasePath
+      }
+    };
+  }
+
+  private createNotNeededState(activeDestination: string): PluginScopedStorageState {
+    return {
+      storageVersion: STORAGE_VERSION,
+      sourceOfTruthLocation: 'vault-root',
+      migration: {
+        state: 'not_needed',
+        legacySourcesDetected: [],
+        activeDestination
+      }
+    };
+  }
+
+  private createPendingState(
+    activeDestination: string,
+    legacySourcesDetected: string[],
+    startedAt?: number,
+    lastError?: string
+  ): PluginScopedStorageState {
+    return {
+      storageVersion: STORAGE_VERSION,
+      sourceOfTruthLocation: 'legacy-dotnexus',
+      migration: {
+        state: 'pending',
+        startedAt: startedAt ?? Date.now(),
+        lastError,
+        legacySourcesDetected,
+        activeDestination
+      }
+    };
+  }
+
+  private normalizePersistedState(
+    persistedState: PluginScopedStorageState,
+    vaultWriteBasePath: string,
+    legacySourcesDetected: string[]
+  ): PluginScopedStorageState {
+    const sourceOfTruthLocation: SourceOfTruthLocation =
+      persistedState.migration.state === 'verified'
+        ? 'vault-root'
+        : 'legacy-dotnexus';
+
+    return {
+      storageVersion: STORAGE_VERSION,
+      sourceOfTruthLocation,
+      migration: {
+        ...persistedState.migration,
+        legacySourcesDetected,
+        activeDestination: vaultWriteBasePath
+      }
+    };
+  }
+}

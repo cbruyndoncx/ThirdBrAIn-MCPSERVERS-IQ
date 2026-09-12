@@ -1,0 +1,248 @@
+/**
+ * LLM Provider Configuration Types
+ * Extracted from types.ts for better organization and maintainability
+ */
+
+import type { OAuthState } from '../../services/oauth/IOAuthProvider';
+import type { VideoAspectRatio, VideoResolution } from '../../services/llm/types/VideoTypes';
+
+/**
+ * Thinking effort levels - unified across all providers
+ */
+export type ThinkingEffort = 'low' | 'medium' | 'high';
+
+/**
+ * Thinking settings for models that support extended thinking
+ */
+export interface ThinkingSettings {
+  enabled: boolean;
+  effort: ThinkingEffort;
+}
+
+/** Opaque Anthropic blocks that must be replayed byte-for-byte on tool continuations. */
+export type AnthropicThinkingBlock =
+  | { type: 'thinking'; thinking: string; signature: string }
+  | { type: 'redacted_thinking'; data: string };
+
+/**
+ * Alias for backwards compatibility
+ */
+export type DefaultThinkingSettings = ThinkingSettings;
+
+/**
+ * Model configuration with enabled status and optional description
+ */
+export interface ModelConfig {
+  enabled: boolean; // Primary field for controlling model visibility
+  description?: string; // Optional user-defined description (for backwards compatibility)
+}
+
+/**
+ * LLM provider configuration
+ */
+export interface LLMProviderConfig {
+  apiKey: string;
+  userDescription?: string;
+  enabled: boolean;
+  models?: { [modelId: string]: ModelConfig }; // Model-specific configurations
+  ollamaModel?: string; // For Ollama: user-configured model name
+  ollamaContextLength?: number; // For Ollama: num_ctx sent per request (overrides server default); undefined = use server default
+  // Ollama speculative decoding: per-request draft_num_predict. Ollama has no arbitrary draft-model
+  // picker — drafting only speeds up models with built-in MTP tensors; this toggle no-ops otherwise.
+  ollamaSpeculativeDecoding?: boolean; // when true, send draft_num_predict; when false, send 0 (disable)
+  ollamaDraftNumPredict?: number; // draft tokens per step when speculative decoding on; undefined = 4
+  // LM Studio: load-time + per-request tuning applied automatically when chatting
+  lmstudioContextLength?: number; // context_length to load the model with; undefined = LM Studio default
+  lmstudioFlashAttention?: boolean; // flash_attention at load time; undefined = LM Studio default
+  lmstudioSpeculativeDecoding?: boolean; // UI toggle state for speculative decoding (independent of draft selection)
+  lmstudioDraftModel?: string; // draft model key for speculative decoding (per-request); empty/undefined = no draft chosen yet
+  lastValidated?: number; // Unix timestamp (ms) of last successful validation
+  validationHash?: string; // First 16 chars of SHA256 hash of validated API key
+  // OpenRouter-specific headers (optional, but recommended for production)
+  httpReferer?: string;
+  xTitle?: string;
+  // WebLLM-specific settings
+  webllmModel?: string; // Selected WebLLM model (e.g., 'nexus-tools-q4f16')
+  webllmQuantization?: 'q4f16' | 'q5f16' | 'q8f16'; // Quantization level
+  // OAuth connection state (set when provider connected via OAuth flow)
+  oauth?: OAuthState;
+}
+
+/**
+ * Default model selection settings
+ */
+export interface DefaultModelSettings {
+  /** Legacy driver/default-instance key; remains authoritative when instanceId is absent. */
+  provider: string;
+  /** Reserved for explicit configured instances; v1 defaults this to `provider`. */
+  instanceId?: string;
+  model: string;
+}
+
+/**
+ * Default image model selection settings
+ */
+export interface DefaultImageModelSettings {
+  provider: 'google' | 'openrouter' | 'openai';
+  model: string;
+}
+
+export interface DefaultVideoModelSettings {
+  provider: 'google' | 'openrouter';
+  model: string;
+  aspectRatio?: VideoAspectRatio;
+  resolution?: VideoResolution;
+}
+
+export type VoiceDefaultSelectionSource = 'auto' | 'user';
+
+export interface DefaultSpeechModelSettings {
+  provider?: string;
+  model?: string;
+  voice?: string;
+  source?: VoiceDefaultSelectionSource;
+  lastAutoProvider?: string;
+  lastAutoModel?: string;
+}
+
+export interface DefaultRealtimeVoiceModelSettings {
+  provider?: string;
+  model?: string;
+  voice?: string;
+  source?: VoiceDefaultSelectionSource;
+  lastAutoProvider?: string;
+  lastAutoModel?: string;
+}
+
+/**
+ * LLM provider settings
+ */
+export interface LLMProviderSettings {
+  providers: {
+    [providerId: string]: LLMProviderConfig;
+  };
+  defaultModel: DefaultModelSettings;
+  agentModel?: DefaultModelSettings; // Model for executePrompt (API-only, used when chat model is local)
+  agentThinking?: DefaultThinkingSettings; // Thinking settings for agent model (separate from chat model)
+  defaultImageModel?: DefaultImageModelSettings; // Default image generation model
+  defaultVideoModel?: DefaultVideoModelSettings; // Default video generation model
+  defaultThinking?: DefaultThinkingSettings; // Default thinking settings for chat model
+  defaultTemperature?: number; // Default temperature (0.0-1.0, default 0.5)
+  monthlyBudget?: number; // Monthly budget in USD for LLM usage
+  // Ingestion defaults
+  defaultPdfMode?: 'text' | 'vision'; // Default PDF processing mode
+  defaultOcrModel?: DefaultModelSettings; // Default provider+model for vision OCR
+  defaultTranscriptionModel?: DefaultModelSettings; // Default provider+model for audio transcription
+  defaultSpeechModel?: DefaultSpeechModelSettings; // Default provider+model/voice for read aloud
+  defaultRealtimeVoiceModel?: DefaultRealtimeVoiceModelSettings; // Default provider+model/voice for live voice
+}
+
+/**
+ * Default LLM provider settings
+ */
+export const DEFAULT_LLM_PROVIDER_SETTINGS: LLMProviderSettings = {
+  providers: {
+    openai: {
+      apiKey: '',
+      enabled: false
+    },
+    anthropic: {
+      apiKey: '',
+      enabled: false
+    },
+    'anthropic-claude-code': {
+      apiKey: '',
+      enabled: false
+    },
+    'google-gemini-cli': {
+      apiKey: '',
+      enabled: false
+    },
+    google: {
+      apiKey: '',
+      enabled: false
+    },
+    mistral: {
+      apiKey: '',
+      enabled: false
+    },
+    groq: {
+      apiKey: '',
+      enabled: false
+    },
+    deepseek: {
+      apiKey: '',
+      enabled: false
+    },
+    deepgram: {
+      apiKey: '',
+      enabled: false
+    },
+    assemblyai: {
+      apiKey: '',
+      enabled: false
+    },
+    openrouter: {
+      apiKey: '',
+      enabled: false,
+      httpReferer: '',
+      xTitle: ''
+    },
+    requesty: {
+      apiKey: '',
+      enabled: false
+    },
+    perplexity: {
+      apiKey: '',
+      enabled: false
+    },
+    'openai-codex': {
+      apiKey: '',
+      enabled: false
+    },
+    'github-copilot': {
+      apiKey: '',
+      enabled: false
+    },
+    ollama: {
+      apiKey: 'http://127.0.0.1:11434',
+      enabled: false,
+      ollamaModel: '' // User must configure their installed model
+    },
+    lmstudio: {
+      apiKey: 'http://127.0.0.1:1234',
+      enabled: false
+    },
+    webllm: {
+      apiKey: '', // Not used - WebLLM is fully local
+      enabled: false,
+      webllmModel: 'nexus-tools-q4f16', // Default to Q4 quantization
+      webllmQuantization: 'q4f16'
+    }
+  },
+  // The provider/model a fresh install starts on. This MUST name a model the
+  // provider's registry actually declares, or the picker cannot match it and
+  // cost calculation returns null for every call. Keep it in step with
+  // OPENAI_DEFAULT_MODEL in adapters/openai/OpenAIModels.ts; nothing in the type
+  // system compares the two, so the check lives in
+  // .skills/nexus-model-updates/scripts/check_model_registry.py.
+  defaultModel: {
+    provider: 'openai',
+    model: 'gpt-5.6-sol'
+  },
+  defaultImageModel: {
+    provider: 'google',
+    model: 'gemini-3.1-flash-image'
+  },
+  defaultVideoModel: {
+    provider: 'google',
+    model: 'veo-3.1-generate-preview',
+    aspectRatio: '16:9',
+    resolution: '720p'
+  },
+  defaultThinking: {
+    enabled: false,
+    effort: 'medium'
+  },
+  defaultTemperature: 0.5
+};

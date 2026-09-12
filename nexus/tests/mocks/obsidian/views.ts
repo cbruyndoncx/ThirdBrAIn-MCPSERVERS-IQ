@@ -1,0 +1,252 @@
+/**
+ * Obsidian view/lifecycle mocks: Modal, Scope, Component, Plugin, Menu.
+ */
+
+import { createMockElement, App, EventRef, WorkspaceLeaf } from './core';
+
+// Scope mock
+export class Scope {
+  register(): void {
+    void 0;
+  }
+}
+
+// Modal mock
+export class Modal {
+  app: App;
+  contentEl: HTMLElement;
+  containerEl: HTMLElement;
+  modalEl: HTMLElement;
+  titleEl: HTMLElement;
+  scope: Scope;
+
+  // Mirror of Component.register — Modal extends Component at runtime
+  private _cleanups: Array<() => void> = [];
+  private _domEvents: Array<{ el: HTMLElement; type: string; handler: EventListenerOrEventListenerObject }> = [];
+
+  constructor(app: App) {
+    this.app = app;
+    this.contentEl = createMockElement('div');
+    this.containerEl = createMockElement('div');
+    this.modalEl = createMockElement('div');
+    this.titleEl = createMockElement('div');
+    this.scope = new Scope();
+  }
+
+  open(): void {
+    this.onOpen();
+  }
+
+  close(): void {
+    this.onClose();
+    // Mirror Obsidian cleanup on close
+    for (const cb of this._cleanups) {
+      try { cb(); } catch { /* best effort */ }
+    }
+    this._cleanups = [];
+    for (const { el, type, handler } of this._domEvents) {
+      if (el && typeof el.removeEventListener === 'function') {
+        el.removeEventListener(type, handler);
+      }
+    }
+    this._domEvents = [];
+  }
+
+  onOpen(): void {
+    void 0;
+  }
+
+  onClose(): void {
+    void 0;
+  }
+
+  register(cb: () => void): void {
+    this._cleanups.push(cb);
+  }
+
+  registerDomEvent(el: HTMLElement, type: string, handler: EventListenerOrEventListenerObject): void {
+    this._domEvents.push({ el, type, handler });
+    if (el && typeof el.addEventListener === 'function') {
+      el.addEventListener(type, handler);
+    }
+  }
+}
+
+// Component mock (base class for UI components like MessageBubble)
+export class Component {
+  private _domEvents: Array<{ el: HTMLElement; type: string; handler: EventListenerOrEventListenerObject }> = [];
+  private _intervals: Array<ReturnType<typeof setInterval>> = [];
+  private _cleanups: Array<() => void> = [];
+  private _isLoaded = false;
+
+  load(): void {
+    this._isLoaded = true;
+  }
+
+  onload(): void {
+    void 0;
+  }
+
+  unload(): void {
+    // Run registered cleanup callbacks (Obsidian's Component.register)
+    for (const cb of this._cleanups) {
+      try {
+        cb();
+      } catch {
+        // Swallow cleanup errors — match Obsidian's best-effort teardown semantics
+      }
+    }
+    this._cleanups = [];
+
+    // Clean up registered DOM events
+    for (const { el, type, handler } of this._domEvents) {
+      if (el && typeof el.removeEventListener === 'function') {
+        el.removeEventListener(type, handler);
+      }
+    }
+    this._domEvents = [];
+
+    // Clean up intervals
+    for (const interval of this._intervals) {
+      clearInterval(interval);
+    }
+    this._intervals = [];
+
+    this._isLoaded = false;
+    this.onunload();
+  }
+
+  onunload(): void {
+    void 0;
+  }
+
+  /**
+   * Register a cleanup callback invoked during unload().
+   * Mirrors Obsidian's Component.register(cb) API.
+   */
+  register(cb: () => void): void {
+    this._cleanups.push(cb);
+  }
+
+  registerDomEvent(el: HTMLElement, type: string, handler: EventListenerOrEventListenerObject): void {
+    this._domEvents.push({ el, type, handler });
+    if (el && typeof el.addEventListener === 'function') {
+      el.addEventListener(type, handler);
+    }
+  }
+
+  registerInterval(interval: ReturnType<typeof setInterval>): ReturnType<typeof setInterval> {
+    this._intervals.push(interval);
+    return interval;
+  }
+
+  registerEvent(eventRef: EventRef): void {
+    void eventRef;
+  }
+}
+
+/**
+ * ItemView mock.
+ *
+ * Deliberately minimal: `leaf`, `app`, `containerEl` and the Component
+ * lifecycle it inherits — the only ItemView surface the plugin's views touch.
+ *
+ * `containerEl.children` is left EMPTY on purpose. Real Obsidian puts the
+ * content host at `containerEl.children[1]`, and the plugin reads exactly that.
+ * A test that needs the content host must populate `children` itself, so that
+ * the "no container" early-return is never taken by accident and never
+ * mistaken for the real path.
+ */
+export class ItemView extends Component {
+  leaf: WorkspaceLeaf;
+  app: App;
+  containerEl: HTMLElement;
+  icon = '';
+
+  constructor(leaf: WorkspaceLeaf) {
+    super();
+    this.leaf = leaf;
+    this.app = (leaf as unknown as { app?: App })?.app ?? new App();
+    this.containerEl = createMockElement('div');
+  }
+
+  getViewType(): string {
+    return 'mock-view';
+  }
+
+  getDisplayText(): string {
+    return 'Mock view';
+  }
+
+  getIcon(): string {
+    return this.icon;
+  }
+
+  onOpen(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  onClose(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+// Plugin mock
+export class Plugin extends Component {
+  app: App;
+  manifest: { id: string; name: string; version: string };
+
+  constructor(app: App, manifest: { id: string; name: string; version: string }) {
+    super();
+    this.app = app;
+    this.manifest = manifest;
+  }
+
+  addCommand(command: { id: string; name: string; callback?: () => void }): void {
+    void command;
+  }
+}
+
+// Menu mock
+export class Menu {
+  addItem(callback: (item: MenuItem) => void): this {
+    callback(new MenuItem());
+    return this;
+  }
+}
+
+// MenuItem mock
+export class MenuItem {
+  setTitle(_title: string): this {
+    return this;
+  }
+
+  setIcon(_icon: string): this {
+    return this;
+  }
+
+  onClick(_callback: () => void): this {
+    return this;
+  }
+}
+
+/**
+ * MarkdownRenderer mock.
+ *
+ * Only `render` exists, because that is the whole surface the plugin uses (the
+ * `analyze` runner renders a base embed into an off-screen host). It is inert
+ * by default — a test that needs the render to DO something replaces the
+ * implementation with `(MarkdownRenderer.render as jest.Mock).mockImplementation(...)`,
+ * which is how the base-analyze lane drives Obsidian's side of the rendezvous.
+ */
+export class MarkdownRenderer {
+  static render = jest.fn(
+    async (
+      _app: unknown,
+      _markdown: string,
+      _el: unknown,
+      _sourcePath: string,
+      _component: unknown
+    ): Promise<void> => undefined
+  );
+}

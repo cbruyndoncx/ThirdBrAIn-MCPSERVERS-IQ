@@ -1,0 +1,554 @@
+/**
+ * SQLite Schema for Hybrid Storage System
+ * Location: src/database/schema/schema.ts
+ * Purpose: Complete database schema with indexes and FTS
+ * Current Version: 16
+ *
+ * IMPORTANT: When updating the schema:
+ * 1. Update SCHEMA_SQL below for new installs
+ * 2. Add a migration in SchemaMigrator.ts for existing databases
+ * 3. Update CURRENT_SCHEMA_VERSION in SchemaMigrator.ts
+ * 4. Bump the `INSERT OR IGNORE INTO schema_version VALUES (N, ...)` literal at
+ *    the END of SCHEMA_SQL to match. A fresh install is stamped by that literal
+ *    and then migrate() early-returns, so a stale value makes new users replay
+ *    migrations they should never run — and no machine with an existing cache
+ *    can see the difference.
+ *
+ * NOTE: Uses camelCase column names to match TypeScript/JavaScript conventions.
+ */
+
+export const SCHEMA_SQL = `
+-- Schema version tracking
+CREATE TABLE IF NOT EXISTS schema_version (
+  version INTEGER PRIMARY KEY,
+  appliedAt INTEGER NOT NULL
+);
+
+-- ==================== WORKSPACES ====================
+
+CREATE TABLE IF NOT EXISTS workspaces (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  rootFolder TEXT NOT NULL,
+  created INTEGER NOT NULL,
+  lastAccessed INTEGER NOT NULL,
+  isActive INTEGER DEFAULT 1,
+  isArchived INTEGER DEFAULT 0,
+  contextJson TEXT,
+  dedicatedAgentId TEXT,
+  UNIQUE(name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspaces_name ON workspaces(name);
+CREATE INDEX IF NOT EXISTS idx_workspaces_folder ON workspaces(rootFolder);
+CREATE INDEX IF NOT EXISTS idx_workspaces_active ON workspaces(isActive);
+CREATE INDEX IF NOT EXISTS idx_workspaces_archived ON workspaces(isArchived);
+CREATE INDEX IF NOT EXISTS idx_workspaces_accessed ON workspaces(lastAccessed);
+
+-- ==================== SESSIONS ====================
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  workspaceId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  startTime INTEGER,
+  endTime INTEGER,
+  isActive INTEGER DEFAULT 0,
+  FOREIGN KEY(workspaceId) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspaceId);
+CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(isActive);
+CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(startTime);
+
+-- ==================== STATES ====================
+
+CREATE TABLE IF NOT EXISTS states (
+  id TEXT PRIMARY KEY,
+  sessionId TEXT NOT NULL,
+  workspaceId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  created INTEGER NOT NULL,
+  stateJson TEXT,
+  tagsJson TEXT,
+  -- Denormalized from the snapshot's state.metadata.isArchived (issue #219) so
+  -- listing states never has to read their JSONL content. Nullable with NO
+  -- default on purpose: NULL means "unknown, ask the content", which is what
+  -- rows migrated from a pre-v16 cache hold until they are backfilled.
+  isArchived INTEGER,
+  FOREIGN KEY(sessionId) REFERENCES sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY(workspaceId) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_states_session ON states(sessionId);
+CREATE INDEX IF NOT EXISTS idx_states_workspace ON states(workspaceId);
+CREATE INDEX IF NOT EXISTS idx_states_created ON states(created);
+CREATE INDEX IF NOT EXISTS idx_states_archived ON states(isArchived);
+
+-- ==================== MEMORY TRACES ====================
+
+CREATE TABLE IF NOT EXISTS memory_traces (
+  id TEXT PRIMARY KEY,
+  sessionId TEXT NOT NULL,
+  workspaceId TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  type TEXT,
+  content TEXT,
+  metadataJson TEXT,
+  FOREIGN KEY(sessionId) REFERENCES sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY(workspaceId) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_traces_session ON memory_traces(sessionId);
+CREATE INDEX IF NOT EXISTS idx_traces_workspace ON memory_traces(workspaceId);
+CREATE INDEX IF NOT EXISTS idx_traces_timestamp ON memory_traces(timestamp);
+CREATE INDEX IF NOT EXISTS idx_traces_type ON memory_traces(type);
+
+-- ==================== TOOL OPERATION RECEIPTS ====================
+-- Rebuildable query cache for durable receipt events in workspace JSONL.
+
+CREATE TABLE IF NOT EXISTS tool_operation_receipts (
+  operationId TEXT PRIMARY KEY,
+  signature TEXT NOT NULL,
+  status TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  workspaceId TEXT NOT NULL,
+  sessionId TEXT NOT NULL,
+  conversationId TEXT,
+  messageId TEXT,
+  turnId TEXT,
+  replayPolicy TEXT NOT NULL,
+  replayable INTEGER NOT NULL DEFAULT 0,
+  commandSummary TEXT NOT NULL,
+  resultJson TEXT,
+  resultTruncated INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  startedAt INTEGER NOT NULL,
+  completedAt INTEGER,
+  updatedAt INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_operation_workspace ON tool_operation_receipts(workspaceId);
+CREATE INDEX IF NOT EXISTS idx_tool_operation_status ON tool_operation_receipts(status);
+CREATE INDEX IF NOT EXISTS idx_tool_operation_workspace_status ON tool_operation_receipts(workspaceId, status);
+
+-- ==================== CONVERSATIONS ====================
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  created INTEGER NOT NULL,
+  updated INTEGER NOT NULL,
+  vaultName TEXT NOT NULL,
+  messageCount INTEGER DEFAULT 0,
+  metadataJson TEXT,
+  workspaceId TEXT,
+  sessionId TEXT,
+  workflowId TEXT,
+  runTrigger TEXT,
+  scheduledFor INTEGER,
+  runKey TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_workspaceId ON conversations(workspaceId);
+CREATE INDEX IF NOT EXISTS idx_conversations_sessionId ON conversations(sessionId);
+CREATE INDEX IF NOT EXISTS idx_conversations_workflowId ON conversations(workflowId);
+CREATE INDEX IF NOT EXISTS idx_conversations_scheduledFor ON conversations(scheduledFor);
+CREATE INDEX IF NOT EXISTS idx_conversations_runKey ON conversations(runKey);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_vault ON conversations(vaultName);
+CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated);
+CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created);
+
+-- ==================== MESSAGES ====================
+
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  conversationId TEXT NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT,
+  timestamp INTEGER NOT NULL,
+  state TEXT,
+  toolCallsJson TEXT,
+  toolCallId TEXT,
+  reasoningContent TEXT,
+  sequenceNumber INTEGER NOT NULL,
+  alternativesJson TEXT,
+  activeAlternativeIndex INTEGER DEFAULT 0,
+  FOREIGN KEY(conversationId) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversationId);
+CREATE INDEX IF NOT EXISTS idx_messages_sequence ON messages(conversationId, sequenceNumber);
+CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
+
+-- ==================== FULL-TEXT SEARCH (FTS5) ====================
+-- Using FTS5 for full-text search capabilities
+
+CREATE VIRTUAL TABLE IF NOT EXISTS workspace_fts USING fts5(
+  id,
+  name,
+  description,
+  content='workspaces',
+  content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS workspace_fts_insert AFTER INSERT ON workspaces BEGIN
+  INSERT INTO workspace_fts(rowid, id, name, description)
+  VALUES (new.rowid, new.id, new.name, new.description);
+END;
+
+CREATE TRIGGER IF NOT EXISTS workspace_fts_delete AFTER DELETE ON workspaces BEGIN
+  INSERT INTO workspace_fts(workspace_fts, rowid, id, name, description)
+  VALUES ('delete', old.rowid, old.id, old.name, old.description);
+END;
+
+CREATE TRIGGER IF NOT EXISTS workspace_fts_update AFTER UPDATE ON workspaces BEGIN
+  INSERT INTO workspace_fts(workspace_fts, rowid, id, name, description)
+  VALUES ('delete', old.rowid, old.id, old.name, old.description);
+  INSERT INTO workspace_fts(rowid, id, name, description)
+  VALUES (new.rowid, new.id, new.name, new.description);
+END;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS conversation_fts USING fts5(
+  id,
+  title,
+  content='conversations',
+  content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS conversation_fts_insert AFTER INSERT ON conversations BEGIN
+  INSERT INTO conversation_fts(rowid, id, title)
+  VALUES (new.rowid, new.id, new.title);
+END;
+
+CREATE TRIGGER IF NOT EXISTS conversation_fts_delete AFTER DELETE ON conversations BEGIN
+  INSERT INTO conversation_fts(conversation_fts, rowid, id, title)
+  VALUES ('delete', old.rowid, old.id, old.title);
+END;
+
+CREATE TRIGGER IF NOT EXISTS conversation_fts_update AFTER UPDATE ON conversations BEGIN
+  INSERT INTO conversation_fts(conversation_fts, rowid, id, title)
+  VALUES ('delete', old.rowid, old.id, old.title);
+  INSERT INTO conversation_fts(rowid, id, title)
+  VALUES (new.rowid, new.id, new.title);
+END;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(
+  id,
+  conversationId,
+  content,
+  reasoningContent,
+  content='messages',
+  content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS message_fts_insert AFTER INSERT ON messages BEGIN
+  INSERT INTO message_fts(rowid, id, conversationId, content, reasoningContent)
+  VALUES (new.rowid, new.id, new.conversationId, new.content, new.reasoningContent);
+END;
+
+CREATE TRIGGER IF NOT EXISTS message_fts_delete AFTER DELETE ON messages BEGIN
+  INSERT INTO message_fts(message_fts, rowid, id, conversationId, content, reasoningContent)
+  VALUES ('delete', old.rowid, old.id, old.conversationId, old.content, old.reasoningContent);
+END;
+
+CREATE TRIGGER IF NOT EXISTS message_fts_update AFTER UPDATE ON messages BEGIN
+  INSERT INTO message_fts(message_fts, rowid, id, conversationId, content, reasoningContent)
+  VALUES ('delete', old.rowid, old.id, old.conversationId, old.content, old.reasoningContent);
+  INSERT INTO message_fts(rowid, id, conversationId, content, reasoningContent)
+  VALUES (new.rowid, new.id, new.conversationId, new.content, new.reasoningContent);
+END;
+
+-- ==================== SYNC STATE ====================
+
+CREATE TABLE IF NOT EXISTS sync_state (
+  deviceId TEXT PRIMARY KEY,
+  lastEventTimestamp INTEGER NOT NULL,
+  syncedFilesJson TEXT
+);
+
+CREATE TABLE IF NOT EXISTS applied_events (
+  eventId TEXT PRIMARY KEY,
+  appliedAt INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_applied_events_time ON applied_events(appliedAt);
+
+-- Per-file reconcile fast-path cursors. PK uses the FULL filename (canonical or
+-- conflict-suffixed) so a canonical shard and its conflict sibling each maintain
+-- independent offsets. See docs/architecture/sync-safe-storage-reconcile-adjustments.md §4.
+CREATE TABLE IF NOT EXISTS shard_cursors (
+  deviceId TEXT NOT NULL,
+  shardPath TEXT NOT NULL,
+  lastEventId TEXT,
+  lastOffset INTEGER NOT NULL DEFAULT 0,
+  lastTimestamp INTEGER NOT NULL DEFAULT 0,
+  kind TEXT NOT NULL,
+  workspaceKey TEXT,
+  updatedAt INTEGER NOT NULL,
+  PRIMARY KEY (deviceId, shardPath)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shard_cursors_path ON shard_cursors(shardPath);
+CREATE INDEX IF NOT EXISTS idx_shard_cursors_kind ON shard_cursors(kind);
+
+-- ==================== NOTE EMBEDDINGS ====================
+
+-- Vector storage (vec0 virtual table)
+CREATE VIRTUAL TABLE IF NOT EXISTS note_embeddings USING vec0(
+  embedding float[384]
+);
+
+-- Metadata linked to vec0 by rowid
+CREATE TABLE IF NOT EXISTS embedding_metadata (
+  rowid INTEGER PRIMARY KEY,
+  notePath TEXT NOT NULL UNIQUE,
+  model TEXT NOT NULL,
+  contentHash TEXT NOT NULL,
+  created INTEGER NOT NULL,
+  updated INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_meta_path ON embedding_metadata(notePath);
+CREATE INDEX IF NOT EXISTS idx_embedding_meta_hash ON embedding_metadata(contentHash);
+
+-- ==================== TRACE EMBEDDINGS ====================
+
+-- Vector storage for memory traces
+CREATE VIRTUAL TABLE IF NOT EXISTS trace_embeddings USING vec0(
+  embedding float[384]
+);
+
+-- Metadata linked to vec0 by rowid
+CREATE TABLE IF NOT EXISTS trace_embedding_metadata (
+  rowid INTEGER PRIMARY KEY,
+  traceId TEXT NOT NULL UNIQUE,
+  workspaceId TEXT NOT NULL,
+  sessionId TEXT,
+  model TEXT NOT NULL,
+  contentHash TEXT NOT NULL,
+  created INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_trace_embed_id ON trace_embedding_metadata(traceId);
+CREATE INDEX IF NOT EXISTS idx_trace_embed_workspace ON trace_embedding_metadata(workspaceId);
+CREATE INDEX IF NOT EXISTS idx_trace_embed_session ON trace_embedding_metadata(sessionId);
+
+-- ==================== CUSTOM PROMPTS ====================
+
+CREATE TABLE IF NOT EXISTS custom_prompts (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  prompt TEXT NOT NULL,
+  isEnabled INTEGER NOT NULL DEFAULT 1,
+  created INTEGER NOT NULL,
+  modified INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_custom_prompts_name ON custom_prompts(name);
+CREATE INDEX IF NOT EXISTS idx_custom_prompts_enabled ON custom_prompts(isEnabled);
+
+-- ==================== CONVERSATION EMBEDDINGS ====================
+
+-- Vector storage for conversation QA pair chunks
+CREATE VIRTUAL TABLE IF NOT EXISTS conversation_embeddings USING vec0(
+  embedding float[384]
+);
+
+-- Metadata linked to vec0 by rowid
+CREATE TABLE IF NOT EXISTS conversation_embedding_metadata (
+  rowid INTEGER PRIMARY KEY,
+  pairId TEXT NOT NULL,
+  side TEXT NOT NULL,
+  chunkIndex INTEGER NOT NULL,
+  conversationId TEXT NOT NULL,
+  startSequenceNumber INTEGER NOT NULL,
+  endSequenceNumber INTEGER NOT NULL,
+  pairType TEXT NOT NULL,
+  sourceId TEXT,
+  sessionId TEXT,
+  workspaceId TEXT,
+  model TEXT NOT NULL,
+  contentHash TEXT NOT NULL,
+  contentPreview TEXT,
+  referencedNotes TEXT,
+  created INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conv_embed_meta_pairId ON conversation_embedding_metadata(pairId);
+CREATE INDEX IF NOT EXISTS idx_conv_embed_meta_conversationId ON conversation_embedding_metadata(conversationId);
+CREATE INDEX IF NOT EXISTS idx_conv_embed_meta_workspaceId ON conversation_embedding_metadata(workspaceId);
+CREATE INDEX IF NOT EXISTS idx_conv_embed_meta_sessionId ON conversation_embedding_metadata(sessionId);
+
+-- ==================== EMBEDDING BACKFILL STATE ====================
+
+CREATE TABLE IF NOT EXISTS embedding_backfill_state (
+  id TEXT PRIMARY KEY DEFAULT 'conversation_backfill',
+  lastProcessedConversationId TEXT,
+  totalConversations INTEGER DEFAULT 0,
+  processedConversations INTEGER DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  startedAt INTEGER,
+  completedAt INTEGER,
+  errorMessage TEXT
+);
+
+-- ==================== PROJECTS ====================
+
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  workspaceId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created INTEGER NOT NULL,
+  updated INTEGER NOT NULL,
+  metadataJson TEXT,
+  FOREIGN KEY(workspaceId) REFERENCES workspaces(id) ON DELETE CASCADE,
+  UNIQUE(workspaceId, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspaceId);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated);
+
+-- ==================== TASKS ====================
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  workspaceId TEXT NOT NULL,
+  parentTaskId TEXT,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'todo',
+  priority TEXT DEFAULT 'medium',
+  created INTEGER NOT NULL,
+  updated INTEGER NOT NULL,
+  completedAt INTEGER,
+  dueDate INTEGER,
+  assignee TEXT,
+  tagsJson TEXT,
+  metadataJson TEXT,
+  FOREIGN KEY(projectId) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY(workspaceId) REFERENCES workspaces(id) ON DELETE CASCADE,
+  FOREIGN KEY(parentTaskId) REFERENCES tasks(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(projectId);
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspaceId);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parentTaskId);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
+CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated);
+CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(dueDate);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(projectId, status);
+
+-- ==================== TASK DEPENDENCIES (DAG edges) ====================
+
+CREATE TABLE IF NOT EXISTS task_dependencies (
+  taskId TEXT NOT NULL,
+  dependsOnTaskId TEXT NOT NULL,
+  created INTEGER NOT NULL,
+  PRIMARY KEY(taskId, dependsOnTaskId),
+  FOREIGN KEY(taskId) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY(dependsOnTaskId) REFERENCES tasks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(taskId);
+CREATE INDEX IF NOT EXISTS idx_task_deps_depends ON task_dependencies(dependsOnTaskId);
+
+-- ==================== TASK-NOTE LINKS (bidirectional) ====================
+
+CREATE TABLE IF NOT EXISTS task_note_links (
+  taskId TEXT NOT NULL,
+  notePath TEXT NOT NULL,
+  linkType TEXT NOT NULL DEFAULT 'reference',
+  created INTEGER NOT NULL,
+  PRIMARY KEY(taskId, notePath),
+  FOREIGN KEY(taskId) REFERENCES tasks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_links_note ON task_note_links(notePath);
+
+-- ==================== SKILLS ====================
+-- Derived cache of on-disk skill folders (<root>/skills/<provider>/<name>/SKILL.md).
+-- Source of truth is the folder; most columns are rebuildable by a re-scan.
+-- is_archived + last_loaded_at are owned state a re-scan must preserve.
+-- See docs/plans/skills-protocol-integration-plan.md §4.
+
+CREATE TABLE IF NOT EXISTS skills (
+  id            TEXT PRIMARY KEY,
+  provider      TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  description   TEXT,
+  vault_path    TEXT NOT NULL,
+  origin_path   TEXT,
+  content_hash  TEXT NOT NULL,
+  is_archived   INTEGER DEFAULT 0,
+  last_loaded_at INTEGER,
+  created       INTEGER NOT NULL,
+  updated       INTEGER NOT NULL,
+  UNIQUE(provider, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
+
+-- ==================== NOTES QUERY INDEX ====================
+-- Derived, rebuildable index of the vault's markdown notes and their frontmatter.
+-- The vault is the source of truth; NotesIndexBuilder walks it at startup and
+-- keeps these rows fresh from metadataCache/vault events.
+--
+-- These tables are owned by the schema (not created ad hoc) because every path
+-- that creates a database must produce them: "Nexus: Rebuild cache" reopens from
+-- SCHEMA_SQL alone, and a database without them fails every subsequent note write
+-- with "no such table: notes".
+--
+-- FK enforcement is OFF on the shared connection (SQLite's per-connection
+-- default), so the note_properties -> notes relationship is documented but NOT
+-- cascaded. deleteNote() removes property rows explicitly before the note row.
+-- See docs/plans/notes-query-index-plan.md §5 / §6.
+
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE,
+  basename TEXT NOT NULL,
+  folder TEXT NOT NULL,
+  ext TEXT NOT NULL,
+  title TEXT,
+  ctime INTEGER NOT NULL,
+  mtime INTEGER NOT NULL,
+  size INTEGER NOT NULL,
+  tags_json TEXT,
+  links_json TEXT,
+  frontmatter_json TEXT,
+  content_hash TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notes_folder ON notes(folder);
+CREATE INDEX IF NOT EXISTS idx_notes_mtime ON notes(mtime);
+
+CREATE TABLE IF NOT EXISTS note_properties (
+  note_id INTEGER NOT NULL REFERENCES notes(id),
+  key TEXT NOT NULL,
+  key_raw TEXT NOT NULL,
+  value_text TEXT,
+  value_num REAL,
+  value_type TEXT NOT NULL,
+  position INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_np_key_text ON note_properties(key, value_text);
+CREATE INDEX IF NOT EXISTS idx_np_key_num ON note_properties(key, value_num);
+CREATE INDEX IF NOT EXISTS idx_np_note ON note_properties(note_id);
+
+-- ==================== INITIALIZATION ====================
+
+INSERT OR IGNORE INTO schema_version VALUES (16, strftime('%s', 'now') * 1000);
+`;
