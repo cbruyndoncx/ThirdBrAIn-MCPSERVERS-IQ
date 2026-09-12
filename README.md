@@ -3,7 +3,7 @@
 Consolidated collection managed with [git-subrepo](https://github.com/ingydotnet/git-subrepo).
 Update everything with `git subrepo pull --all`.
 
-Contains 107 subrepos:
+Contains 109 subrepos:
 
 ## [ai-expert-workflow-mcp](https://github.com/bacoco/ai-expert-workflow-mcp)
 - **Remote**: https://github.com/bacoco/ai-expert-workflow-mcp.git (branch `main`)
@@ -162,7 +162,7 @@ Contains 107 subrepos:
 - **Remote**: https://github.com/PrefectHQ/fastmcp.git (branch `main`)
 - **Description**: 🚀 The fast, Pythonic way to build MCP servers and clients.
 - **Last Updated**: 2026-09-11T19:26:19Z
-- **Stars**: 27631
+- **Stars**: 27630
 - **Languages Used**: Python, Just, Shell
 - **Number of Releases**: 100+
 
@@ -578,7 +578,7 @@ Contains 107 subrepos:
 - **Remote**: https://github.com/yctimlin/mcp_excalidraw.git (branch `main`)
 - **Description**: MCP server and Claude Code skill for Excalidraw — programmatic canvas toolkit to create, edit, and export diagrams via AI agents with real-time canvas sync.
 - **Last Updated**: 2026-09-08T14:24:12Z
-- **Stars**: 2413
+- **Stars**: 2414
 - **Languages Used**: TypeScript, JavaScript, HTML, Dockerfile
 - **Number of Releases**: 0
 
@@ -648,6 +648,14 @@ Contains 107 subrepos:
 - **Languages Used**: JavaScript, TypeScript, Dockerfile
 - **Number of Releases**: 0
 
+## [metamcp](https://github.com/metatool-ai/metamcp)
+- **Remote**: https://github.com/metatool-ai/metamcp.git (branch `ai-dev`)
+- **Description**: MCP Aggregator, Orchestrator, Middleware, Gateway in one docker
+- **Last Updated**: 2026-06-22T16:50:50Z
+- **Stars**: 2655
+- **Languages Used**: TypeScript, CSS, Dockerfile, JavaScript, Shell
+- **Number of Releases**: 32
+
 ## [nanobanana-mcp-server](https://github.com/zhongweili/nanobanana-mcp-server)
 - **Remote**: https://github.com/zhongweili/nanobanana-mcp-server.git (branch `master`)
 - **Description**: AI image generation MCP server powered by Google Gemini, with smart model selection and 4K output
@@ -659,7 +667,7 @@ Contains 107 subrepos:
 ## [nexus](https://github.com/ProfSynapse/nexus)
 - **Remote**: https://github.com/ProfSynapse/nexus.git (branch `main`)
 - **Description**: No description available
-- **Last Updated**: 2026-09-12T15:25:05Z
+- **Last Updated**: 2026-09-12T15:48:08Z
 - **Stars**: 153
 - **Languages Used**: TypeScript, Python, CSS, JavaScript, Shell
 - **Number of Releases**: 100+
@@ -709,7 +717,7 @@ Contains 107 subrepos:
 - **Remote**: https://github.com/BeehiveInnovations/pal-mcp-server.git (branch `main`)
 - **Description**: The power of Claude Code / GeminiCLI / CodexCLI + [Gemini / OpenAI / OpenRouter / Azure / Grok / Ollama / Custom Model / All Of The Above] working as one.
 - **Last Updated**: 2025-12-15T17:07:31Z
-- **Stars**: 11746
+- **Stars**: 11745
 - **Languages Used**: Python, Shell, PowerShell, Dockerfile
 - **Number of Releases**: 74
 
@@ -749,7 +757,7 @@ Contains 107 subrepos:
 - **Remote**: https://github.com/oraios/serena.git (branch `main`)
 - **Description**: A powerful MCP toolkit for coding, providing semantic retrieval and editing capabilities  - the IDE for your agent
 - **Last Updated**: 2026-09-12T13:15:36Z
-- **Stars**: 29215
+- **Stars**: 29219
 - **Languages Used**: Python, JavaScript, HTML, CSS, AL, Elixir, Erlang, Nix, Vue, TypeScript, C++, Svelte, Lua, Ruby, Dart, Solidity, PowerShell, HCL, Shell, Zig, MATLAB, C, F#, Pascal, PHP, HLSL, Java, R, Dockerfile, Haskell, SystemVerilog, C#, Fortran, TeX, 1C Enterprise, Swift, Go, Clojure, Elm, Haxe, Rust, Open Policy Agent, SCSS, Gleam, CUE, Lean, Scala, QML, mIRC Script, Nextflow, Crystal, OCaml, Groovy, Kotlin, Ada, Luau, Perl, Dune, Julia, Wolfram Language, Cuda, Objective-C
 - **Number of Releases**: 16
 
@@ -841,6 +849,14 @@ Contains 107 subrepos:
 - **Stars**: 75
 - **Languages Used**: TypeScript, JavaScript, CSS, HTML
 - **Number of Releases**: 0
+
+## [WebMCP](https://github.com/jasonjmcghee/WebMCP)
+- **Remote**: https://github.com/jasonjmcghee/WebMCP.git (branch `main`)
+- **Description**: Early WebMCP proposal / implementation - since evolved and worked on by much more capable folks that develop the web: https://github.com/webmachinelearning/webmcp
+- **Last Updated**: 2026-02-15T21:48:57Z
+- **Stars**: 826
+- **Languages Used**: JavaScript, HTML, Dockerfile
+- **Number of Releases**: 6
 
 ## [xmcp](https://github.com/basementstudio/xmcp)
 - **Remote**: https://github.com/basementstudio/xmcp.git (branch `main`)
