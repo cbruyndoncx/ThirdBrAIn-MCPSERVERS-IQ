@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/oraios/serena.git
+	branch = main
+	commit = 701e7c843f46c6a649203a488cece1bf19f1df90
+	parent = 4b39e0a81028639564b63e75e7ffad3df08db968
+	method = merge
+	cmdver = 0.4.9
