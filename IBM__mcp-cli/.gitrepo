@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/IBM/mcp-cli.git
+	branch = main
+	commit = 6d806241be6a4b28186c95cb6e7144864b7cf5d7
+	parent = 87509602d46db61e6a7f0a11a3b2eca85cc4353b
+	method = merge
+	cmdver = 0.4.9
