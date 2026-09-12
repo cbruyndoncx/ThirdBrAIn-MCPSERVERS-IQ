@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/yctimlin/mcp_excalidraw.git
+	branch = main
+	commit = 713706e967ed21db1d9264748fa01c6af961c792
+	parent = 0cdc862c38163f5974975d94932fec27cb3ba203
+	method = merge
+	cmdver = 0.4.9
