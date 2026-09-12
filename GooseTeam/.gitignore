@@ -1,0 +1,5 @@
+.idea
+.goose
+.goosehints
+.DS_Store
+node_modules
