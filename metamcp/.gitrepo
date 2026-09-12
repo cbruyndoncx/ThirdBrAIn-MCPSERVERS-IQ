@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/metatool-ai/metamcp.git
+	branch = ai-dev
+	commit = ff4ff2de9d25453c52dcc7be32680b30700a6012
+	parent = 666b9df1da2dfa9cf3eb51f3fe3f81f8c616d6c5
+	method = merge
+	cmdver = 0.4.9
