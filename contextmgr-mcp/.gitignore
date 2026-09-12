@@ -1,0 +1,92 @@
+# Dependency directories
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+coverage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+
+# --- AI assistants & IDE agent state (BEGIN) ---
+# Session histories / task transcripts from AI coding tools can embed real API
+# keys (users paste secrets into agent chats; extensions bundle credentials).
+# Ignore all of these by default; opt individual files back in deliberately.
+
+# Claude Code (settings.local.json + session data)
+.claude/
+# OpenAI Codex CLI
+.codex/
+# Gemini CLI
+.gemini/
+# opencode
+.opencode/
+# Aider (chat history, caches, config can carry keys)
+.aider*
+# Continue.dev (config.json holds provider keys)
+.continue/
+# Cursor (mcp.json can hold keys; -server = remote/SSH agent state)
+.cursor/
+.cursor-server/
+# Windsurf / Codeium
+.windsurf/
+.windsurf-server/
+.codeium/
+# Cline / Roo Code / Kilo Code (data in VS Code globalStorage, but project dirs too)
+.roo/
+.kilocode/
+# Trae, Zed
+.trae/
+.zed/
+# VS Code (mcp.json + settings can hold keys/tokens; .history = Local History ext)
+.vscode/
+.history/
+# Remote/SSH agent server state (Cline tasks, VS Code user history — the hyperfy leak path)
+.vscode-server*/
+.vscode-test/
+# Generic tool-config dir (caught the 09-03 leak: .config/.vscode-server/...)
+.config/
+# MCP server configs (frequently embed provider API keys)
+mcp.json
+**/mcp.json
+# Wrangler local dev secrets
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+# Environment files (any extension: .env.local, .env.production, ...)
+.env*
+!.env.example
+!.env*.example
+# Key material
+*.pem
+*.key
+*.p12
+*.pfx
+# --- AI assistants & IDE agent state (END) ---

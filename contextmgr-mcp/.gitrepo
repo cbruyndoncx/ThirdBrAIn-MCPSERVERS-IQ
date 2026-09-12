@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/docherty/contextmgr-mcp.git
+	branch = main
+	commit = a54f0a0a70f3aab0f20a225eaeddbf5b785f0645
+	parent = daa54c617ecf57c7c44ae0a59092fd77eed4ea1a
+	method = merge
+	cmdver = 0.4.9
