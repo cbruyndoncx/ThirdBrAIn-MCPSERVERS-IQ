@@ -1,0 +1,93 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Runtime state files
+JARVIS_state.json
+manus_fsm_state.json
+manus_*.json
+*_state.json
+
+# Legacy JSON files (migrated to knowledge graph) - NEVER COMMIT THESE
+iron_manus_*.json
+iron_manus_component_cognitive_duality.json
+iron_manus_performance_archive.json
+iron_manus_unified_constraints.json
+iron_manus_state.json
+
+# Archive and temporary files
+gitignore.archive/
+temp-files/
+archive1/
+*.tmp
+*.temp
+lint_output.txt
+iron-manus-sessions/assessment-report.md
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+.nyc_output/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# API Keys and secrets
+*.key
+*.pem
+secrets.json
+openai-key.txt
+
+# Generated embeddings (large files)
+data/embeddings-*.json
+data/precomputed-embeddings.json
+
+# Package manager lock files (keep package-lock.json, ignore others)
+yarn.lock
+pnpm-lock.yaml
+
+# Jest
+jest.config.js
+
+# Hooks (unless needed for project)
+hooks/dist/
+# .env file removed from git for security
+
+# Claude local settings
+.claude/

@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/dnnyngyen/iron-manus-mcp.git
+	branch = main
+	commit = 16be8c01d891a3dd8083495fd23217bc88d8ee72
+	parent = 81ccc8676968f1c6fc4cb580e1e7f9e8e03c0a59
+	method = merge
+	cmdver = 0.4.9
