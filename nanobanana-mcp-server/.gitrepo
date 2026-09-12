@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/zhongweili/nanobanana-mcp-server.git
+	branch = master
+	commit = 24cb5ca890a62cb138624b2c3ccc9b23cb127212
+	parent = bfb533df4119eb83b01f6ecb90f6eed80ecdaa04
+	method = merge
+	cmdver = 0.4.9
