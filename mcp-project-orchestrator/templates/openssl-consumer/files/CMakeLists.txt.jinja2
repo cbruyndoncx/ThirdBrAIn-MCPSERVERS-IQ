@@ -1,0 +1,41 @@
+cmake_minimum_required(VERSION 3.15)
+project({{project_name}} CXX)
+
+find_package(OpenSSL REQUIRED)
+
+add_executable({{project_name}} main.cpp)
+target_link_libraries({{project_name}} OpenSSL::SSL OpenSSL::Crypto)
+
+# C++17 standard
+set_property(TARGET {{project_name}} PROPERTY CXX_STANDARD 17)
+EOF && cat > README.md.jinja2 << 'EOF'
+# {{project_name}}
+
+OpenSSL-based application{% if enable_fips %} with FIPS 140-3 compliance{% endif %}.
+
+## Build
+
+```bash
+conan install . --build=missing
+cmake --preset conan-default
+cmake --build --preset conan-release
+```
+
+## Run
+
+```bash
+./build/Release/{{project_name}}
+```
+
+{% if enable_fips %}
+## FIPS Compliance
+
+This application is configured for FIPS 140-3 validated cryptography:
+- Certificate: #4985
+- Security Level: Level 1
+- Deployment Target: Government/Regulated
+
+{% endif %}
+## Author
+
+{{author_name}} <{{author_email}}>

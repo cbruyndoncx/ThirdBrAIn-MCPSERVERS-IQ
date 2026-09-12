@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/sparesparrow/mcp-project-orchestrator.git
+	branch = main
+	commit = afb63adbf530c9deb180728481646a92c80c2a50
+	parent = e3b4b4b93c8814b81e2a5ed3fcf4c9533937fecc
+	method = merge
+	cmdver = 0.4.9
