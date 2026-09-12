@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/Mgabr90/zoho-mcp-server.git
+	branch = main
+	commit = 66fbf184f633071eeb0eabad304137ea3b5f7848
+	parent = eaae29d454f0b6d27795a4c4a33cee8c7e62585f
+	method = merge
+	cmdver = 0.4.9
