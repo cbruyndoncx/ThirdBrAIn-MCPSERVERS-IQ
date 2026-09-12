@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/ravitemer/mcp-hub.git
+	branch = main
+	commit = 9c7670a4c341ed3cf738a6242c0fde1cea40bccf
+	parent = 6e485620312c3f5f2f685729a6860190473920f0
+	method = merge
+	cmdver = 0.4.9
