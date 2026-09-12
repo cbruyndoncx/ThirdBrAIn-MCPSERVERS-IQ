@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/nickytonline/mcp-typescript-template.git
+	branch = main
+	commit = ecafa99775a600f6a0bef5eb74d6b6d6412fb9bb
+	parent = a933bc641a9885a6737ca2ea9b583056a3a4e4d3
+	method = merge
+	cmdver = 0.4.9
