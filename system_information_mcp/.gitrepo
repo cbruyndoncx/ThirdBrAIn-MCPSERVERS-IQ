@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/carterlasalle/system_information_mcp.git
+	branch = main
+	commit = 6814928b424c7833a38ceef6b8390a8d98104582
+	parent = 3f392a5e172f9e3f5b990ccddf65b87e901aed64
+	method = merge
+	cmdver = 0.4.9
