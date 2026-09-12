@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/angiejones/mcp-selenium.git
+	branch = main
+	commit = 363ecf0f71958adc2b74a98389c1d31133011fb0
+	parent = 77149c558d4e6c61d51eda4c34d030c2aed69b7d
+	method = merge
+	cmdver = 0.4.9
