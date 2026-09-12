@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/karthikv2k/chat-mcp.git
+	branch = main
+	commit = d6b488a1e2e35cc9af12df7ae64efe3159e0158f
+	parent = ffa1ef639ed718e53f9b6777ac9ccb4bfcdd24c7
+	method = merge
+	cmdver = 0.4.9

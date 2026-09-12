@@ -1,0 +1,5 @@
+Makefile
+.env
+.venv
+gen_openai_schema.py
+*.json
