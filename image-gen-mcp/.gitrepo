@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/JasonBates/image-gen-mcp.git
+	branch = main
+	commit = 5b9037ee22f87b89e9496e7b4af0797e2326ef78
+	parent = 712212c531e2a106d8a8b930f656fbd9ccd3ecda
+	method = merge
+	cmdver = 0.4.9
