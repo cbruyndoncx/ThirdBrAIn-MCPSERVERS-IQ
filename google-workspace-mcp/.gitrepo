@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/jacob-bd/google-workspace-mcp.git
+	branch = main
+	commit = f067813fbd4cfe32bb9ec40057288c6f70d58989
+	parent = 588566e08f0e74b965decc1e65a3822e5da600b0
+	method = merge
+	cmdver = 0.4.9

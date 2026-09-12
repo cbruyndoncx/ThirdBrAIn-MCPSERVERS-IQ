@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Claude Code
+.claude/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Mypy
+.mypy_cache/
+
+# Ruff
+.ruff_cache/
+
+# Environment
+.env
+.env.local
+
+# OAuth credentials (NEVER commit these)
+credentials.json
+token.json
+client_secrets.json
+client_secret*.json
+
+# Logs
+*.log
+logs/
+
+# Internal documentation (not for public repo)
+Red Hat/
+
+# Debug/test scripts
+read_*.py
+
+# Gemini CLI
+.gemini-clipboard/
+
+# uv lock file (optional - some projects include it)
+uv.lock
