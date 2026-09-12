@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/crazyrabbitLTC/mcp-vibecoder.git
+	branch = main
+	commit = 5e218b01c9bed9cc44c1c3c087faa559210bc1a7
+	parent = 42a0218b17f8a63d8d5f3fb9f3e79582b6c93bd9
+	method = merge
+	cmdver = 0.4.9
