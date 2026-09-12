@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/imprvhub/mcp-rss-aggregator.git
+	branch = main
+	commit = dd511d5aa498f98e4b2bae21edbe018aa26a1148
+	parent = 8eed4411d8151a57b6d2e64879a4f6e312b685a8
+	method = merge
+	cmdver = 0.4.9
