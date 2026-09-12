@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/yuvalsuede/memory-mcp.git
+	branch = main
+	commit = c434710b73f6d4eb588fee25c00a336871ddd7b5
+	parent = e75d771f72a25709762682837ed2c00cd57b3a9b
+	method = merge
+	cmdver = 0.4.9
