@@ -1,0 +1,85 @@
+[project]
+name = "mcp-server-linkedin"
+version = "4.24.0"
+description = "MCP server that gives AI assistants like Claude access to LinkedIn profiles, companies, and job postings through the user's own browser session."
+readme = "README.md"
+requires-python = ">=3.12.4,<3.15"
+authors = [
+    { name = "Daniel Sticker", email = "daniel@sticker.name" }
+]
+license = "Apache-2.0"
+# Declared rather than left to setuptools' default globs, which happen to cover
+# NOTICE* today. Apache-2.0 §4(d) binds a derivative only to the notices this
+# project actually distributes, so whether the file reaches the wheel is the
+# whole point and not an incidental of the build backend.
+#
+# Measured with `uv build` at 4.23.0: the wheel carries
+# mcp_server_linkedin-4.23.0.dist-info/licenses/NOTICE with a matching
+# `License-File: NOTICE` in METADATA, and the sdist carries NOTICE at its root.
+# Worth re-running when the build backend or its version changes.
+license-files = ["LICENSE", "NOTICE"]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "llm",
+    "anthropic",
+    "claude",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "anyio>=4.13.0",
+    "cryptography>=48.0.1",
+    "fastmcp>=3.4.4,<4",
+    "inquirer>=3.4.0",
+    "packaging>=26.2",
+    "patchright>=1.55.0",
+    "python-dotenv>=1.1.1",
+    "pywin32>=312 ; sys_platform == 'win32'",
+    "rich>=15.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/stickerdaniel/linkedin-mcp-server"
+Documentation = "https://github.com/stickerdaniel/linkedin-mcp-server#readme"
+Repository = "https://github.com/stickerdaniel/linkedin-mcp-server"
+Issues = "https://github.com/stickerdaniel/linkedin-mcp-server/issues"
+Changelog = "https://github.com/stickerdaniel/linkedin-mcp-server/releases"
+
+[project.scripts]
+mcp-server-linkedin = "linkedin_mcp_server.cli_main:main"
+
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["linkedin_mcp_server*"]
+exclude = ["assets*", "docs*", "tests*"]
+
+[tool.setuptools.package-data]
+linkedin_mcp_server = ["py.typed"]
+
+[dependency-groups]
+dev = [
+    "aiohttp>=3.12.13",
+    "pre-commit>=4.2.0",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.1.1",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.11.11",
+    "ty>=0.0.1a12",
+]

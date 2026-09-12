@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/stickerdaniel/linkedin-mcp-server.git
+	branch = main
+	commit = 74a1bf3d318e5ab880aeab4313c09852fad33c6d
+	parent = 7402ccd4f58d828f81c553a72238930ed86ede76
+	method = merge
+	cmdver = 0.4.9
