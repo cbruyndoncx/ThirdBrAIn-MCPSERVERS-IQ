@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/disler/aider-mcp-server.git
+	branch = main
+	commit = b2516fa466d0d851932da92ee6d0e66946db9efc
+	parent = 9aeaa8300a949a07d1aedc3fec45623baeab8b13
+	method = merge
+	cmdver = 0.4.9
