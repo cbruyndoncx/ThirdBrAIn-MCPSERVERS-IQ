@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/paoloricciuti/mcp-add.git
+	branch = main
+	commit = 9df8dd35a1e5431c93102b6a57ea3a526cac1fd4
+	parent = 22a5ecb42524594aa8321a1e45a1a064c8945b7c
+	method = merge
+	cmdver = 0.4.9
