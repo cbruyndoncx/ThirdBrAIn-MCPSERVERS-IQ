@@ -1,0 +1,22 @@
+{
+  "name": "Request Headers",
+  "private": true,
+  "description": "Access and utilize HTTP request headers in xmcp tool calls",
+  "keywords": [
+    "headers",
+    "request",
+    "http"
+  ],
+  "scripts": {
+    "build": "xmcp build",
+    "dev": "xmcp dev",
+    "start": "node dist/http.js"
+  },
+  "dependencies": {
+    "xmcp": "workspace:*",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "@xmcp-dev/compiler": "workspace:*"
+  }
+}

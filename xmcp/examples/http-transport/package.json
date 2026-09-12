@@ -1,0 +1,23 @@
+{
+  "name": "HTTP Transport",
+  "private": true,
+  "type": "module",
+  "description": "Learn how to set up an xmcp server using HTTP transport",
+  "keywords": [
+    "transport",
+    "server",
+    "http"
+  ],
+  "scripts": {
+    "build": "xmcp build",
+    "dev": "xmcp dev",
+    "start": "node dist/http.js"
+  },
+  "dependencies": {
+    "xmcp": "workspace:*",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "@xmcp-dev/compiler": "workspace:*"
+  }
+}

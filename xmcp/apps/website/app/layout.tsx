@@ -1,0 +1,169 @@
+import "./globals.css";
+import { Analytics } from "@vercel/analytics/next";
+import { Toolbar } from "basehub/next-toolbar";
+import { Footer } from "../components/layout/footer";
+import { Header } from "../components/layout/header";
+import { Metadata } from "next";
+import { RootProvider } from "fumadocs-ui/provider";
+import DefaultSearchDialog from "@/components/search/search-default";
+import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
+import { Prefooter } from "@/components/layout/prefooter";
+import { Toaster } from "@/components/ui/toaster";
+import { SpeedInsights } from "@vercel/speed-insights/next";
+import { JsonLd } from "@/components/seo/json-ld";
+import { WebMCPProvider } from "@/components/ai/webmcp-provider";
+import { SITE_URL } from "@/lib/base-url";
+import {
+  getOrganizationSchema,
+  getWebSiteSchema,
+} from "@/lib/structured-data";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
+  title: "xmcp — The TypeScript MCP framework",
+  description:
+    "xmcp is the TypeScript framework for building, shipping, and scaling Model Context Protocol servers — tools, prompts, resources, auth, transports, and monetization out of the box.",
+  keywords: [
+    "xmcp",
+    "MCP",
+    "Model Context Protocol",
+    "TypeScript",
+    "MCP framework",
+    "MCP server",
+    "AI tools",
+    "LLM tools",
+  ],
+  robots: {
+    index: true,
+    follow: true,
+  },
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/favicon-96x96.png", sizes: "96x96", type: "image/png" },
+      { url: "/favicon.svg", type: "image/svg+xml" },
+    ],
+    shortcut: "/favicon.ico",
+    apple: [
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+  },
+  openGraph: {
+    siteName: "xmcp",
+    images: {
+      url: "/xmcp-og.png",
+      width: 1200,
+      height: 630,
+      alt: "xmcp — The TypeScript MCP framework",
+    },
+    url: "https://xmcp.dev",
+    type: "website",
+    locale: "en_US",
+    title: "xmcp — The TypeScript MCP framework",
+    description:
+      "xmcp is the TypeScript framework for building, shipping, and scaling Model Context Protocol servers — tools, prompts, resources, auth, transports, and monetization out of the box.",
+  },
+  twitter: {
+    card: "summary_large_image",
+    site: "@xmcp_dev",
+    creator: "@xmcp_dev",
+    title: "xmcp — The TypeScript MCP framework",
+    description:
+      "xmcp is the TypeScript framework for building, shipping, and scaling Model Context Protocol servers — tools, prompts, resources, auth, transports, and monetization out of the box.",
+    images: {
+      url: "/xmcp-og.png",
+      width: 1200,
+      height: 630,
+      alt: "xmcp — The TypeScript MCP framework",
+    },
+  },
+  manifest: "/site.webmanifest",
+  appleWebApp: {
+    title: "xmcp",
+  },
+  // No root-level alternates.canonical: it would be inherited verbatim by any
+  // route that doesn't set its own (404, /terminal), claiming they are the
+  // homepage. Every indexable page sets its own canonical.
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en">
+      <head>
+        <meta name="theme-color" content="#000000" />
+      </head>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-[100dvh] flex flex-col`}
+      >
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:bg-brand-black focus:text-brand-white focus:px-3 focus:py-2"
+        >
+          Skip to content
+        </a>
+        <JsonLd
+          data={[getOrganizationSchema(SITE_URL), getWebSiteSchema(SITE_URL)]}
+        />
+        <RootProvider
+          search={{
+            SearchDialog: DefaultSearchDialog,
+            options: {
+              links: [
+                ["Getting Started", "/docs"],
+                ["Configuration", "/docs/configuration/custom-directories"],
+                ["Core Concepts", "/docs/core-concepts/tools"],
+                ["Authentication", "/docs/authentication/api-key"],
+                ["Integrations", "/docs/adapters/nextjs"],
+                ["Deployment", "/docs/deployment/vercel"],
+              ],
+            },
+          }}
+        >
+          <Header />
+          {children}
+          <Prefooter />
+          <Footer />
+          <Toaster />
+        </RootProvider>
+        <Toolbar />
+        <WebMCPProvider />
+        <Analytics />
+        <SpeedInsights />
+        {/* Google tag (gtag.js) */}
+        <Script
+          async
+          src="https://www.googletagmanager.com/gtag/js?id=G-1H605RJV2K"
+        />
+        <Script id="gtag-init">
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+
+            gtag('config', 'G-1H605RJV2K');
+          `}
+        </Script>
+        <Script
+          async
+          src="https://analytics.ahrefs.com/analytics.js"
+          data-key="3RwN0TIK29DoT05/h0pY1g"
+        />
+      </body>
+    </html>
+  );
+}

@@ -1,0 +1,22 @@
+{
+  "name": "Custom Webpack Config",
+  "private": true,
+  "description": "Customize webpack configuration for xmcp builds",
+  "keywords": [
+    "configuration",
+    "bundler",
+    "webpack"
+  ],
+  "scripts": {
+    "build": "xmcp build",
+    "dev": "xmcp dev",
+    "start": "node dist/http.js"
+  },
+  "dependencies": {
+    "xmcp": "workspace:*",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "@xmcp-dev/compiler": "workspace:*"
+  }
+}

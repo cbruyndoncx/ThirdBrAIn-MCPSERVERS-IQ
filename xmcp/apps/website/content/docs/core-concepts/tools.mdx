@@ -1,0 +1,725 @@
+---
+title: "Tools"
+metadataTitle: "Tools | xmcp Documentation"
+publishedAt: "2025-07-06"
+summary: "Create and register tools in your xmcp MCP server — typed functions your LLM can call to interact with APIs, databases, files, and other systems."
+description: "Tools are functions that your LLM can actively call and decides when to use based on user requests. They enable AI models to perform actions such as writing to databases, calling external APIs, modifying files, or triggering other logic."
+---
+
+By default, `xmcp` detects files under the `/src/tools/` directory and registers them as tools, but you can specify a [custom directory](/docs/configuration/custom-directories) if you prefer. The directory to use can be configured in the `xmcp.config.ts` file.
+
+A tool file consists of three main exports:
+
+- **Default**: The tool handler function.
+- **Schema** (optional): The input parameters using Zod schemas.
+- **Metadata** (optional): The tool's identity and behavior hints. If omitted, the name is inferred from the file name and the description defaults to a placeholder.
+
+```typescript title="src/tools/greet.ts"
+import { z } from "zod";
+import { type InferSchema } from "xmcp";
+
+// Define the schema for tool parameters
+export const schema = {
+  name: z.string().describe("The name of the user to greet"),
+};
+
+// Define tool metadata
+export const metadata = {
+  name: "greet",
+  description: "Greet the user",
+  annotations: {
+    title: "Greet the user",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
+};
+
+// Tool implementation
+export default async function greet({ name }: InferSchema<typeof schema>) {
+  return `Hello, ${name}!`;
+}
+```
+
+If you're returning a string or number only, you can shortcut the return value to be the string or number directly.
+
+```typescript
+export default async function greet({ name }: InferSchema<typeof schema>) {
+  return `Hello, ${name}!`;
+}
+```
+
+<Callout variant="info">
+  We encourage to use this shortcut for readability, and restrict the usage of
+  the content array type only for complex responses, like images, audio or
+  videos.
+</Callout>
+
+## Schema Definition
+
+The schema defines your tool's input parameters using [Zod](https://zod.dev). Use `.describe()` on each parameter to help LLMs understand how to use your tool correctly.
+
+```typescript title="src/tools/create-user.ts"
+import { z } from "zod";
+import { type InferSchema } from "xmcp";
+
+export const schema = {
+  name: z.string().describe("User's full name"),
+  email: z.string().email().describe("Valid email address"),
+  age: z.number().min(18).optional().describe("User's age (18+)"),
+  role: z.enum(["admin", "user"]).describe("User role"),
+};
+
+export default async function createUser(args: InferSchema<typeof schema>) {
+  // args is automatically typed: { name: string; email: string; age?: number; role: "admin" | "user" }
+  const { name, email, age, role } = args;
+  // Implementation here
+}
+```
+
+### Type Inference
+
+The `InferSchema` utility automatically infers TypeScript types from your Zod schema, giving you full type safety without manual type definitions:
+
+```typescript
+import { type InferSchema } from "xmcp";
+
+export const schema = {
+  tags: z.array(z.string()).describe("List of tags"),
+  metadata: z
+    .object({
+      priority: z.number(),
+      assignee: z.string().optional(),
+    })
+    .describe("Task metadata"),
+};
+
+// TypeScript infers:
+// {
+//   tags: string[];
+//   metadata: { priority: number; assignee?: string };
+// }
+export default async function handler(args: InferSchema<typeof schema>) {
+  // Full autocomplete and type checking
+  args.tags.forEach((tag) => console.log(tag));
+  args.metadata.priority; // number
+  args.metadata.assignee; // string | undefined
+}
+```
+
+<Callout variant="info">
+  Clear descriptions are crucial for LLM tool discovery. For comprehensive Zod
+  validation options (regex patterns, constraints, transformations), see the
+  [Zod documentation](https://zod.dev).
+</Callout>
+
+## Metadata
+
+The metadata export defines your tool's identity and provides behavioral hints to LLMs and clients.
+
+```typescript title="src/tools/delete-user.ts"
+import { type ToolMetadata } from "xmcp";
+
+export const metadata: ToolMetadata = {
+  name: "delete-user",
+  description: "Permanently delete a user account",
+  annotations: {
+    title: "Delete User Account",
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+};
+```
+
+### Core Properties
+
+**`name`** (required)
+
+- Unique identifier for the tool
+- Defaults to the filename if not provided
+- Use kebab-case (e.g., `get-user-profile`)
+
+**`description`** (required)
+
+- Clear explanation of what the tool does
+- Defaults to placeholder if not provided
+- Critical for LLM tool discovery and selection
+
+### Annotations
+
+Behavioral hints that help LLMs and UIs understand how to use your tool:
+
+```typescript
+annotations: {
+  // Human-readable title displayed in UIs
+  title: "Create New Task",
+
+  // Tool doesn't modify its environment (safe to retry)
+  readOnlyHint: true,
+
+  // Tool may perform destructive updates (use with caution)
+  destructiveHint: false,
+
+  // Repeated calls with same args have no additional effect
+  idempotentHint: true,
+
+  // Tool interacts with external entities (APIs, databases)
+  openWorldHint: true,
+}
+```
+
+<Callout variant="info">
+  These hints are advisory only. LLMs may use them to make better decisions
+  about when and how to call your tools, but they don't enforce any behavior.
+</Callout>
+
+### MCP Apps metadata
+
+<Callout variant="info">
+  MCP Apps widgets work automatically for React tools. Add `ui` metadata only
+  when you need CSP or rendering hints.
+</Callout>
+
+```typescript
+export const metadata: ToolMetadata = {
+  name: "show-analytics",
+  description: "Display analytics dashboard",
+  _meta: {
+    ui: {
+      csp: {
+        connectDomains: ["https://api.analytics.com"],
+        resourceDomains: ["https://cdn.analytics.com"],
+      },
+      domain: "https://analytics-widget.example.com",
+      prefersBorder: true,
+    },
+  },
+};
+```
+
+**Resource-specific properties:**
+
+- `csp.connectDomains` - Origins for fetch/XHR/WebSocket connections
+- `csp.resourceDomains` - Origins for images, scripts, stylesheets, fonts, media
+- `domain` - Optional dedicated subdomain for the widget's sandbox origin
+- `prefersBorder` - Request visible border + background (`true`/`false`/omitted)
+
+## Handler Types
+
+Tools support three types of handlers, each suited for different use cases:
+
+| Type             | Best For                              | Returns                            |
+| ---------------- | ------------------------------------- | ---------------------------------- |
+| Standard         | Data queries, calculations, API calls | Unstructured or structured content |
+| Template Literal | Simple widgets with external scripts  | HTML string                        |
+| React Component  | Interactive, stateful widgets         | React component                    |
+
+### 1. Standard Handlers
+
+Standard handlers are functions that return text, structured content, or simple data. This is the default approach for most tools.
+
+**When to use:**
+
+- Performing calculations or data transformations
+- Calling external APIs and returning results
+- Querying databases
+- Any task that returns text or structured data without UI interaction
+
+```typescript title="src/tools/calculate.ts"
+import { z } from "zod";
+import { type InferSchema } from "xmcp";
+
+export const schema = {
+  operation: z.enum(["add", "subtract"]),
+  a: z.number(),
+  b: z.number(),
+};
+
+export const metadata = {
+  name: "calculate",
+  description: "Perform basic calculations",
+};
+
+export default async function calculate({
+  operation,
+  a,
+  b,
+}: InferSchema<typeof schema>) {
+  const result = operation === "add" ? a + b : a - b;
+  return `Result: ${result}`;
+}
+```
+
+### Elicitation
+
+Tool handlers also receive an `extra` argument. Use `extra.elicit()` when you want the client to collect a small piece of user input before the tool continues.
+
+When the client sends an MCP `initialize` request, `extra.clientInfo` is available with protocol-level client identity (`name`, `version`, and optional fields like `title`). In stdio, xmcp keeps that identity after initialization for the lifetime of the connection.
+
+HTTP transports are strictly stateless. Tool calls only receive `extra.clientInfo` when the current request includes client identity. For post-initialize tool calls, repeat the identity with request headers:
+
+```http
+x-mcp-client-name: cursor
+x-mcp-client-version: 0.50.1
+x-mcp-client-title: Cursor
+```
+
+```typescript title="src/tools/preview-elicitation.ts"
+import { type ToolExtraArguments, type ToolMetadata } from "xmcp";
+
+export const metadata: ToolMetadata = {
+  name: "preview-elicitation",
+  description: "Preview a basic extra.elicit() flow in MCPJam",
+  annotations: {
+    title: "Preview elicitation",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
+};
+
+export default async function previewElicitation(
+  _: any,
+  extra: ToolExtraArguments
+) {
+  const result = await extra.elicit({
+    message: "Choose a deployment target",
+    requestedSchema: {
+      type: "object",
+      properties: {
+        environment: {
+          type: "string",
+          title: "Environment",
+          enum: ["staging", "production"],
+          enumNames: ["Staging", "Production"],
+          default: "staging",
+        },
+      },
+      required: ["environment"],
+    },
+  });
+
+  return JSON.stringify(result, null, 2);
+}
+```
+
+#### Quick check with MCPJam
+
+1. From the repo root, run `pnpm --dir examples/http-transport dev`.
+2. In another terminal, run `npx @mcpjam/inspector@latest`.
+3. Connect MCPJam to `http://127.0.0.1:3001/mcp`.
+4. Call `preview-elicitation`.
+5. MCPJam opens a small form with an environment select. Accepting returns `action: "accept"` plus `content.environment`. Cancel or decline returns the matching `action`.
+
+<Callout type="info">
+  `extra.elicit()` uses server-initiated requests, which exist on 2025-era MCP
+  connections only. On protocol revision `2026-07-28` it throws with a message
+  pointing at `inputRequired()` below — the multi round-trip replacement that
+  works on both eras.
+</Callout>
+
+### Multi round-trip input (`inputRequired`)
+
+Protocol revision `2026-07-28` replaces server-initiated requests with
+[multi round-trip requests](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr):
+the tool returns an `input_required` result describing what it needs, the
+client collects it, and retries the same tool call with `inputResponses`
+attached. xmcp re-exports the SDK helpers, so a tool that needs user input
+before continuing looks like this:
+
+```typescript title="src/tools/preview-input-required.ts"
+import { z } from "zod";
+import {
+  acceptedContent,
+  inputRequired,
+  type InferSchema,
+  type ToolExtraArguments,
+} from "xmcp";
+
+export const schema = {
+  theme: z.string().describe("The theme to apply"),
+};
+
+export const metadata = {
+  name: "preview-input-required",
+  description: "Ask the user to confirm before applying a theme",
+};
+
+export default async function previewInputRequired(
+  { theme }: InferSchema<typeof schema>,
+  extra: ToolExtraArguments
+) {
+  const answer = acceptedContent<{ confirmed: boolean }>(
+    extra.inputResponses,
+    "confirmation"
+  );
+
+  if (!answer) {
+    return inputRequired({
+      inputRequests: {
+        confirmation: inputRequired.elicit({
+          message: `Apply the "${theme}" theme?`,
+          requestedSchema: {
+            type: "object",
+            properties: {
+              confirmed: { type: "boolean", title: "Confirm" },
+            },
+            required: ["confirmed"],
+          },
+        }),
+      },
+    });
+  }
+
+  return answer.confirmed
+    ? `Theme "${theme}" applied.`
+    : `Theme change cancelled.`;
+}
+```
+
+The handler runs once per round: the first call returns the embedded
+elicitation, the retry finds the answer in `extra.inputResponses` and
+completes. On 2025-era connections the SDK's legacy shim converts the
+`inputRequired` return into a real elicitation request automatically, so the
+same tool serves both client generations. To carry server state across rounds
+(remember: it round-trips through the client), mint and verify it with
+`createRequestStateCodec`, also re-exported from `xmcp`.
+
+### Sampling
+
+Use `extra.sample()` when a tool needs an LLM completion from the connected client. The client keeps control of model access, selection, and permissions, so the server needs no model API key. Sampling only works when the connected client advertises the `sampling` capability; other clients reject the request.
+
+The request takes `messages` (text, image, or audio content), a required `maxTokens`, and optional `systemPrompt`, `modelPreferences` (model hints plus cost/speed/intelligence priorities), `temperature`, `stopSequences`, `includeContext`, and `metadata`. The result contains the `model` the client picked, the assistant `content`, and an optional `stopReason`.
+
+```typescript title="src/tools/preview-sampling.ts"
+import { z } from "zod";
+import {
+  type InferSchema,
+  type ToolExtraArguments,
+  type ToolMetadata,
+} from "xmcp";
+
+export const schema = {
+  text: z.string().describe("Text for the client's model to summarize"),
+};
+
+export const metadata: ToolMetadata = {
+  name: "preview-sampling",
+  description: "Preview a basic extra.sample() flow in MCPJam",
+  annotations: {
+    title: "Preview sampling",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
+};
+
+export default async function previewSampling(
+  { text }: InferSchema<typeof schema>,
+  extra: ToolExtraArguments
+) {
+  const result = await extra.sample({
+    messages: [
+      {
+        role: "user",
+        content: { type: "text", text: `Summarize in one sentence:\n${text}` },
+      },
+    ],
+    systemPrompt: "You summarize text concisely.",
+    modelPreferences: {
+      speedPriority: 0.8,
+    },
+    maxTokens: 200,
+  });
+
+  return JSON.stringify(result, null, 2);
+}
+```
+
+#### Quick check with MCPJam
+
+1. From the repo root, run `pnpm --dir examples/http-transport dev`.
+2. In another terminal, run `npx @mcpjam/inspector@latest`.
+3. Connect MCPJam to `http://127.0.0.1:3001/mcp`.
+4. Call `preview-sampling` with any text.
+5. MCPJam shows the incoming sampling request for approval. Approving runs the completion with its configured model and the tool returns the `model`, `content`, and `stopReason` from the result.
+
+<Callout type="info">
+  Like `extra.elicit()`, `extra.sample()` uses server-initiated requests, which
+  exist on 2025-era MCP connections only. On protocol revision `2026-07-28` it
+  throws with a message pointing at `inputRequired.createMessage()` — the multi
+  round-trip replacement described above. Sampling with `tools`/`toolChoice` and
+  task-augmented sampling are not wired through xmcp yet and are rejected with a
+  clear error.
+</Callout>
+
+### 2. Template Literal Handlers
+
+Return HTML directly to create interactive widgets. xmcp automatically generates
+the widget resource.
+
+```typescript title="src/tools/show-chart.ts"
+import { type ToolMetadata } from "xmcp";
+
+export const metadata: ToolMetadata = {
+  name: "show-chart",
+  description: "Display an interactive chart",
+  _meta: {
+    ui: {
+      csp: {
+        resourceDomains: ["https://cdn.jsdelivr.net"],
+      },
+    },
+  },
+};
+
+export default async function showChart() {
+  return `
+    <div id="chart-container">
+      <h2>Sales Data</h2>
+      <canvas id="chart"></canvas>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+      // Chart initialization code
+    </script>
+  `;
+}
+```
+
+### 3. React Component Handlers
+
+Return React components for interactive, composable widgets. xmcp renders the component to HTML and generates a widget resource automatically.
+
+```typescript title="src/tools/interactive-todo.tsx"
+import { type ToolMetadata } from "xmcp";
+import { useState } from "react";
+
+export const metadata: ToolMetadata = {
+  name: "interactive-todo",
+  description: "Interactive todo list widget",
+  _meta: {
+    ui: {
+      prefersBorder: true,
+    },
+  },
+};
+
+export default function InteractiveTodo() {
+  const [todos, setTodos] = useState<string[]>([]);
+  const [input, setInput] = useState("");
+
+  const addTodo = () => {
+    if (input.trim()) {
+      setTodos([...todos, input]);
+      setInput("");
+    }
+  };
+
+  return (
+    <div>
+      <h2>Todo List</h2>
+      <input
+        type="text"
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        placeholder="Add a todo..."
+      />
+      <button onClick={addTodo}>Add</button>
+      <ul>
+        {todos.map((todo, idx) => (
+          <li key={idx}>{todo}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+**Setup Requirements:**
+
+1. Use `.tsx` file extension for React component tools
+2. Install React dependencies: `npm install react react-dom`
+3. Configure `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "jsx": "react-jsx"
+  }
+}
+```
+
+## Return Values
+
+Tools support multiple return formats depending on your needs:
+
+### Simple Values
+
+Return strings or numbers directly - xmcp automatically wraps them in the proper format:
+
+```typescript
+export default async function calculate() {
+  return "Result: 42"; // or return 42;
+}
+```
+
+### Content Array
+
+Return an object with a `content` array for rich media responses:
+
+```typescript
+export default async function getProfile() {
+  return {
+    content: [
+      {
+        type: "text",
+        text: "Profile information:",
+      },
+      {
+        type: "image",
+        data: "base64encodeddata",
+        mimeType: "image/jpeg",
+      },
+      {
+        type: "resource_link",
+        name: "Full Profile",
+        uri: "resource://profile/john",
+      },
+    ],
+  };
+}
+```
+
+**Supported content types:**
+
+- `text` - Plain text content
+- `image` - Base64-encoded images with mimeType
+- `audio` - Base64-encoded audio with mimeType
+- `resource_link` - Links to MCP resources
+
+### Structured Outputs
+
+You can declare an `outputSchema` when your tool returns `structuredContent` to enforce validation:
+
+```typescript
+import { z } from "zod";
+
+export const outputSchema = {
+  user: z.object({
+    id: z.number(),
+    name: z.string(),
+  }),
+};
+```
+
+Return structured data using the `structuredContent` property:
+
+```typescript
+export default async function getUserData() {
+  return {
+    structuredContent: {
+      user: {
+        id: 123,
+        name: "John Doe",
+      },
+    },
+  };
+}
+```
+
+`structuredContent` works without declaring `outputSchema`.
+If `outputSchema` is declared and `structuredContent` is returned, `structuredContent` must conform to it.
+If your handler returns a primitive (`string` or `number`) and `outputSchema` has exactly one field that accepts it, xmcp auto-injects it into `structuredContent` using that field.
+Undeclared keys are rejected when validating `structuredContent` against `outputSchema`.
+You can also return a plain object directly (for example `return content`) and xmcp will treat it as `structuredContent` when `outputSchema` is declared.
+When `structuredContent` is returned without `content`, xmcp auto-generates a text fallback (`JSON.stringify(structuredContent)`) for compatibility with clients that only render `content`.
+
+### Combined Response
+
+Return both `content` and `structuredContent` for backwards compatibility. If the client cannot process structured outputs, it will fallback to `content`.
+
+```typescript
+export default async function getData() {
+  return {
+    content: [
+      {
+        type: "text",
+        text: "Data retrieved successfully",
+      },
+    ],
+    structuredContent: {
+      data: { key: "value" },
+    },
+  };
+}
+```
+
+## Troubleshooting
+
+### Tool Loading Errors
+
+When `xmcp` starts, it loads every file under your tools directory.
+
+- Empty tool files are skipped with a friendly warning
+- Files without a `default` export are skipped with a friendly warning
+- Real syntax or import errors still fail normally so you can see the full stack trace
+
+For example, if `src/tools/draft.ts` is empty, startup will log:
+
+```txt
+[xmcp] Failed to load tool file: src/tools/draft.ts
+   -> File is empty.
+[xmcp] 1 tool skipped due to empty files or missing default exports
+```
+
+If the file exists but does not export a default handler, startup will log:
+
+```txt
+[xmcp] Failed to load tool file: src/tools/draft.ts
+   -> File does not export a default tool handler.
+```
+
+<Callout variant="info">
+  Friendly handling is intentionally limited to empty files and missing default
+  exports. Invalid implementations and real import/syntax errors still surface
+  as normal runtime errors.
+</Callout>
+
+## CLI Scaffolding
+
+You can use the CLI to scaffold tools, resources, and prompts.
+
+### Create a tool
+
+```bash
+xmcp create tool my-tool
+```
+
+### Create a resource
+
+```bash
+xmcp create resource my-resource
+```
+
+### Create a prompt
+
+```bash
+xmcp create prompt my-prompt
+```
+
+### Output
+
+Each command creates a starter file in the default directory for that primitive:
+
+- `xmcp create tool my-tool` → `src/tools/my-tool.ts`
+- `xmcp create resource my-resource` → `src/resources/my-resource.ts`
+- `xmcp create prompt my-prompt` → `src/prompts/my-prompt.ts`
+
+The generated file already includes the basic exports you need to continue:
+
+- tools: `schema`, `metadata`, and a default function
+- resources: `metadata` and a default function
+- prompts: `schema`, `metadata`, and a default function
+
+So instead of starting from an empty file, you get a ready-to-edit template with placeholder descriptions and example return values.

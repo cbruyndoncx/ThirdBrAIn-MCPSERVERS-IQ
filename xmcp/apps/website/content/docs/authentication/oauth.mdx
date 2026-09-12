@@ -1,0 +1,20 @@
+---
+title: "OAuth"
+metadataTitle: "OAuth Authentication | xmcp Documentation"
+publishedAt: "2025-01-16"
+summary: "Add OAuth 2.1 authentication to your xmcp MCP server with production-ready plugins, PKCE flows, scopes, and provider integrations."
+description: "Production-ready OAuth implementations with authentication plugins."
+---
+
+<Callout variant="warning">
+  The experimental `oauth` configuration has been deprecated in favor of
+  production-ready plugin implementations.
+</Callout>
+
+The built-in OAuth system has been replaced with dedicated authentication plugins that provide better DX, improved security, and more features out of the box.
+
+Use one of the official plugins below that handle OAuth flows, token management, and session handling for you:
+
+<OAuthPlugins />
+
+Each plugin integrates directly with its respective auth provider and requires minimal configuration. Choose the one that matches your existing infrastructure or start fresh with any of them.

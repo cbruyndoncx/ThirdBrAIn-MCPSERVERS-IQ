@@ -1,0 +1,38 @@
+{
+  "name": "Next.js with Adapter",
+  "private": true,
+  "description": "Integrate xmcp into a Next.js application using the adapter",
+  "keywords": [
+    "adapter",
+    "nextjs",
+    "http"
+  ],
+  "scripts": {
+    "dev": "xmcp dev & next dev --turbopack",
+    "build": "xmcp build && next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.81",
+    "@ai-sdk/openai": "^3.0.68",
+    "ai": "^6.0.197",
+    "next": "^16.2.11",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "xmcp": "workspace:*",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "@xmcp-dev/compiler": "workspace:*",
+    "@eslint/eslintrc": "^3.3.3",
+    "@tailwindcss/postcss": "^4.1.17",
+    "@types/node": "^22.19.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "16.2.6",
+    "tailwindcss": "^4.1.17",
+    "typescript": "^5.9.3"
+  }
+}

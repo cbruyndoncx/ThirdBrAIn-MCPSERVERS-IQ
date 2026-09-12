@@ -1,0 +1,95 @@
+---
+title: "OpenAI Apps SDK Support"
+description: "xmcp now supports building UI resources and tools compatible with the OpenAI Apps SDK out of the box — ship ChatGPT apps without custom rendering code."
+category: "changelog"
+date: "2025-10-11"
+order: 1
+previewImage: "/blog/apps-sdk.png"
+---
+
+xmcp now supports building and serving UI resources compatible with OpenAI's Apps SDK. Get started by running:
+
+```bash
+npx create-xmcp-app@latest
+```
+
+<Video
+  src="https://j2fbnka41vq9pfap.public.blob.vercel-storage.com/videos/gpt-apps-2.mp4"
+  controls
+/>
+
+<Callout variant="warning">
+  OpenAI now supports MCP Apps. This post contains legacy context, so older
+  syntax examples may be outdated. New projects should use the MCP App template
+  and `_meta.ui` metadata.
+</Callout>
+
+Once your project is set up, you'll find two main folders. The prompts folder is excluded from this template by default, but you can easily enable it by modifying the `xmcp.config.ts` file.
+
+## Resources
+
+This folder contains your UI resources. The Apps SDK requires URI template paths to use the `.html` extension. By setting `mimeType: "text/html+skybridge"`, xmcp handles this automatically.
+
+```typescript
+export const metadata: ResourceMetadata = {
+  name: "your-ui-resource",
+  title: "Show your UI resource",
+  mimeType: "text/html+skybridge",
+};
+```
+
+Then, your handler can return the HTML content:
+
+```typescript
+export default function handler() {
+  return `
+    <div>Hello, world!</div>
+  `;
+}
+```
+
+This resource will be accessible at `ui://widget/your-ui-resource.html`, corresponding to the folder structure `(ui)/widget/your-ui-resource`.
+
+For more information on constructing resource URIs, check out the [resources documentation](/docs#resources).
+
+## Tools
+
+This folder contains your tools, which interact with and retrieve your UI resources.
+
+The `ToolMetadata` includes a `_meta.ui` property for MCP Apps metadata, enabling your resources to be displayed within widgets.
+
+Available metadata keys:
+
+- `ui.csp.connectDomains`: Origins allowed for fetch/XHR/WebSocket calls
+- `ui.csp.resourceDomains`: Origins for images, scripts, stylesheets, and media
+- `ui.domain`: Optional dedicated subdomain for your widget sandbox origin
+- `ui.prefersBorder`: Requests a bordered card layout for widgets
+
+```typescript
+import { type ToolMetadata } from "xmcp";
+
+export const metadata: ToolMetadata = {
+  name: "get-your-ui-resource",
+  description: "Show Your UI Resource",
+  _meta: {
+    ui: {
+      csp: {
+        connectDomains: ["https://api.example.com"],
+        resourceDomains: ["https://cdn.example.com"],
+      }
+    },
+  },
+};
+
+export default async function handler() {
+  return {
+    content: [{ type: "text", text: "Widget ready" }],
+  };
+}
+```
+
+If you don't need CSP or rendering hints, you can omit `_meta.ui` entirely.
+
+## References
+
+For more details, see the [MCP Apps docs](https://modelcontextprotocol.github.io/ext-apps/api/) and [OpenAI Apps SDK docs](https://developers.openai.com/apps-sdk). You can test your resources and tools using [MCPJam](https://mcpjam.com), an open source MCP inspector.

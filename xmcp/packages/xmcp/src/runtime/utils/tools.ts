@@ -1,0 +1,184 @@
+import { McpServer } from "@modelcontextprotocol/server";
+import { ZodRawShape } from "zod/v3";
+import { ToolFile } from "./server";
+import { rawShapeToStandardSchema, RawShape } from "./schema-compat";
+import { ToolMetadata } from "@/types/tool";
+import { transformToolHandler } from "./transformers/tool";
+import { isReactFile } from "./react";
+import { uIResourceRegistry } from "./ext-apps-registry";
+import { flattenMeta, hasUIMeta } from "./ui/flatten-meta";
+import { splitUIMetaNested } from "./ui/split-meta";
+import { isPaidHandler, getX402Registry } from "@/plugins/x402";
+
+/** Validates if a value is a valid Zod schema object */
+export function isZodRawShape(value: unknown): value is ZodRawShape {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const obj = value as Record<string, unknown>;
+  return Object.entries(obj).every(([key, val]) => {
+    if (typeof key !== "string") return false;
+    if (typeof val !== "object" || val === null) return false;
+    if (!("parse" in val) || typeof val.parse !== "function") return false;
+    return true;
+  });
+}
+
+export function pathToName(path: string): string {
+  const fileName = path.split("/").pop() || path;
+  return fileName.replace(/\.[^/.]+$/, "");
+}
+
+/** Ensures toolConfig has its own annotations object with a title */
+export function ensureAnnotations(
+  toolConfig: Pick<ToolMetadata, "name" | "annotations">
+): void {
+  toolConfig.annotations = { ...(toolConfig.annotations ?? {}) };
+  if (toolConfig.annotations.title === undefined) {
+    toolConfig.annotations.title = toolConfig.name;
+  }
+}
+
+/** Loads tools and injects them into the server */
+export function addToolsToServer(
+  server: McpServer,
+  toolModules: Map<string, ToolFile>
+): McpServer {
+  toolModules.forEach((toolModule, path) => {
+    const defaultName = pathToName(path);
+
+    const toolConfig: ToolMetadata = {
+      name: defaultName,
+      description: "No description provided",
+    };
+
+    const { default: handler, metadata, schema, outputSchema } = toolModule;
+
+    if (typeof metadata === "object" && metadata !== null) {
+      Object.assign(toolConfig, metadata);
+    }
+
+    // Register paid tools in x402 registry if plugin is installed
+    if (isPaidHandler(handler)) {
+      const registry = getX402Registry();
+      if (registry) {
+        registry.set(toolConfig.name, handler.__x402);
+      }
+    }
+
+    // Determine the actual schema to use
+    let toolSchema: ZodRawShape = {};
+    if (isZodRawShape(schema)) {
+      toolSchema = schema;
+    } else if (schema !== undefined && schema !== null) {
+      console.warn(
+        `Invalid schema for tool "${toolConfig.name}" at ${path}. Expected Record<string, z.ZodType>`
+      );
+    }
+
+    let toolOutputSchema: ZodRawShape | undefined;
+    if (outputSchema !== undefined && outputSchema !== null) {
+      if (isZodRawShape(outputSchema)) {
+        toolOutputSchema = outputSchema;
+      } else {
+        throw new Error(
+          `Invalid outputSchema for tool "${toolConfig.name}" at ${path}. Expected Record<string, z.ZodType>`
+        );
+      }
+    }
+
+    // Make sure tools has annotations with a title
+    ensureAnnotations(toolConfig);
+
+    if (toolConfig._meta === undefined) {
+      toolConfig._meta = {};
+    }
+
+    const isReact = isReactFile(path);
+
+    const uiWidget = hasUIMeta(toolConfig._meta) || isReact;
+
+    let toolSpecificMeta = toolConfig._meta;
+
+    if (uiWidget) {
+      const mcpuiResourceUri = `ui://app/${toolConfig.name}.html`;
+
+      if (!toolConfig._meta.ui) {
+        toolConfig._meta.ui = {};
+      }
+      if (!toolConfig._meta.ui.resourceUri) {
+        toolConfig._meta.ui.resourceUri = mcpuiResourceUri;
+      }
+
+      const uiSplit = splitUIMetaNested(toolSpecificMeta);
+      toolSpecificMeta = uiSplit.toolMeta;
+      const resourceSpecificMeta = uiSplit.resourceMeta;
+
+      // Ensure CSP resource domains includes esm.sh
+      resourceSpecificMeta.ui = resourceSpecificMeta.ui || {};
+      resourceSpecificMeta.ui.csp = resourceSpecificMeta.ui.csp || {};
+      resourceSpecificMeta.ui.csp.resourceDomains =
+        resourceSpecificMeta.ui.csp.resourceDomains || [];
+
+      if (
+        !resourceSpecificMeta.ui.csp.resourceDomains.includes("https://esm.sh")
+      ) {
+        resourceSpecificMeta.ui.csp.resourceDomains.push("https://esm.sh");
+      }
+
+      uIResourceRegistry.add(toolConfig.name, {
+        name: toolConfig.name,
+        uri: mcpuiResourceUri,
+        handler,
+        mimeType: "text/html;profile=mcp-app",
+        _meta: resourceSpecificMeta,
+        toolPath: isReact ? path : undefined,
+      });
+    }
+
+    const flattenedToolMeta = flattenMeta(toolSpecificMeta);
+    const meta = uiWidget ? flattenedToolMeta : undefined;
+    let transformedHandler;
+
+    if (isReactFile(path) && uiWidget) {
+      transformedHandler = async (args: any, extra: any) => ({
+        content: [{ type: "text", text: "" }],
+        _meta: meta,
+        structuredContent: {
+          args,
+        },
+      });
+    } else {
+      transformedHandler = transformToolHandler(
+        handler,
+        meta,
+        toolOutputSchema,
+        toolConfig.name
+      );
+    }
+
+    const toolConfigFormatted = {
+      title: toolConfig.annotations?.title,
+      description: toolConfig.description,
+      // Assemble Standard Schemas per field so user schemas work regardless
+      // of which zod instance or major created them.
+      inputSchema: rawShapeToStandardSchema(toolSchema as unknown as RawShape),
+      outputSchema: toolOutputSchema
+        ? rawShapeToStandardSchema(toolOutputSchema as unknown as RawShape, {
+            strict: true,
+          })
+        : undefined,
+      annotations: toolConfig.annotations,
+      _meta: flattenedToolMeta, // Use flattened metadata for MCP protocol
+    };
+
+    server.registerTool(
+      toolConfig.name,
+      toolConfigFormatted,
+      transformedHandler as never
+    );
+  });
+
+  return server;
+}

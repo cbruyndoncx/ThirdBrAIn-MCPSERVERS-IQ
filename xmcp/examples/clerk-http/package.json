@@ -1,0 +1,23 @@
+{
+  "name": "HTTP with Clerk",
+  "private": true,
+  "description": "HTTP-based xmcp server with Clerk authentication",
+  "keywords": [
+    "authentication",
+    "clerk",
+    "http"
+  ],
+  "scripts": {
+    "build": "xmcp build",
+    "dev": "xmcp dev",
+    "start": "node dist/http.js"
+  },
+  "dependencies": {
+    "@xmcp-dev/clerk": "workspace:*",
+    "xmcp": "workspace:*",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "@xmcp-dev/compiler": "workspace:*"
+  }
+}

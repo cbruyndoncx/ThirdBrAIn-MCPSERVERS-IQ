@@ -1,0 +1,23 @@
+{
+  "name": "auth0-http-example",
+  "private": true,
+  "description": "HTTP-based xmcp server with Auth0 authentication",
+  "keywords": [
+    "authentication",
+    "auth0",
+    "http"
+  ],
+  "scripts": {
+    "build": "xmcp build",
+    "dev": "xmcp dev",
+    "start": "node dist/http.js"
+  },
+  "dependencies": {
+    "@xmcp-dev/auth0": "workspace:*",
+    "xmcp": "workspace:*",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "@xmcp-dev/compiler": "workspace:*"
+  }
+}

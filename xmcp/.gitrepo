@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/basementstudio/xmcp.git
+	branch = main
+	commit = 3948c16f1c509c3b4d9894de1c1a758e855d8abb
+	parent = 201f079ff7091a7aac8c4620c473a380015ed3b3
+	method = merge
+	cmdver = 0.4.9

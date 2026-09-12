@@ -1,0 +1,22 @@
+{
+  "name": "API Key Middleware",
+  "private": true,
+  "description": "Secure your xmcp server with API key authentication middleware",
+  "keywords": [
+    "authentication",
+    "middleware",
+    "api-key"
+  ],
+  "scripts": {
+    "build": "xmcp build",
+    "dev": "xmcp dev",
+    "start": "node dist/http.js"
+  },
+  "dependencies": {
+    "xmcp": "workspace:*",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "@xmcp-dev/compiler": "workspace:*"
+  }
+}

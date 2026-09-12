@@ -1,0 +1,140 @@
+---
+title: "Installation"
+metadataTitle: "Installation | xmcp Documentation"
+publishedAt: "2025-07-06"
+summary: "Install xmcp via the CLI scaffold or manually, set up your TypeScript MCP server, and configure build and dev scripts in a few minutes."
+description: "Set up your MCP server using automated scaffolding or manual installation, configure build scripts, and troubleshoot transport configurations"
+---
+
+## System requirements
+
+Before you begin, make sure your system meets the following requirements:
+
+- Node.js 22 or later.
+- macOS, Windows or Linux.
+
+## Automatic installation
+
+The quickest way to get started with xmcp is using `create-xmcp-app`. This CLI tool allows you to scaffold a template project with all the necessary files and dependencies to get you up and running quickly.
+
+To create an xmcp project, run:
+
+```bash
+npx create-xmcp-app@latest
+```
+
+On installation, you'll see the following prompts:
+
+<TerminalPrompt>
+  {
+    "? What is your project named? (my-xmcp-app)\n? Select a template: (Use arrow keys)\n❯ Default (Standard MCP server)\n  MCP App (React widgets for ext-apps)"
+  }
+</TerminalPrompt>
+
+You can use `--ui` to scaffold the MCP App template (non-tailwind), or use `--tailwind` / `--tw` when selecting the MCP App template interactively. Run `npx create-xmcp-app --help` for all options.
+
+<TerminalPrompt>
+  {
+    "? Select a package manager: (Use arrow keys)\n❯ npm \n  yarn \n  pnpm \n  bun\n? Select the transport you want to use: (Use arrow keys)\n❯ HTTP (runs on a server) \n  STDIO (runs on the user's machine)\n? Select components to initialize: (Press <space> to select, <a> to toggle all, <i> to invert selection, and <enter> to proceed)\n❯◉ Tools\n ◉ Prompts\n ◉ Resources"
+  }
+</TerminalPrompt>
+
+After the prompts, create-xmcp-app will create a folder with your project name and install the required dependencies.
+
+## Manual installation
+
+To manually create an xmcp project, install the required dependencies:
+
+<TerminalTabs
+  tabs={[
+    {
+      label: "pnpm",
+      value: "pnpm",
+      content: "pnpm add xmcp zod@^3.25.76 && pnpm add -D @xmcp-dev/compiler",
+    },
+    {
+      label: "npm",
+      value: "npm",
+      content: "npm i xmcp zod@^3.25.76 && npm i -D @xmcp-dev/compiler",
+    },
+    {
+      label: "yarn",
+      value: "yarn",
+      content: "yarn add xmcp zod@^3.25.76 && yarn add -D @xmcp-dev/compiler",
+    },
+    {
+      label: "bun",
+      value: "bun",
+      content: "bun add xmcp zod@^3.25.76 && bun add -D @xmcp-dev/compiler",
+    },
+  ]}
+  defaultTab="pnpm"
+/>
+
+`xmcp` contains the runtime used by your built server. The development-only
+`@xmcp-dev/compiler` package provides the `dev`, `build`, and `create` commands;
+keep both packages on matching versions. Production installs can omit development
+dependencies because xmcp build output is self-contained.
+
+Then add the following scripts to your package.json:
+
+```json title="package.json"
+{
+  "scripts": {
+    "dev": "xmcp dev",
+    "build": "xmcp build",
+    "start": "node dist/[transport].js"
+  }
+}
+```
+
+These scripts refer to the different stages of developing an application:
+
+- `xmcp dev`: Starts the development server. This listens for changes and automatically reloads the server.
+- `xmcp build`: Builds the application for production. This will create a `dist` directory with the compiled code.
+- `node dist/[transport].js`: Starts the production server. This is the server that will be used in production.
+
+You can then run the scripts based on the package manager you've set up.
+
+Based on the transport you've chosen when bootstrapping your project, the [transport] placeholder will be replaced with the appropriate one.
+This is correlated with the `xmcp.config.ts` configuration.
+
+The output format follows your project's `package.json`: with `"type": "module"`
+the build emits ES modules (and writes a `dist/package.json` marker so the
+self-contained `dist` directory keeps running when deployed on its own);
+otherwise it emits CommonJS. No configuration is needed either way.
+
+## Troubleshooting
+
+If you encounter issues when running the built server, make sure the transport is matching the configured one in `xmcp.config.ts`.
+
+If `xmcp dev` or `xmcp build` reports that the compiler is missing, install the
+matching compiler version with `npm i -D @xmcp-dev/compiler` (or the equivalent
+command for your package manager).
+
+If you're working with HTTP, your configuration should look like this:
+
+```typescript title="xmcp.config.ts"
+const config: XmcpConfig = {
+  http: true,
+};
+```
+
+If you're working with STDIO, your configuration should look like this:
+
+```typescript title="xmcp.config.ts"
+const config: XmcpConfig = {
+  stdio: true,
+};
+```
+
+You can have both transports configured, but you'll need to update the scripts to match them. For example, this is a valid script configuration you could use:
+
+```json title="package.json"
+{
+  "scripts": {
+    "start:http": "node dist/http.js",
+    "start:stdio": "node dist/stdio.js"
+  }
+}
+```

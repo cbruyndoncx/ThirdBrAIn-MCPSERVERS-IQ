@@ -1,0 +1,83 @@
+{
+  "name": "@xmcp-dev/better-auth",
+  "description": "Better Auth integration for xmcp",
+  "version": "1.0.0",
+  "author": {
+    "name": "xmcp",
+    "email": "support@xmcp.dev",
+    "url": "https://xmcp.dev"
+  },
+  "contributors": [
+    {
+      "name": "Valentina Bearzotti",
+      "email": "valebearzotti1@gmail.com",
+      "url": "https://github.com/valebearzotti"
+    },
+    {
+      "name": "Jose Rago",
+      "email": "jose@basement.studio",
+      "url": "https://github.com/ragojose"
+    }
+  ],
+  "license": "MIT",
+  "keywords": [
+    "xmcp",
+    "better-auth",
+    "authentication",
+    "mcp",
+    "oauth"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/basementstudio/xmcp",
+    "directory": "packages/plugins/better-auth"
+  },
+  "homepage": "https://xmcp.dev",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "pnpm run dev:main & pnpm run dev:ui",
+    "dev:main": "tsc --watch",
+    "dev:ui": "cd ui && vite --config ./vite.config.mjs",
+    "build": "rm -rf dist && tsc && pnpm run build:ui",
+    "build:ui": "cd ui && vite build --config ./vite.config.mjs",
+    "preview:ui": "cd ui && vite preview --config ./vite.config.mjs"
+  },
+  "dependencies": {
+    "better-auth": "1.6.22",
+    "express": "^4.22.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router": "^7.18.2",
+    "react-router-dom": "^7.18.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.19.2",
+    "@types/pg": "^8.15.6",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.0",
+    "autoprefixer": "^10.4.22",
+    "chalk": "^5.6.2",
+    "cross-env": "^7.0.3",
+    "fs-extra": "^11.3.2",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.18",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.3",
+    "xmcp": "workspace:*"
+  },
+  "peerDependencies": {
+    "xmcp": ">=1.0.0"
+  },
+  "optionalDependencies": {
+    "pg": "^8.16.3"
+  }
+}

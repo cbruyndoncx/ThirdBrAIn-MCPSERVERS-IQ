@@ -1,0 +1,24 @@
+{
+  "name": "Custom Middleware",
+  "private": true,
+  "description": "Create custom middleware functions for xmcp servers",
+  "keywords": [
+    "middleware",
+    "customization",
+    "pipeline"
+  ],
+  "scripts": {
+    "build": "xmcp build",
+    "dev": "xmcp dev",
+    "start": "node dist/http.js"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3",
+    "xmcp": "workspace:*",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "@xmcp-dev/compiler": "workspace:*",
+    "@types/jsonwebtoken": "^9.0.10"
+  }
+}

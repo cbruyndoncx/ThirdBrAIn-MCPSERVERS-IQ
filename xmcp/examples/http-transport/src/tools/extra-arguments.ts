@@ -1,0 +1,24 @@
+import { type ToolMetadata, type ToolExtraArguments } from "xmcp";
+
+// Define tool metadata
+export const metadata: ToolMetadata = {
+  name: "extra-arguments",
+  description:
+    "Access extra arguments from a tool call, including repeated HTTP client info headers",
+  annotations: {
+    title: "Extra arguments",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
+};
+
+// Tool implementation
+export default async function extraArguments(
+  _: any,
+  extra: ToolExtraArguments
+) {
+  const extraArguments = JSON.stringify(extra, null, 2); // to render a readable string
+
+  return `Your extra arguments are: ${extraArguments}`;
+}

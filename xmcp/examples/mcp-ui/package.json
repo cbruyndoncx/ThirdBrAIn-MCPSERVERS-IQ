@@ -1,0 +1,27 @@
+{
+  "name": "mcp-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Learn how to set up an xmcp server that serves UI resources with MCP-UI",
+  "keywords": [
+    "ui",
+    "mcp-ui",
+    "tools"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "xmcp build",
+    "dev": "xmcp dev",
+    "start": "node dist/http.js"
+  },
+  "dependencies": {
+    "@mcp-ui/server": "^5.16.2",
+    "xmcp": "workspace:*",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "@xmcp-dev/compiler": "workspace:*"
+  }
+}

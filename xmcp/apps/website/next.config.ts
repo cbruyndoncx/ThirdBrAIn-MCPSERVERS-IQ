@@ -1,0 +1,147 @@
+import type { NextConfig } from "next";
+import { createMDX } from "fumadocs-mdx/next";
+
+const withMDX = createMDX({
+  // customise the config file path
+  configPath: "source.config.ts",
+});
+
+const nextConfig: NextConfig = {
+  reactStrictMode: true,
+  webpack: (config) => {
+    /** Add glslify loader to webpack */
+    config.module.rules.push({
+      test: /\.(glsl|vs|fs|vert|frag)$/,
+      use: ["raw-loader", "glslify-loader"],
+    });
+
+    return config;
+  },
+  turbopack: {
+    rules: {
+      "*.{glsl,vert,frag,vs,fs}": {
+        loaders: ["raw-loader", "glslify-loader"],
+        as: "*.js",
+      },
+    },
+  },
+  pageExtensions: ["js", "jsx", "md", "mdx", "ts", "tsx"],
+  images: {
+    formats: ["image/avif", "image/webp"],
+    remotePatterns: [
+      {
+        hostname: "assets.basehub.com",
+      },
+      {
+        hostname: "raw.githubusercontent.com",
+      },
+      {
+        hostname: "avatars.githubusercontent.com",
+      },
+    ],
+  },
+  async redirects() {
+    return [
+      {
+        source: "/docs/configuration/webpack",
+        destination: "/docs/configuration/bundler",
+        permanent: true,
+      },
+      {
+        source: "/examples",
+        destination: "/templates",
+        permanent: true,
+      },
+      {
+        source: "/examples/:slug",
+        destination: "/templates/:slug",
+        permanent: true,
+      },
+      {
+        source: "/blog/xmcp-vs-fastmcp-vs-mcp-sdk",
+        destination: "/blog/xmcp-v1",
+        permanent: true,
+      },
+    ];
+  },
+  async rewrites() {
+    // Content negotiation: agents sending `Accept: text/markdown` get the
+    // markdown route; browsers (which never list text/markdown) fall through to
+    // HTML. These must run in `beforeFiles` so `/` is intercepted before the
+    // homepage page route resolves (`afterFiles` runs after page matching).
+    const acceptsMarkdown = [
+      { type: "header" as const, key: "accept", value: ".*text/markdown.*" },
+    ];
+    return {
+      beforeFiles: [
+        { source: "/", has: acceptsMarkdown, destination: "/index.md" },
+        { source: "/blog", has: acceptsMarkdown, destination: "/blog.md" },
+        {
+          source: "/templates",
+          has: acceptsMarkdown,
+          destination: "/templates.md",
+        },
+        { source: "/faq", has: acceptsMarkdown, destination: "/faq.md" },
+        {
+          source: "/docs/:slug*",
+          has: acceptsMarkdown,
+          destination: "/llms.mdx/:slug*",
+        },
+        // `:slug+` (one or more segments) so the /blog index keeps its HTML.
+        {
+          source: "/blog/:slug+",
+          has: acceptsMarkdown,
+          destination: "/llms-blog.mdx/:slug+",
+        },
+        // Single-segment `:slug` so the /templates index (handled above) and
+        // /templates/category/* keep their own behavior.
+        {
+          source: "/templates/:slug",
+          has: acceptsMarkdown,
+          destination: "/llms-templates.mdx/:slug",
+        },
+      ],
+      afterFiles: [
+        { source: "/docs/:slug*.md", destination: "/llms.mdx/:slug*" },
+        { source: "/docs/:slug*.mdx", destination: "/llms.mdx/:slug*" },
+        // The docs index page's own markdown — the site-wide index lives at
+        // /llms.txt, and Accept-negotiation on /docs resolves here too.
+        { source: "/docs.md", destination: "/llms.mdx" },
+        { source: "/docs.mdx", destination: "/llms.mdx" },
+        { source: "/blog/:slug*.md", destination: "/llms-blog.mdx/:slug*" },
+        { source: "/blog/:slug*.mdx", destination: "/llms-blog.mdx/:slug*" },
+        {
+          source: "/templates/:slug.md",
+          destination: "/llms-templates.mdx/:slug",
+        },
+        {
+          source: "/templates/:slug.mdx",
+          destination: "/llms-templates.mdx/:slug",
+        },
+      ],
+    };
+  },
+  async headers() {
+    // RFC 8288 Link headers point agents at discoverable resources from the
+    // homepage. Single comma-separated value because Next overrides duplicate
+    // header keys (last wins).
+    return [
+      {
+        source: "/",
+        headers: [
+          {
+            key: "Link",
+            value: [
+              '</docs>; rel="service-doc"; type="text/html"',
+              '</llms.txt>; rel="service-desc"; type="text/plain"',
+              '</llms-full.txt>; rel="describedby"; type="text/plain"',
+              '</index.md>; rel="alternate"; type="text/markdown"',
+            ].join(", "),
+          },
+        ],
+      },
+    ];
+  },
+};
+
+export default withMDX(nextConfig);

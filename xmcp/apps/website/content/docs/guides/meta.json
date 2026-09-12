@@ -1,0 +1,11 @@
+{
+  "title": "Guides",
+  "pages": [
+    "xmcp-mcp-server",
+    "authentication",
+    "roll-out-to-a-team",
+    "monetization"
+  ],
+  "defaultOpen": true,
+  "root": true
+}

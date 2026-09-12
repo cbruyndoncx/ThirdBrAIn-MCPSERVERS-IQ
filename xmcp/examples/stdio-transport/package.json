@@ -1,0 +1,29 @@
+{
+  "name": "STDIO Transport",
+  "private": true,
+  "description": "Build a command-line xmcp server using STDIO transport",
+  "keywords": [
+    "transport",
+    "stdio",
+    "server"
+  ],
+  "main": "./dist/stdio.js",
+  "bin": {
+    "stdio-transport": "./dist/stdio.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "xmcp build",
+    "dev": "xmcp dev",
+    "start": "node dist/stdio.js"
+  },
+  "dependencies": {
+    "xmcp": "workspace:*",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "@xmcp-dev/compiler": "workspace:*"
+  }
+}

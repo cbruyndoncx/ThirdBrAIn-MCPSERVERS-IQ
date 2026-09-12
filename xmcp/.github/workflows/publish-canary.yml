@@ -1,0 +1,120 @@
+name: Publish Canary Release to NPM
+
+# Canary releases are Changesets snapshot releases: the version is derived from
+# the pending changesets plus a timestamp, so no state is kept between runs and
+# nothing is committed back. Requires at least one pending changeset — with none,
+# there is nothing unreleased to cut a canary from.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Resolve the snapshot version without publishing"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: publish-canary
+  cancel-in-progress: false
+
+jobs:
+  publish-canary:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    strategy:
+      matrix:
+        node-version: [22.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "pnpm"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Update npm for trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply snapshot versions
+        run: pnpm version-canary
+
+      - name: Resolve snapshot version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./packages/xmcp/package.json').version")
+          if [ "${VERSION#*-canary}" = "$VERSION" ]; then
+            # Nothing unreleased to cut from. That is a normal state, not a
+            # failure — skip the rest and leave the run green.
+            echo "No pending changesets — nothing to release as a canary."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build packages
+        # Everything publishable, not just the core three: `changeset publish`
+        # ships any non-private package whose version is not yet on npm, and an
+        # unbuilt package would go out with no dist.
+        if: steps.version.outputs.release == 'true'
+        run: pnpm turbo build --filter="./packages/**"
+
+      - name: Publish
+        if: steps.version.outputs.release == 'true' && !inputs.dry_run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
+        run: pnpm publish-canary
+
+      - name: Report nothing to release
+        if: steps.version.outputs.release != 'true'
+        run: |
+          {
+            echo "# No Canary Release"
+            echo
+            echo "No pending changesets, so there is nothing unreleased to cut a"
+            echo "canary from. Add a changeset and run this again."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create publish summary
+        if: steps.version.outputs.release == 'true'
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            HEADING="# Canary Release (dry run)"
+            NOTE="Resolved and built \`${{ steps.version.outputs.version }}\` without publishing."
+          else
+            HEADING="# Canary Release Published"
+            NOTE="Published under the \`canary\` dist-tag."
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          $HEADING
+
+          **Version \`${{ steps.version.outputs.version }}\`**
+
+          - xmcp
+          - create-xmcp-app
+          - init-xmcp
+
+          \`\`\`bash
+          npm install xmcp@${{ steps.version.outputs.version }}
+          \`\`\`
+
+          $NOTE
+          EOF
