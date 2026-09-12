@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/Synohara/supercollider-mcp.git
+	branch = main
+	commit = 4b378a97244b4198b2454aad765ce13a3244e0ea
+	parent = 980a6caa6e243a0212bc6aaa9f901aa940d16ea0
+	method = merge
+	cmdver = 0.4.9

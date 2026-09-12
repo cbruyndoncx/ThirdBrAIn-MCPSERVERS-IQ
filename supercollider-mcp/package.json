@@ -1,0 +1,33 @@
+{
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.9.0",
+    "supercolliderjs": "^1.0.1",
+    "zod": "^3.24.2"
+  },
+  "name": "@makotyo/mcp-supercollider",
+  "version": "0.2.0",
+  "main": "src/server.ts",
+  "type": "module",
+  "bin": {
+    "mcp-supercollider": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x ./build/index.js",
+    "test": "vitest"
+  },
+  "files": [
+    "build"
+  ],
+  "keywords": [
+    "modelcontextprotocol",
+    "supercollider"
+  ],
+  "author": "Makoto Shinohara",
+  "license": "MIT",
+  "description": "",
+  "devDependencies": {
+    "@types/node": "^22.14.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1"
+  }
+}
