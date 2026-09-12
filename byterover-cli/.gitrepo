@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/campfirein/byterover-cli.git
+	branch = main
+	commit = 1052ac1a5dd0fde4da8693d4712064f7876c269c
+	parent = be1af00ed319149a31b7da18db5f5b93e2390337
+	method = merge
+	cmdver = 0.4.9

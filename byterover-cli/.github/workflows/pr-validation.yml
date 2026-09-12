@@ -1,0 +1,110 @@
+# SECURITY: this workflow uses `pull_request_target`, which runs in the
+# base-repo context with access to repository secrets even for PRs from forks.
+# Every job MUST keep the `if:` guard below - it short-circuits fork PRs that
+# have not been authorized by a maintainer applying the `safe-to-test` label.
+# The label is auto-removed on every push by `.github/workflows/pr-label-cleanup.yml`
+# so authorization is strictly per-commit.
+name: PR Validation
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled]
+    branches:
+      - main
+      - 'release/**'
+      - 'proj/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+  HUSKY: 0
+
+jobs:
+  install:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'safe-to-test')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/cache@v5
+        id: cache
+        with:
+          path: node_modules
+          key: node-modules-${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.BYTEROVER_WEB_PACKAGES_DEPLOY_KEY }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+  lint:
+    needs: install
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'safe-to-test')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: node-modules-${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+      - run: npm run lint
+
+  build:
+    needs: install
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'safe-to-test')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: node-modules-${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+      - run: npm run build
+
+  test:
+    needs: install
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'safe-to-test')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: node-modules-${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+      - run: npm run test
+

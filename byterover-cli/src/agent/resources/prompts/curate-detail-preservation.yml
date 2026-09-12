@@ -1,0 +1,100 @@
+description: "Detail preservation instructions for curate mode"
+prompt: |
+  <CURATE_DETAIL_PRESERVATION>
+  ## Diagram and Visual Content Preservation
+
+  When curating content from files or folders, actively look for and preserve:
+
+  **Diagrams (MUST PRESERVE in `<bv-diagram>` elements):**
+  - Mermaid diagrams (```mermaid ... ```) — emit `<bv-diagram type="mermaid">` with the body verbatim
+  - PlantUML diagrams (@startuml ... @enduml) — emit `<bv-diagram type="plantuml">`
+  - ASCII art diagrams (box drawings, flow charts using |, -, +, >, arrows) — emit `<bv-diagram type="ascii">`
+  - Sequence / state / class / ER diagrams — identify the format and use the matching `type` attribute (`mermaid`, `plantuml`, `dot`, `graphviz`, or `other`)
+  - ALWAYS preserve diagram content EXACTLY as-is, character for character
+  - NEVER paraphrase or describe a diagram in text instead of emitting `<bv-diagram>`
+  - NEVER skip a diagram because "it's too complex" — emit it verbatim
+
+  **Tables (MUST PRESERVE):**
+  - Markdown tables — preserve the full table inside `<bv-structure>` or `<bv-highlights>` (block-content elements that allow `<table>`, `<ul>`, `<p>`)
+  - Include column headers and ALL rows — do not summarize table content
+  - If a table has 20 rows, preserve all 20 rows
+
+  **Step-by-step Procedures:**
+  - Numbered instructions — emit each as a `<bv-rule>` (use `severity` and `id` attributes when applicable) or, for purely procedural steps, as `<bv-task>` elements
+  - Decision trees — emit as `<bv-diagram type="ascii">` or as a structured walkthrough inside `<bv-structure>`
+  - Workflows — capture as `<bv-flow>` AND as `<bv-diagram>` if a visual representation exists
+
+  **API Signatures and Interfaces:**
+  - Function signatures with parameter types — preserve in `<bv-structure>` or `<bv-examples>`
+  - Interface definitions — preserve exact TypeScript / language syntax inside `<bv-examples>` using fenced `<pre><code>` blocks
+  - Request / response schemas — emit complete schema, not summaries
+
+  **Code Examples:**
+  - Inline code examples from documentation — emit inside `<bv-examples>` with full code in `<pre><code>` blocks
+  - Configuration examples — preserve exact syntax and values
+  - Command-line examples — preserve complete commands with flags
+
+  **Detection Heuristics:**
+  - Lines containing box-drawing characters (U+2500–U+257F, or ASCII `+--+`, `|  |`) = ASCII diagram
+  - Fenced blocks with language tag `mermaid`, `plantuml`, `dot`, `graphviz` = diagram
+  - Content between `@startuml` / `@enduml` = PlantUML diagram
+  - Arrow patterns (`-->`, `==>`, `->`, `=>`) combined with indentation = flow / sequence diagram
+
+  **Storage Rules for Diagrams:**
+  - One `<bv-diagram>` per diagram. Do NOT combine multiple diagrams into a single element.
+  - Always set the `type` attribute (`mermaid`, `plantuml`, `ascii`, `dot`, `graphviz`, `other`)
+  - Use the `title` attribute when the diagram has a caption or label nearby
+  - Emit the body DIRECTLY inside the element, using HTML entities for `<`, `>`, `&` (e.g. mermaid arrows become `--&gt;`). Do NOT wrap in `<![CDATA[…]]>` — HTML5 parses CDATA as a bogus comment that the first `-->` closes.
+  - Example:
+    ```
+    <bv-diagram type="mermaid" title="Authentication Flow">
+    graph TD
+      A[Request] --&gt; B{Has Token?}
+      B --&gt;|Yes| C[Validate]
+      B --&gt;|No| D[Reject]
+    </bv-diagram>
+    ```
+
+  ## Non-Code Content Preservation
+
+  **Meeting Notes and Decisions (MUST PRESERVE):**
+  - Decision text with full rationale — emit as `<bv-decision>` (one per decision; use the `id` attribute for cross-references). Inside, use block content (`<p>`, `<ul>`, `<li>`) to preserve full prose.
+  - Action items with assignees and deadlines — emit as `<bv-task>` (one per item) or as facts under `<bv-fact category="team">` when stating an assignment as a durable fact.
+  - Voting results and priority rankings — preserve exact numbers inside `<bv-highlights>` or as `<bv-fact>` siblings (`subject`, `value`).
+  - Status updates and blockers — emit blockers as `<bv-dependencies>` and current status as `<bv-fact>` siblings.
+
+  **Process Documentation:**
+  - Workflow steps with all conditions — emit the high-level flow as `<bv-flow>` and individual rules as `<bv-rule>` siblings
+  - Metrics and KPIs with exact values — preserve as `<bv-fact>` (use `subject` for the metric name and `value` for the value) or inside `<bv-highlights>`
+  - Timeline and milestone information — preserve inside `<bv-structure>` with full chronology
+
+  ## Factual Statement Preservation
+
+  **Facts (MUST EXTRACT as `<bv-fact>` siblings):**
+  - Personal information stated by the user (e.g., "My name is Andy") — emit each as a separate `<bv-fact category="personal" subject="user_name" value="Andy">My name is Andy.</bv-fact>`
+  - Project configuration values, versions, ports, URLs — preserve exact values with `category="project"`
+  - Team conventions and processes — emit with `category="convention"`
+  - Preferences and opinions expressed as directives — emit with `category="preference"`
+  - Team structure and roles — emit with `category="team"`
+  - Environment and infrastructure details — emit with `category="environment"`
+  - Use the `subject` attribute for the key concept in snake_case (e.g., `user_name`, `database_version`)
+  - Use the `value` attribute for the extracted value (e.g., `Andy`, `PostgreSQL 15`)
+  - The element's text content is the canonical statement — preserve the exact wording of the factual claim
+  - Do NOT infer facts that were not explicitly stated
+  - Do NOT merge multiple facts into one compound `<bv-fact>` element — one fact per element
+
+  ## General Detail Preservation
+
+  **Completeness over conciseness:**
+  - If a document lists 15 items, emit all 15 (as `<bv-rule>` / `<bv-fact>` / `<bv-task>` siblings depending on the item kind)
+  - If a config file has 30 settings, capture all relevant ones
+  - If there are multiple code examples, emit each one inside `<bv-examples>`
+  - Preserve original formatting, indentation, and structure where possible
+
+  **Do NOT:**
+  - Summarize detailed content into brief descriptions
+  - Pick "representative examples" instead of preserving all items
+  - Omit sections because they seem "less important"
+  - Flatten hierarchical content into flat descriptions
+  - Mention or store JSON-schema field names like `narrative.rules`, `rawConcept.flow`, or `content.facts` — these belong to a deprecated curate-tool API. The current curate output is HTML using the closed `<bv-*>` vocabulary; map every preservation rule to the matching element.
+  </CURATE_DETAIL_PRESERVATION>
