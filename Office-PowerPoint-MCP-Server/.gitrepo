@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/GongRzhe/Office-PowerPoint-MCP-Server.git
+	branch = main
+	commit = 3631ba2ec0c24504476f78bf74d329c9be11caaa
+	parent = 22adf3cd1fdf96739f3965ded49a623673f24261
+	method = merge
+	cmdver = 0.4.9
