@@ -1,0 +1,35 @@
+# Development files
+.git
+.github
+.vscode
+.idea
+*.log
+*.tgz
+
+# Test files
+test-install/
+tests/results/
+
+# Configuration
+tsconfig.json
+.editorconfig
+.eslintrc
+.eslintignore
+.prettierrc
+
+# Documentation that's not needed in the package
+docs/development/
+*.md
+!README.md
+!LICENSE.md
+
+# Source files (since we publish the compiled version)
+# Don't exclude src/ completely as people might want to see the source
+# but exclude unnecessary files in src/
+src/**/*.spec.ts
+src/**/*.test.ts
+
+# Environment files
+.env
+.env.*
+!.env.example 

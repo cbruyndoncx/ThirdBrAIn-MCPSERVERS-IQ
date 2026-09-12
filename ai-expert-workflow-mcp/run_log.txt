@@ -1,0 +1,26 @@
+
+> ai-expert-workflow-mcp@2.1.1 generate
+> node generate-and-parse.js Test project description
+
+🚀 Starting automated PRD generation and task parsing workflow
+
+📝 Step 1: Generating PRD document from your project description...
+✅ PRD generation complete
+
+💾 Step 2: Saving document in Task Master compatible format...
+✅ Saved at /Users/loic/Desktop/dev/ai-expert-workflow-mcp/scripts/prd.txt
+
+🔍 Step 3: Checking for Task Master installation...
+✅ PRD saved for Task Master parsing
+
+⚠️  Task Master MCP not found globally installed.
+
+To complete the workflow:
+
+1. Install Task Master if not already installed:
+   npm install -g task-master-mcp
+
+2. Ask Task Master to generate tasks:
+   "Can you parse the PRD at scripts/prd.txt and generate tasks?"
+
+✅ Workflow complete!

@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/bacoco/ai-expert-workflow-mcp.git
+	branch = main
+	commit = 8e93d69491350dfa5e0418150239c7e8444eb6ad
+	parent = c87b66f13bd93215f38a7e1d43f83ee5ed47d1a6
+	method = merge
+	cmdver = 0.4.9
