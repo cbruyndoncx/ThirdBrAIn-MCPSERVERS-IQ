@@ -1,0 +1,59 @@
+name: Linting
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-go-code:
+    name: Lint Go Code
+    # golangci-lint itself runs for well under a minute here; the job is
+    # dominated by checkout, toolchain setup and cache restore, none of which
+    # scale with cores. The standard runner is free for this public repo.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          # go.mod's directive, not 'stable': golangci-lint is pinned below
+          # (see the version comment further down), and the pinned
+          # release's bundled type-checker cannot parse the newer Go
+          # toolchain's stdlib (e.g. a generic-method signature in
+          # math/rand/v2 under Go 1.27), so linting must run on the Go
+          # version the module itself targets.
+          go-version-file: go.mod
+          cache: true  # Caches go modules
+          cache-dependency-path: go.sum
+
+      # Download all dependencies upfront (will be cached)
+      - name: Download Go dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      # Cache Go build cache for faster compilation during linting
+      - name: Cache Go build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-build-lint-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-lint-
+            ${{ runner.os }}-go-build-
+
+      - name: Check go.mod version format
+        run: "! grep -qE '^go [0-9]+\\.[0-9]+\\.[1-9][0-9]*$' go.mod || { echo 'ERROR: go.mod must not pin a non-zero Go patch version (go 1.27 or go 1.27.0 are fine; a dependency floor is always X.Y.0, never a later patch)'; exit 1; }"
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          # Pin to a known-good release so lint behavior is reproducible.
+          version: v2.13.2
+          # Enable golangci-lint's built-in caching (removes skip-cache: true)
+          args: --timeout=5m

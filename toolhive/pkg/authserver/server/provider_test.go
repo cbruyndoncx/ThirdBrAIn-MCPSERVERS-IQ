@@ -1,0 +1,996 @@
+// Copyright 2025 Stacklok, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package server
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"testing"
+	"time"
+
+	"github.com/ory/fosite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	servercrypto "github.com/stacklok/toolhive/pkg/authserver/server/crypto"
+	"github.com/stacklok/toolhive/pkg/authserver/server/keys"
+	spiffeauth "github.com/stacklok/toolhive/pkg/authserver/spiffe"
+)
+
+func TestNewAuthorizationServerConfig(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	params := &AuthorizationServerParams{
+		Issuer:               "https://auth.example.com",
+		AccessTokenLifespan:  time.Hour,
+		RefreshTokenLifespan: time.Hour * 24,
+		AuthCodeLifespan:     time.Minute * 10,
+		HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+		SigningKeyID:         "key-1",
+		SigningKeyAlgorithm:  "RS256",
+		SigningKey:           rsaKey,
+	}
+
+	authzServerConfig, err := NewAuthorizationServerConfig(params)
+	require.NoError(t, err)
+	require.NotNil(t, authzServerConfig)
+
+	// Verify fosite config is set correctly
+	assert.Equal(t, params.Issuer, authzServerConfig.AccessTokenIssuer)
+	assert.Equal(t, params.AccessTokenLifespan, authzServerConfig.AccessTokenLifespan)
+	assert.Equal(t, params.RefreshTokenLifespan, authzServerConfig.RefreshTokenLifespan)
+	assert.Equal(t, params.AuthCodeLifespan, authzServerConfig.AuthorizeCodeLifespan)
+	assert.True(t, authzServerConfig.TokenExchangeEnabled, "zero-value params preserve released token exchange behavior")
+
+	// Verify signing key is set
+	require.NotNil(t, authzServerConfig.SigningKey)
+	assert.Equal(t, "key-1", authzServerConfig.SigningKey.KeyID)
+	assert.Equal(t, "RS256", authzServerConfig.SigningKey.Algorithm)
+
+	// Verify JWKS contains the key
+	require.NotNil(t, authzServerConfig.SigningJWKS)
+	assert.Len(t, authzServerConfig.SigningJWKS.Keys, 1)
+}
+
+// TestNewAuthorizationServerConfig_ConfidentialClientCapabilities pins the
+// confidential-client capability flags' passage through NewAuthorizationServerConfig.
+func TestNewAuthorizationServerConfig_ConfidentialClientCapabilities(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name                    string
+		allowConfidential       bool
+		allowPrivateKeyJWT      bool
+		hasStaticDelegateClient bool
+		disableTokenExchange    bool
+		jwtBearerGrantEnabled   bool
+	}{
+		{name: "public only", allowConfidential: false, hasStaticDelegateClient: false},
+		{name: "confidential DCR", allowConfidential: true, hasStaticDelegateClient: false},
+		{name: "private-key JWT registration", allowPrivateKeyJWT: true, hasStaticDelegateClient: false},
+		{name: "static delegate client", allowConfidential: false, hasStaticDelegateClient: true},
+		{name: "JWT bearer without token exchange", disableTokenExchange: true, jwtBearerGrantEnabled: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			config, err := NewAuthorizationServerConfig(&AuthorizationServerParams{
+				Issuer:                              "https://auth.example.com",
+				AccessTokenLifespan:                 time.Hour,
+				RefreshTokenLifespan:                time.Hour * 24,
+				AuthCodeLifespan:                    time.Minute * 10,
+				HMACSecrets:                         servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:                        "key-1",
+				SigningKeyAlgorithm:                 "RS256",
+				SigningKey:                          rsaKey,
+				AllowConfidentialClientRegistration: tt.allowConfidential,
+				AllowPrivateKeyJWTRegistration:      tt.allowPrivateKeyJWT,
+				HasStaticDelegateClients:            tt.hasStaticDelegateClient,
+				DisableTokenExchange:                tt.disableTokenExchange,
+				JWTBearerGrantEnabled:               tt.jwtBearerGrantEnabled,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.allowConfidential, config.AllowConfidentialClientRegistration)
+			assert.Equal(t, tt.allowPrivateKeyJWT, config.AllowPrivateKeyJWTRegistration)
+			assert.Equal(t, tt.hasStaticDelegateClient, config.HasStaticDelegateClients)
+			assert.Equal(t, !tt.disableTokenExchange, config.TokenExchangeEnabled)
+			assert.Equal(t, tt.jwtBearerGrantEnabled, config.JWTBearerGrantEnabled)
+		})
+	}
+}
+
+func TestNewAuthorizationServerConfig_ConfidentialHTTPTransport(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	base := func() AuthorizationServerParams {
+		return AuthorizationServerParams{
+			Issuer: "https://auth.example.com", AccessTokenLifespan: time.Hour,
+			RefreshTokenLifespan: 24 * time.Hour, AuthCodeLifespan: 10 * time.Minute,
+			HMACSecrets:  servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+			SigningKeyID: "key-1", SigningKeyAlgorithm: "RS256", SigningKey: rsaKey,
+		}
+	}
+	tests := []struct {
+		name    string
+		mutate  func(*AuthorizationServerParams)
+		wantErr string
+	}{
+		{name: "confidential registration rejects non-loopback HTTP", mutate: func(p *AuthorizationServerParams) {
+			p.Issuer = "http://auth.example.com"
+			p.AllowConfidentialClientRegistration = true
+		}, wantErr: "plain-HTTP non-loopback"},
+		{name: "static delegate client rejects non-loopback HTTP", mutate: func(p *AuthorizationServerParams) {
+			p.Issuer = "http://auth.example.com"
+			p.HasStaticDelegateClients = true
+		}, wantErr: "plain-HTTP non-loopback"},
+		{name: "loopback opt-in permits confidential HTTP", mutate: func(p *AuthorizationServerParams) {
+			p.Issuer = "http://localhost:8080"
+			p.AllowConfidentialClientRegistration = true
+			p.InsecureAllowConfidentialOverLoopbackHTTP = true
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			params := base()
+			tt.mutate(&params)
+			config, err := NewAuthorizationServerConfig(&params)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				require.NotNil(t, config)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+			assert.Nil(t, config)
+		})
+	}
+}
+
+func TestNewAuthorizationServerConfig_InvalidConfig(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		params  *AuthorizationServerParams
+		wantErr string
+	}{
+		{
+			name:    "nil config",
+			params:  nil,
+			wantErr: "config is required",
+		},
+		{
+			name: "missing issuer",
+			params: &AuthorizationServerParams{
+				Issuer:               "",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "issuer is required",
+		},
+		{
+			name: "issuer with invalid scheme",
+			params: &AuthorizationServerParams{
+				Issuer:               "ftp://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "issuer must use http or https scheme",
+		},
+		{
+			name: "issuer without host",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "issuer must have a host",
+		},
+		{
+			name: "issuer with trailing slash",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com/",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "issuer must not have a trailing slash",
+		},
+		{
+			name: "missing key ID",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "signing key ID is required",
+		},
+		{
+			name: "missing algorithm",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "signing key algorithm is required",
+		},
+		{
+			name: "missing signing key",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           nil,
+			},
+			wantErr: "signing key is required",
+		},
+		{
+			name: "HMAC secret too short",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("too-short")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "current HMAC secret must be at least 32 bytes",
+		},
+		{
+			name: "nil HMAC secrets",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          nil,
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "HMAC secrets are required",
+		},
+		{
+			name: "empty current HMAC secret",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          &servercrypto.HMACSecrets{Current: nil},
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "current HMAC secret must be at least 32 bytes",
+		},
+		{
+			name: "algorithm incompatible with key type",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "ES256", // EC algorithm with RSA key
+				SigningKey:           rsaKey,
+			},
+			wantErr: "invalid signing configuration",
+		},
+		{
+			name: "access token lifespan too short",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Second, // Below minimum of 1 minute
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "access token lifespan must be between",
+		},
+		{
+			name: "access token lifespan too long",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour * 48, // Above maximum of 24 hours
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "access token lifespan must be between",
+		},
+		{
+			name: "refresh token lifespan too short",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Minute, // Below minimum of 1 hour
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "refresh token lifespan must be between",
+		},
+		{
+			name: "auth code lifespan too long",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Hour, // Above maximum of 10 minutes
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+			},
+			wantErr: "authorization code lifespan must be between",
+		},
+		{
+			name: "weak rotated HMAC secret",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets: &servercrypto.HMACSecrets{
+					Current: []byte("current-secret-with-32-bytes-ok!"),
+					Rotated: [][]byte{
+						[]byte("rotated-secret-with-32-bytes-ok!"),
+						[]byte("too-short"), // Weak rotated secret
+					},
+				},
+				SigningKeyID:        "key-1",
+				SigningKeyAlgorithm: "RS256",
+				SigningKey:          rsaKey,
+			},
+			wantErr: "rotated HMAC secret [1] must be at least 32 bytes",
+		},
+		{
+			// Defense-in-depth gate: a direct caller of NewAuthorizationServerConfig
+			// that bypasses RunConfig.Validate must still be rejected when
+			// BaselineClientScopes contains a scope outside ScopesSupported.
+			// Without this case, only the operator-YAML path is regression-protected.
+			name: "baseline scope not in scopes_supported",
+			params: &AuthorizationServerParams{
+				Issuer:               "https://auth.example.com",
+				AccessTokenLifespan:  time.Hour,
+				RefreshTokenLifespan: time.Hour * 24,
+				AuthCodeLifespan:     time.Minute * 10,
+				HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+				SigningKeyID:         "key-1",
+				SigningKeyAlgorithm:  "RS256",
+				SigningKey:           rsaKey,
+				ScopesSupported:      []string{"openid"},
+				BaselineClientScopes: []string{"offline_access"},
+			},
+			wantErr: `baseline_client_scopes contains "offline_access"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := NewAuthorizationServerConfig(tt.params)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestGetAuthorizationEndpointBaseURL_Fallback(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	params := &AuthorizationServerParams{
+		Issuer:               "https://auth.example.com",
+		AccessTokenLifespan:  time.Hour,
+		RefreshTokenLifespan: time.Hour * 24,
+		AuthCodeLifespan:     time.Minute * 10,
+		HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+		SigningKeyID:         "key-1",
+		SigningKeyAlgorithm:  "RS256",
+		SigningKey:           rsaKey,
+	}
+
+	authzServerConfig, err := NewAuthorizationServerConfig(params)
+	require.NoError(t, err)
+
+	// When AuthorizationEndpointBaseURL is not set, should fall back to issuer
+	assert.Equal(t, "https://auth.example.com", authzServerConfig.GetAuthorizationEndpointBaseURL())
+}
+
+func TestGetAuthorizationEndpointBaseURL_Override(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	params := &AuthorizationServerParams{
+		Issuer:                       "https://auth.example.com",
+		AuthorizationEndpointBaseURL: "https://login.example.com",
+		AccessTokenLifespan:          time.Hour,
+		RefreshTokenLifespan:         time.Hour * 24,
+		AuthCodeLifespan:             time.Minute * 10,
+		HMACSecrets:                  servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+		SigningKeyID:                 "key-1",
+		SigningKeyAlgorithm:          "RS256",
+		SigningKey:                   rsaKey,
+	}
+
+	authzServerConfig, err := NewAuthorizationServerConfig(params)
+	require.NoError(t, err)
+
+	// When AuthorizationEndpointBaseURL is set, should return the override
+	assert.Equal(t, "https://login.example.com", authzServerConfig.GetAuthorizationEndpointBaseURL())
+	// Issuer should still be the original
+	assert.Equal(t, "https://auth.example.com", authzServerConfig.GetAccessTokenIssuer())
+}
+
+func TestNewAuthorizationServerConfig_InvalidAuthorizationEndpointBaseURL(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	params := &AuthorizationServerParams{
+		Issuer:                       "https://auth.example.com",
+		AuthorizationEndpointBaseURL: "ftp://invalid.example.com",
+		AccessTokenLifespan:          time.Hour,
+		RefreshTokenLifespan:         time.Hour * 24,
+		AuthCodeLifespan:             time.Minute * 10,
+		HMACSecrets:                  servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+		SigningKeyID:                 "key-1",
+		SigningKeyAlgorithm:          "RS256",
+		SigningKey:                   rsaKey,
+	}
+
+	_, err = NewAuthorizationServerConfig(params)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "authorization endpoint base URL")
+}
+
+func TestNewAuthorizationServerConfig_WithRotatedSecrets(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	currentSecret := []byte("current-secret-with-32-bytes-ok!")
+	rotatedSecret1 := []byte("rotated-secret1-with-32-bytes!!!")
+	rotatedSecret2 := []byte("rotated-secret2-with-32-bytes!!!")
+
+	params := &AuthorizationServerParams{
+		Issuer:               "https://auth.example.com",
+		AccessTokenLifespan:  time.Hour,
+		RefreshTokenLifespan: time.Hour * 24,
+		AuthCodeLifespan:     time.Minute * 10,
+		HMACSecrets: &servercrypto.HMACSecrets{
+			Current: currentSecret,
+			Rotated: [][]byte{rotatedSecret1, rotatedSecret2},
+		},
+		SigningKeyID:        "key-1",
+		SigningKeyAlgorithm: "RS256",
+		SigningKey:          rsaKey,
+	}
+
+	authzServerConfig, err := NewAuthorizationServerConfig(params)
+	require.NoError(t, err)
+	require.NotNil(t, authzServerConfig)
+
+	// Verify fosite config has both current and rotated secrets
+	assert.Equal(t, currentSecret, authzServerConfig.GlobalSecret)
+	require.Len(t, authzServerConfig.RotatedGlobalSecrets, 2)
+	assert.Equal(t, rotatedSecret1, authzServerConfig.RotatedGlobalSecrets[0])
+	assert.Equal(t, rotatedSecret2, authzServerConfig.RotatedGlobalSecrets[1])
+}
+
+func TestNewAuthorizationServerConfig_WithoutRotatedSecrets(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	currentSecret := []byte("current-secret-with-32-bytes-ok!")
+
+	params := &AuthorizationServerParams{
+		Issuer:               "https://auth.example.com",
+		AccessTokenLifespan:  time.Hour,
+		RefreshTokenLifespan: time.Hour * 24,
+		AuthCodeLifespan:     time.Minute * 10,
+		HMACSecrets: &servercrypto.HMACSecrets{
+			Current: currentSecret,
+			Rotated: nil,
+		},
+		SigningKeyID:        "key-1",
+		SigningKeyAlgorithm: "RS256",
+		SigningKey:          rsaKey,
+	}
+
+	authzServerConfig, err := NewAuthorizationServerConfig(params)
+	require.NoError(t, err)
+	require.NotNil(t, authzServerConfig)
+
+	// Verify fosite config has only current secret, no rotated
+	assert.Equal(t, currentSecret, authzServerConfig.GlobalSecret)
+	assert.Nil(t, authzServerConfig.RotatedGlobalSecrets)
+}
+
+func TestAuthorizationServerConfig_PublicJWKS(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	params := &AuthorizationServerParams{
+		Issuer:               "https://auth.example.com",
+		AccessTokenLifespan:  time.Hour,
+		RefreshTokenLifespan: time.Hour * 24,
+		AuthCodeLifespan:     time.Minute * 10,
+		HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+		SigningKeyID:         "key-1",
+		SigningKeyAlgorithm:  "RS256",
+		SigningKey:           rsaKey,
+	}
+
+	authzServerConfig, err := NewAuthorizationServerConfig(params)
+	require.NoError(t, err)
+
+	publicJWKS := authzServerConfig.PublicJWKS()
+	require.NotNil(t, publicJWKS)
+	require.Len(t, publicJWKS.Keys, 1)
+
+	// Verify it's a public key (not private)
+	_, ok := publicJWKS.Keys[0].Key.(*rsa.PublicKey)
+	assert.True(t, ok, "expected public key, got %T", publicJWKS.Keys[0].Key)
+}
+
+// TestNewAuthorizationServerConfig_PublishesFallbackKeys pins that fallback
+// keys configured for key rotation (see keys.Config.FallbackKeyFiles) are
+// published in the JWKS alongside the primary signing key, in public form
+// only, with the signing key first. Without this, the documented rotation
+// procedure's overlap window never opens: promoting a fallback key to
+// primary invalidates every token signed with the old key immediately.
+func TestNewAuthorizationServerConfig_PublishesFallbackKeys(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	fallbackKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	params := &AuthorizationServerParams{
+		Issuer:               "https://auth.example.com",
+		AccessTokenLifespan:  time.Hour,
+		RefreshTokenLifespan: time.Hour * 24,
+		AuthCodeLifespan:     time.Minute * 10,
+		HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+		SigningKeyID:         "key-1",
+		SigningKeyAlgorithm:  "RS256",
+		SigningKey:           rsaKey,
+		AdditionalPublicKeys: []*keys.PublicKeyData{
+			{
+				KeyID:     "key-0-old",
+				Algorithm: "RS256",
+				PublicKey: fallbackKey.Public(),
+			},
+		},
+	}
+
+	authzServerConfig, err := NewAuthorizationServerConfig(params)
+	require.NoError(t, err)
+	require.NotNil(t, authzServerConfig)
+
+	require.Len(t, authzServerConfig.SigningJWKS.Keys, 2)
+	assert.Equal(t, "key-1", authzServerConfig.SigningJWKS.Keys[0].KeyID, "primary signing key must be first")
+	assert.Equal(t, "key-0-old", authzServerConfig.SigningJWKS.Keys[1].KeyID)
+
+	// The fallback key must be published in public form only.
+	_, ok := authzServerConfig.SigningJWKS.Keys[1].Key.(*rsa.PublicKey)
+	assert.True(t, ok, "expected fallback key to be public, got %T", authzServerConfig.SigningJWKS.Keys[1].Key)
+
+	publicJWKS := authzServerConfig.PublicJWKS()
+	require.Len(t, publicJWKS.Keys, 2)
+}
+
+// mockStorage is a minimal fosite.Storage implementation for testing.
+type mockStorage struct {
+	clients map[string]fosite.Client
+}
+
+func (s *mockStorage) GetClient(_ context.Context, id string) (fosite.Client, error) {
+	client, ok := s.clients[id]
+	if !ok {
+		return nil, fosite.ErrNotFound
+	}
+	return client, nil
+}
+
+func (*mockStorage) ClientAssertionJWTValid(_ context.Context, _ string) error {
+	return nil
+}
+
+func (*mockStorage) SetClientAssertionJWT(_ context.Context, _ string, _ time.Time) error {
+	return nil
+}
+
+// mockAuthorizeHandler implements fosite.AuthorizeEndpointHandler for testing.
+type mockAuthorizeHandler struct{}
+
+func (*mockAuthorizeHandler) HandleAuthorizeEndpointRequest(_ context.Context, _ fosite.AuthorizeRequester, _ fosite.AuthorizeResponder) error {
+	return nil
+}
+
+// mockTokenHandler implements fosite.TokenEndpointHandler for testing.
+type mockTokenHandler struct{}
+
+func (*mockTokenHandler) PopulateTokenEndpointResponse(_ context.Context, _ fosite.AccessRequester, _ fosite.AccessResponder) error {
+	return nil
+}
+
+func (*mockTokenHandler) CanSkipClientAuth(_ context.Context, _ fosite.AccessRequester) bool {
+	return false
+}
+
+func (*mockTokenHandler) CanHandleTokenEndpointRequest(_ context.Context, _ fosite.AccessRequester) bool {
+	return true
+}
+
+func (*mockTokenHandler) HandleTokenEndpointRequest(_ context.Context, _ fosite.AccessRequester) error {
+	return nil
+}
+
+// mockTokenIntrospector implements fosite.TokenIntrospector for testing.
+type mockTokenIntrospector struct{}
+
+func (*mockTokenIntrospector) IntrospectToken(_ context.Context, _ string, _ fosite.TokenType, _ fosite.AccessRequester, _ []string) (fosite.TokenType, error) {
+	return fosite.AccessToken, nil
+}
+
+// mockRevocationHandler implements fosite.RevocationHandler for testing.
+type mockRevocationHandler struct{}
+
+func (*mockRevocationHandler) RevokeToken(_ context.Context, _ string, _ fosite.TokenType, _ fosite.Client) error {
+	return nil
+}
+
+func TestNewAuthorizationServer_ConfidentialHTTPTransport(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		config  *AuthorizationServerConfig
+		wantErr string
+	}{
+		{
+			name: "direct confidential configuration rejects non-loopback HTTP",
+			config: &AuthorizationServerConfig{
+				Config:                              &fosite.Config{AccessTokenIssuer: "http://auth.example.com"},
+				AllowConfidentialClientRegistration: true,
+			},
+			wantErr: "plain-HTTP non-loopback",
+		},
+		{
+			name: "direct static delegate configuration rejects non-loopback HTTP",
+			config: &AuthorizationServerConfig{
+				Config:                   &fosite.Config{AccessTokenIssuer: "http://auth.example.com"},
+				HasStaticDelegateClients: true,
+			},
+			wantErr: "plain-HTTP non-loopback",
+		},
+		{
+			name: "direct loopback opt-in permits confidential HTTP",
+			config: &AuthorizationServerConfig{
+				Config:                              &fosite.Config{AccessTokenIssuer: "http://localhost:8080"},
+				AllowConfidentialClientRegistration: true,
+				InsecureAllowConfidentialOverLoopbackHTTP: true,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			provider, err := NewAuthorizationServer(tt.config, &mockStorage{}, nil)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				require.NotNil(t, provider)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+			assert.Nil(t, provider)
+		})
+	}
+}
+
+func TestNewAuthorizationServer(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	// Helper function to create a fresh config for each subtest
+	createConfig := func(t *testing.T) *AuthorizationServerConfig {
+		t.Helper()
+		params := &AuthorizationServerParams{
+			Issuer:               "https://auth.example.com",
+			AccessTokenLifespan:  time.Hour,
+			RefreshTokenLifespan: time.Hour * 24,
+			AuthCodeLifespan:     time.Minute * 10,
+			HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+			SigningKeyID:         "key-1",
+			SigningKeyAlgorithm:  "RS256",
+			SigningKey:           rsaKey,
+		}
+		authzServerConfig, err := NewAuthorizationServerConfig(params)
+		require.NoError(t, err)
+		return authzServerConfig
+	}
+
+	storage := &mockStorage{}
+
+	t.Run("creates provider with no factories", func(t *testing.T) {
+		t.Parallel()
+
+		provider, err := NewAuthorizationServer(createConfig(t), storage, nil)
+		require.NoError(t, err)
+		require.NotNil(t, provider)
+	})
+
+	t.Run("creates provider with authorize handler factory", func(t *testing.T) {
+		t.Parallel()
+
+		factory := func(_ *AuthorizationServerConfig, _ fosite.Storage, _ any) (any, error) {
+			return &mockAuthorizeHandler{}, nil
+		}
+
+		provider, err := NewAuthorizationServer(createConfig(t), storage, nil, factory)
+		require.NoError(t, err)
+		require.NotNil(t, provider)
+	})
+
+	t.Run("creates provider with token handler factory", func(t *testing.T) {
+		t.Parallel()
+
+		factory := func(_ *AuthorizationServerConfig, _ fosite.Storage, _ any) (any, error) {
+			return &mockTokenHandler{}, nil
+		}
+
+		provider, err := NewAuthorizationServer(createConfig(t), storage, nil, factory)
+		require.NoError(t, err)
+		require.NotNil(t, provider)
+	})
+
+	t.Run("creates provider with multiple factories", func(t *testing.T) {
+		t.Parallel()
+
+		authorizeFactory := func(_ *AuthorizationServerConfig, _ fosite.Storage, _ any) (any, error) {
+			return &mockAuthorizeHandler{}, nil
+		}
+		tokenFactory := func(_ *AuthorizationServerConfig, _ fosite.Storage, _ any) (any, error) {
+			return &mockTokenHandler{}, nil
+		}
+		introspectorFactory := func(_ *AuthorizationServerConfig, _ fosite.Storage, _ any) (any, error) {
+			return &mockTokenIntrospector{}, nil
+		}
+		revocationFactory := func(_ *AuthorizationServerConfig, _ fosite.Storage, _ any) (any, error) {
+			return &mockRevocationHandler{}, nil
+		}
+
+		provider, err := NewAuthorizationServer(createConfig(t), storage, nil,
+			authorizeFactory, tokenFactory, introspectorFactory, revocationFactory)
+		require.NoError(t, err)
+		require.NotNil(t, provider)
+	})
+
+	t.Run("handles factory returning nil", func(t *testing.T) {
+		t.Parallel()
+
+		factory := func(_ *AuthorizationServerConfig, _ fosite.Storage, _ any) (any, error) {
+			return nil, nil
+		}
+
+		provider, err := NewAuthorizationServer(createConfig(t), storage, nil, factory)
+		require.NoError(t, err)
+		require.NotNil(t, provider)
+	})
+
+	t.Run("errors on factory returning non-handler type", func(t *testing.T) {
+		t.Parallel()
+
+		factory := func(_ *AuthorizationServerConfig, _ fosite.Storage, _ any) (any, error) {
+			return "not a handler", nil
+		}
+
+		provider, err := NewAuthorizationServer(createConfig(t), storage, nil, factory)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "string")
+		require.Nil(t, provider)
+	})
+}
+
+func TestNewAuthorizationServer_InstallsSPIFFEClientAuthenticationStrategy(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	config, err := NewAuthorizationServerConfig(&AuthorizationServerParams{
+		Issuer:               "https://auth.example.com",
+		AccessTokenLifespan:  time.Hour,
+		RefreshTokenLifespan: 24 * time.Hour,
+		AuthCodeLifespan:     10 * time.Minute,
+		HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+		SigningKeyID:         "key-1",
+		SigningKeyAlgorithm:  "RS256",
+		SigningKey:           rsaKey,
+	})
+	require.NoError(t, err)
+	// A configured resolver is required for the SPIFFE arms to engage at all;
+	// see TestSPIFFEClientAuthenticationStrategy for the nil-resolver case.
+	config.SPIFFEClientResolver = stubResolver
+	fallbackClient := &fosite.DefaultClient{ID: "fallback-client", Public: true}
+	fallbackCalled := false
+	config.ClientAuthenticationStrategy = func(
+		_ context.Context, _ *http.Request, _ url.Values,
+	) (fosite.Client, error) {
+		fallbackCalled = true
+		return fallbackClient, nil
+	}
+
+	initialTokenHandlers := len(config.TokenEndpointHandlers)
+	var providerConfig *AuthorizationServerConfig
+	captureConfig := func(config *AuthorizationServerConfig, _ fosite.Storage, _ any) (any, error) {
+		providerConfig = config
+		return &mockTokenHandler{}, nil
+	}
+	_, err = NewAuthorizationServer(config, &mockStorage{}, nil, captureConfig)
+	require.NoError(t, err)
+	require.NotNil(t, providerConfig)
+	assert.NotSame(t, config, providerConfig)
+	assert.NotSame(t, config.Config, providerConfig.Config)
+	assert.Len(t, config.TokenEndpointHandlers, initialTokenHandlers)
+	assert.Len(t, providerConfig.TokenEndpointHandlers, initialTokenHandlers+1)
+	require.NotNil(t, config.ClientAuthenticationStrategy)
+	require.NotNil(t, providerConfig.ClientAuthenticationStrategy)
+
+	request := httptest.NewRequest("POST", "/oauth/token", nil)
+	originalClient, err := config.ClientAuthenticationStrategy(request.Context(), request, url.Values{
+		"client_assertion_type": {spiffeauth.SPIFFEJWTAssertionType},
+	})
+	require.NoError(t, err)
+	assert.Same(t, fallbackClient, originalClient)
+	assert.True(t, fallbackCalled)
+
+	fallbackCalled = false
+	_, err = providerConfig.ClientAuthenticationStrategy(request.Context(), request, url.Values{
+		"client_assertion_type": {spiffeauth.SPIFFEJWTAssertionType},
+	})
+	require.Error(t, err)
+	var rfcErr *fosite.RFC6749Error
+	require.ErrorAs(t, err, &rfcErr)
+	assert.Equal(t, "SPIFFE JWT client authentication is not implemented", rfcErr.HintField)
+	assert.False(t, fallbackCalled)
+
+	client, err := providerConfig.ClientAuthenticationStrategy(request.Context(), request, url.Values{})
+	require.NoError(t, err)
+	assert.Same(t, fallbackClient, client)
+	assert.True(t, fallbackCalled)
+}
+
+func TestNewAuthorizationServer_DoesNotShareAuthenticationStrategy(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	config, err := NewAuthorizationServerConfig(&AuthorizationServerParams{
+		Issuer:               "https://auth.example.com",
+		AccessTokenLifespan:  time.Hour,
+		RefreshTokenLifespan: 24 * time.Hour,
+		AuthCodeLifespan:     10 * time.Minute,
+		HMACSecrets:          servercrypto.NewHMACSecrets([]byte("test-secret-with-32-bytes-long!!")),
+		SigningKeyID:         "key-1",
+		SigningKeyAlgorithm:  "RS256",
+		SigningKey:           rsaKey,
+	})
+	require.NoError(t, err)
+	config.SPIFFEClientResolver = stubResolver
+
+	clientA := &fosite.DefaultClient{ID: "client-a", Public: true}
+	storageA := &mockStorage{clients: map[string]fosite.Client{"client-a": clientA}}
+	storageB := &mockStorage{clients: map[string]fosite.Client{
+		"client-b": &fosite.DefaultClient{ID: "client-b", Public: true},
+	}}
+
+	var configA *AuthorizationServerConfig
+	captureA := func(config *AuthorizationServerConfig, _ fosite.Storage, _ any) (any, error) {
+		configA = config
+		return nil, nil
+	}
+	_, err = NewAuthorizationServer(config, storageA, nil, captureA)
+	require.NoError(t, err)
+	require.NotNil(t, configA)
+
+	_, err = NewAuthorizationServer(config, storageB, nil)
+	require.NoError(t, err)
+
+	request := httptest.NewRequest("POST", "/oauth/token", nil)
+	client, err := configA.ClientAuthenticationStrategy(request.Context(), request, url.Values{
+		"client_id": {"client-a"},
+	})
+	require.NoError(t, err)
+	assert.Same(t, clientA, client)
+}

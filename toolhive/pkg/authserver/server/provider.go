@@ -1,0 +1,611 @@
+// Copyright 2025 Stacklok, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package server
+
+import (
+	"context"
+	"crypto"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/go-jose/go-jose/v4"
+	"github.com/ory/fosite"
+	"github.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
+	"github.com/spiffe/go-spiffe/v2/bundle/x509bundle"
+
+	servercrypto "github.com/stacklok/toolhive/pkg/authserver/server/crypto"
+	"github.com/stacklok/toolhive/pkg/authserver/server/keys"
+	"github.com/stacklok/toolhive/pkg/authserver/server/registration"
+	"github.com/stacklok/toolhive/pkg/networking"
+)
+
+// Token lifespan bounds for validation.
+const (
+	// MinAccessTokenLifespan is the minimum allowed access token lifetime.
+	MinAccessTokenLifespan = 1 * time.Minute
+	// MaxAccessTokenLifespan is the maximum allowed access token lifetime.
+	MaxAccessTokenLifespan = 24 * time.Hour
+	// MinRefreshTokenLifespan is the minimum allowed refresh token lifetime.
+	MinRefreshTokenLifespan = 1 * time.Hour
+	// MaxRefreshTokenLifespan is the maximum allowed refresh token lifetime (30 days).
+	MaxRefreshTokenLifespan = 30 * 24 * time.Hour
+	// MinAuthCodeLifespan is the minimum allowed authorization code lifetime.
+	MinAuthCodeLifespan = 30 * time.Second
+	// MaxAuthCodeLifespan is the maximum allowed authorization code lifetime (RFC 6749 recommends 10 min max).
+	MaxAuthCodeLifespan = 10 * time.Minute
+	// MaxAssertionLifespan is the maximum allowed exp-now duration for a
+	// private_key_jwt client_assertion. fosite persists the replay marker
+	// (Storage.SetClientAssertionJWT/ConsumeAssertionJWT) with a TTL derived
+	// from the assertion's own exp claim, and neither fosite nor RFC 7523
+	// bounds that value — a client could otherwise set exp decades out and
+	// grow replay-tracking storage indefinitely. A client assertion
+	// authenticates a single token request, so it has no legitimate reason
+	// to outlive that request by more than a small clock-skew margin.
+	MaxAssertionLifespan = 5 * time.Minute
+	// MaxAssertionJTILength bounds the byte length of a private_key_jwt
+	// client_assertion's jti before it's persisted as a replay marker.
+	// Comfortably fits UUIDs/ULIDs and typical nonce formats with headroom
+	// while capping per-entry storage cost.
+	MaxAssertionJTILength = 256
+)
+
+// AuthorizationServerConfig wraps fosite.Config with additional configuration
+// for JWT signing and other extensions.
+type AuthorizationServerConfig struct {
+	*fosite.Config
+	SigningKey  *jose.JSONWebKey
+	SigningJWKS *jose.JSONWebKeySet
+	// AllowedAudiences is the list of valid resource URIs that tokens can be issued for.
+	// Per RFC 8707, the "resource" parameter in token requests is validated against this list.
+	// Security: An empty list means NO audiences are permitted (secure default).
+	AllowedAudiences []string
+	// ScopesSupported lists the OAuth 2.0 scope values advertised in discovery documents.
+	// This is advertised in /.well-known/openid-configuration and
+	// /.well-known/oauth-authorization-server discovery endpoints.
+	ScopesSupported []string
+	// BaselineClientScopes is a baseline set of OAuth 2.0 scopes the DCR handler
+	// unions into every newly registered client's scope set. All entries are
+	// guaranteed to be a subset of ScopesSupported.
+	BaselineClientScopes []string
+	// AuthorizationEndpointBaseURL overrides the base URL for the authorization_endpoint
+	// in the discovery document. When empty, defaults to the issuer (AccessTokenIssuer).
+	AuthorizationEndpointBaseURL string
+	// CIMDEnabled indicates that the CIMD storage decorator is active. When true,
+	// the discovery document advertises client_id_metadata_document_supported.
+	CIMDEnabled bool
+	// AllowConfidentialClientRegistration permits DCR of confidential clients. When true,
+	// the DCR handler accepts client_secret_basic / client_secret_post and the
+	// discovery document advertises them in token_endpoint_auth_methods_supported.
+	AllowConfidentialClientRegistration bool
+	// AllowPrivateKeyJWTRegistration permits DCR of clients using
+	// private_key_jwt authentication. This is independent of confidential-client
+	// registration and is used by DCR validation and discovery advertisement.
+	AllowPrivateKeyJWTRegistration bool
+	// HasStaticDelegateClients indicates whether any pre-provisioned confidential
+	// delegate client is registered at startup. Discovery advertises client-secret
+	// authentication methods when this is true.
+	HasStaticDelegateClients bool
+	// InsecureAllowHTTP permits a non-loopback HTTP issuer. It is incompatible
+	// with confidential clients.
+	InsecureAllowHTTP bool
+	// InsecureAllowConfidentialOverLoopbackHTTP explicitly permits confidential
+	// clients with a loopback HTTP issuer.
+	InsecureAllowConfidentialOverLoopbackHTTP bool
+	// ForceConfidentialRedirectURIs lists redirect URIs that the DCR handler
+	// always registers as confidential clients, overriding a requested "none"
+	// auth method. See authserver.Config.ForceConfidentialRedirectURIs for the
+	// full semantics.
+	ForceConfidentialRedirectURIs []string
+	// TokenExchangeEnabled indicates whether RFC 8693 is registered and advertised.
+	TokenExchangeEnabled bool
+	// JWTBearerGrantEnabled indicates that at least one trusted issuer has the
+	// RFC 7523 JWT-bearer grant configured. Discovery advertises
+	// urn:ietf:params:oauth:grant-type:jwt-bearer in grant_types_supported
+	// only when this is true, mirroring how the grant itself is only
+	// registered with fosite when true (see buildProvider).
+	JWTBearerGrantEnabled bool
+	// SPIFFEClientResolver resolves a verified SPIFFE identity to its
+	// configured OAuth client for the SPIFFE client-authentication strategy.
+	// Nil when no SPIFFE trust is configured; package server cannot import
+	// the concrete association registry and storage that back this resolver
+	// (authserver imports server), so the caller supplies it as a closure.
+	SPIFFEClientResolver SPIFFEClientResolver
+	// SPIFFEX509BundleSource provides X.509 bundles for verifying SPIFFE
+	// X.509-SVID client certificates. Not yet read by this package: carried
+	// here, copied through from AuthorizationServerParams, so the X.509 and
+	// JWT SPIFFE client-authentication arms land on a shared field instead of
+	// each independently extending this struct.
+	SPIFFEX509BundleSource x509bundle.Source
+	// SPIFFEJWTBundleSource provides JWT bundles for verifying SPIFFE
+	// JWT-SVID client assertions. See SPIFFEX509BundleSource.
+	SPIFFEJWTBundleSource jwtbundle.Source
+}
+
+// Factory is a constructor which is used to create an OAuth2 endpoint handler.
+// NewAuthorizationServer handles consuming the new struct and attaching it
+// to the parts of the config that it implements.
+//
+// The strategy parameter is typed as any because fosite uses different strategy
+// interfaces for different flows (e.g., oauth2.CoreStrategy, openid.OpenIDConnectTokenStrategy)
+// that do not share a common base interface.
+type Factory func(config *AuthorizationServerConfig, storage fosite.Storage, strategy any) (any, error)
+
+// AuthorizationServerParams contains the configuration needed to create an AuthorizationServerConfig.
+// This is a minimal subset of the authserver.Config fields needed for OAuth2.
+type AuthorizationServerParams struct {
+	Issuer               string
+	AccessTokenLifespan  time.Duration
+	RefreshTokenLifespan time.Duration
+	AuthCodeLifespan     time.Duration
+	HMACSecrets          *servercrypto.HMACSecrets
+	SigningKeyID         string
+	SigningKeyAlgorithm  string
+	SigningKey           crypto.Signer
+	// AdditionalPublicKeys are published in the JWKS alongside the primary
+	// signing key, in public form only, so that tokens signed with a
+	// previous key remain verifiable during rotation. Typically sourced from
+	// keys.KeyProvider.PublicKeys(ctx), which includes the primary signing
+	// key itself; the entry matching SigningKeyID is skipped to avoid
+	// publishing it twice.
+	AdditionalPublicKeys []*keys.PublicKeyData
+	// AllowedAudiences is the list of valid resource URIs that tokens can be issued for.
+	// Per RFC 8707, the "resource" parameter in token requests is validated against this list.
+	// Security: An empty list means NO audiences are permitted (secure default).
+	AllowedAudiences []string
+	// ScopesSupported lists the OAuth 2.0 scope values advertised in discovery documents.
+	ScopesSupported []string
+	// BaselineClientScopes is a baseline set of OAuth 2.0 scopes the DCR handler
+	// unions into every newly registered client's scope set. All entries are
+	// guaranteed to be a subset of ScopesSupported.
+	BaselineClientScopes []string
+	// AuthorizationEndpointBaseURL overrides the base URL for the authorization_endpoint
+	// in the discovery document. When empty, defaults to Issuer.
+	AuthorizationEndpointBaseURL string
+	// CIMDEnabled indicates that the CIMD storage decorator is active. When true,
+	// the discovery document advertises client_id_metadata_document_supported.
+	CIMDEnabled bool
+	// AllowConfidentialClientRegistration permits DCR of confidential clients. When true,
+	// the DCR handler accepts client_secret_basic / client_secret_post and the
+	// discovery document advertises them in token_endpoint_auth_methods_supported.
+	AllowConfidentialClientRegistration bool
+	// AllowPrivateKeyJWTRegistration permits DCR of clients using
+	// private_key_jwt authentication. This is independent of confidential-client
+	// registration and is used by DCR validation and discovery advertisement.
+	AllowPrivateKeyJWTRegistration bool
+	// HasStaticDelegateClients indicates whether any pre-provisioned confidential
+	// delegate client is registered at startup. Discovery advertises client-secret
+	// authentication methods when this is true.
+	HasStaticDelegateClients bool
+	// InsecureAllowHTTP permits a non-loopback HTTP issuer. It is incompatible
+	// with confidential clients.
+	InsecureAllowHTTP bool
+	// InsecureAllowConfidentialOverLoopbackHTTP explicitly permits confidential
+	// clients with a loopback HTTP issuer.
+	InsecureAllowConfidentialOverLoopbackHTTP bool
+	// ForceConfidentialRedirectURIs lists redirect URIs that the DCR handler
+	// always registers as confidential clients, overriding a requested "none"
+	// auth method. See authserver.Config.ForceConfidentialRedirectURIs for the
+	// full semantics.
+	ForceConfidentialRedirectURIs []string
+	// DisableTokenExchange prevents RFC 8693 registration and advertisement.
+	// The zero value preserves the historical enabled behavior.
+	DisableTokenExchange bool
+	// JWTBearerGrantEnabled indicates that at least one trusted issuer has the
+	// RFC 7523 JWT-bearer grant configured. See AuthorizationServerConfig's
+	// field of the same name.
+	JWTBearerGrantEnabled bool
+	// SPIFFEClientResolver resolves a verified SPIFFE identity to its
+	// configured OAuth client. Nil when no SPIFFE trust is configured.
+	// See the identically named field on AuthorizationServerConfig.
+	SPIFFEClientResolver SPIFFEClientResolver
+	// SPIFFEX509BundleSource provides X.509 bundles for verifying SPIFFE
+	// X.509-SVID client certificates. Not yet read by this package: threaded
+	// through here so the X.509 and JWT SPIFFE client-authentication arms
+	// land on a shared field instead of each independently extending this
+	// struct.
+	SPIFFEX509BundleSource x509bundle.Source
+	// SPIFFEJWTBundleSource provides JWT bundles for verifying SPIFFE
+	// JWT-SVID client assertions. See SPIFFEX509BundleSource.
+	SPIFFEJWTBundleSource jwtbundle.Source
+}
+
+// validateIssuerURL validates that the issuer is a valid URL with http or https scheme
+// and no trailing slash. Following the pattern from pkg/config/validation.go.
+func validateIssuerURL(issuer string) error {
+	if issuer == "" {
+		return fmt.Errorf("issuer is required")
+	}
+
+	parsedURL, err := url.Parse(issuer)
+	if err != nil {
+		return fmt.Errorf("issuer is not a valid URL: %w", err)
+	}
+
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return fmt.Errorf("issuer must use http or https scheme")
+	}
+
+	if parsedURL.Hostname() == "" {
+		return fmt.Errorf("issuer must have a host")
+	}
+
+	if strings.HasSuffix(issuer, "/") {
+		return fmt.Errorf("issuer must not have a trailing slash")
+	}
+
+	return nil
+}
+
+// validateAllowedAudiences validates that all allowed audiences are valid RFC 8707 URIs.
+func validateAllowedAudiences(audiences []string) error {
+	for i, aud := range audiences {
+		if err := ValidateAudienceURI(aud); err != nil {
+			return fmt.Errorf("allowed audience [%d] %q is invalid: %w", i, aud, err)
+		}
+	}
+	return nil
+}
+
+// validateHMACSecrets validates that all HMAC secrets meet the minimum length requirement.
+func validateHMACSecrets(secrets *servercrypto.HMACSecrets) error {
+	if secrets == nil {
+		return fmt.Errorf("HMAC secrets are required")
+	}
+	if len(secrets.Current) < servercrypto.MinSecretLength {
+		return fmt.Errorf("current HMAC secret must be at least %d bytes", servercrypto.MinSecretLength)
+	}
+	for i, rotated := range secrets.Rotated {
+		if len(rotated) < servercrypto.MinSecretLength {
+			return fmt.Errorf("rotated HMAC secret [%d] must be at least %d bytes", i, servercrypto.MinSecretLength)
+		}
+	}
+	return nil
+}
+
+// validateTokenLifespans validates that token lifespans are within allowed bounds.
+func validateTokenLifespans(cfg *AuthorizationServerParams) error {
+	if cfg.AccessTokenLifespan < MinAccessTokenLifespan || cfg.AccessTokenLifespan > MaxAccessTokenLifespan {
+		return fmt.Errorf("access token lifespan must be between %v and %v", MinAccessTokenLifespan, MaxAccessTokenLifespan)
+	}
+	if cfg.RefreshTokenLifespan < MinRefreshTokenLifespan || cfg.RefreshTokenLifespan > MaxRefreshTokenLifespan {
+		return fmt.Errorf("refresh token lifespan must be between %v and %v", MinRefreshTokenLifespan, MaxRefreshTokenLifespan)
+	}
+	if cfg.AuthCodeLifespan < MinAuthCodeLifespan || cfg.AuthCodeLifespan > MaxAuthCodeLifespan {
+		return fmt.Errorf("authorization code lifespan must be between %v and %v", MinAuthCodeLifespan, MaxAuthCodeLifespan)
+	}
+	return nil
+}
+
+// ValidateConfidentialClientTransport rejects cleartext HTTP configurations
+// when any confidential client is enabled, whether it is admitted through DCR
+// or statically declared.
+func ValidateConfidentialClientTransport(
+	allowConfidential, insecureAllowHTTP bool,
+	issuer string, insecureAllowConfidentialOverLoopbackHTTP bool,
+) error {
+	if !allowConfidential {
+		return nil
+	}
+	if insecureAllowHTTP {
+		return fmt.Errorf("allow_confidential_client_registration cannot be combined with insecure_allow_http: " +
+			"confidential clients would send secrets over cleartext HTTP")
+	}
+	parsed, err := url.Parse(issuer)
+	if err != nil {
+		return fmt.Errorf("confidential clients require a valid issuer URL")
+	}
+	if parsed.Scheme != "http" {
+		return nil
+	}
+	// Mirrors the query/fragment/userinfo shape validateIssuerURLCore enforces
+	// (pkg/authserver/config.go) for the same reasons: an issuer identifier
+	// with any of these is malformed under RFC 8414 §2 regardless of scheme,
+	// and this function is the sole transport authority for the loopback
+	// opt-in path once a caller reaches it directly.
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("confidential clients require a valid issuer URL")
+	}
+	if insecureAllowConfidentialOverLoopbackHTTP && !networking.IsLocalhost(parsed.Host) {
+		return fmt.Errorf("allow_confidential_client_registration cannot use the loopback HTTP opt-in with a non-loopback issuer: " +
+			"confidential clients would send secrets over cleartext HTTP")
+	}
+	if !insecureAllowConfidentialOverLoopbackHTTP && networking.IsLocalhost(parsed.Host) {
+		return fmt.Errorf("allow_confidential_client_registration cannot be combined with a plain-HTTP loopback issuer unless " +
+			"insecure_allow_confidential_over_loopback_http is set: confidential clients would send secrets over cleartext HTTP")
+	}
+	if !networking.IsLocalhost(parsed.Host) {
+		return fmt.Errorf("allow_confidential_client_registration cannot use a plain-HTTP non-loopback issuer: " +
+			"confidential clients would send secrets over cleartext HTTP")
+	}
+	return nil
+}
+
+// validateParams validates all fields on AuthorizationServerParams.
+func validateParams(cfg *AuthorizationServerParams) error {
+	if err := validateIssuerURL(cfg.Issuer); err != nil {
+		return err
+	}
+	if cfg.SigningKeyID == "" {
+		return fmt.Errorf("signing key ID is required")
+	}
+	if cfg.SigningKeyAlgorithm == "" {
+		return fmt.Errorf("signing key algorithm is required")
+	}
+	if cfg.SigningKey == nil {
+		return fmt.Errorf("signing key is required")
+	}
+	if err := validateHMACSecrets(cfg.HMACSecrets); err != nil {
+		return err
+	}
+	if err := servercrypto.ValidateAlgorithmForKey(cfg.SigningKeyAlgorithm, cfg.SigningKey); err != nil {
+		return fmt.Errorf("invalid signing configuration: %w", err)
+	}
+	if err := validateTokenLifespans(cfg); err != nil {
+		return err
+	}
+	if cfg.AuthorizationEndpointBaseURL != "" {
+		if err := validateIssuerURL(cfg.AuthorizationEndpointBaseURL); err != nil {
+			return fmt.Errorf("authorization endpoint base URL: %w", err)
+		}
+	}
+	if err := validateAllowedAudiences(cfg.AllowedAudiences); err != nil {
+		return err
+	}
+	if err := ValidateConfidentialClientTransport(
+		cfg.AllowConfidentialClientRegistration || cfg.HasStaticDelegateClients,
+		cfg.InsecureAllowHTTP, cfg.Issuer, cfg.InsecureAllowConfidentialOverLoopbackHTTP,
+	); err != nil {
+		return err
+	}
+	// Defense-in-depth: re-check the baseline-⊆-scopes_supported invariant.
+	// RunConfig.Validate performs the same check at the operator-supplied
+	// wire-format boundary; this gate covers callers that construct
+	// AuthorizationServerParams programmatically and bypass that path.
+	return registration.ValidateScopeSubset(cfg.BaselineClientScopes, cfg.ScopesSupported, "baseline_client_scopes")
+}
+
+// NewAuthorizationServerConfig creates an AuthorizationServerConfig from the provided configuration.
+func NewAuthorizationServerConfig(cfg *AuthorizationServerParams) (*AuthorizationServerConfig, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
+	}
+	if err := validateParams(cfg); err != nil {
+		return nil, err
+	}
+
+	if len(cfg.BaselineClientScopes) > 0 {
+		slog.Info("DCR registrations will be auto-granted baseline scopes",
+			"scopes", cfg.BaselineClientScopes,
+		)
+	}
+
+	// Build JWK from signing key
+	jwk := jose.JSONWebKey{
+		Key:       cfg.SigningKey,
+		KeyID:     cfg.SigningKeyID,
+		Algorithm: cfg.SigningKeyAlgorithm,
+		Use:       "sig",
+	}
+
+	// The JWKS published at /.well-known/jwks.json must include every
+	// fallback key still in rotation, not just the primary signing key,
+	// or the documented key-rotation procedure never opens its overlap
+	// window (#6451). The primary key is listed first; any additional
+	// key matching its KeyID is skipped to avoid publishing it twice.
+	signingJWKS := &jose.JSONWebKeySet{Keys: []jose.JSONWebKey{jwk}}
+	for _, pubKey := range cfg.AdditionalPublicKeys {
+		if pubKey.KeyID == cfg.SigningKeyID {
+			continue
+		}
+		signingJWKS.Keys = append(signingJWKS.Keys, jose.JSONWebKey{
+			Key:       pubKey.PublicKey,
+			KeyID:     pubKey.KeyID,
+			Algorithm: pubKey.Algorithm,
+			Use:       "sig",
+		})
+	}
+
+	fositeConfig := &fosite.Config{
+		AccessTokenIssuer:              cfg.Issuer,
+		AccessTokenLifespan:            cfg.AccessTokenLifespan,
+		RefreshTokenLifespan:           cfg.RefreshTokenLifespan,
+		AuthorizeCodeLifespan:          cfg.AuthCodeLifespan,
+		GlobalSecret:                   cfg.HMACSecrets.Current,
+		RotatedGlobalSecrets:           cfg.HMACSecrets.Rotated,
+		TokenURL:                       cfg.Issuer + "/oauth/token",
+		EnforcePKCE:                    true,
+		EnablePKCEPlainChallengeMethod: false, // Only allow S256 per MCP specification
+		// ScopeStrategy validates requested scopes against client's registered scopes.
+		// ExactScopeStrategy requires exact matches (no wildcards) for security.
+		// This prevents clients from requesting scopes beyond what they registered with.
+		ScopeStrategy: fosite.ExactScopeStrategy,
+		// ClientSecretsHasher compares client secrets at the token endpoint.
+		// Plain SHA-256 is correct here: the secrets are 256 bits of CSPRNG
+		// output, never client-chosen, so a password-stretching KDF protects
+		// nothing and would hand unauthenticated callers a CPU-amplification
+		// lever (one bcrypt verify per wrong-secret attempt). Must match the
+		// hasher registration.New applies at client construction.
+		ClientSecretsHasher: registration.SHA256Hasher,
+	}
+
+	return &AuthorizationServerConfig{
+		Config:                              fositeConfig,
+		SigningKey:                          &jwk,
+		SigningJWKS:                         signingJWKS,
+		AllowedAudiences:                    cfg.AllowedAudiences,
+		ScopesSupported:                     cfg.ScopesSupported,
+		BaselineClientScopes:                cfg.BaselineClientScopes,
+		AuthorizationEndpointBaseURL:        cfg.AuthorizationEndpointBaseURL,
+		CIMDEnabled:                         cfg.CIMDEnabled,
+		AllowConfidentialClientRegistration: cfg.AllowConfidentialClientRegistration,
+		AllowPrivateKeyJWTRegistration:      cfg.AllowPrivateKeyJWTRegistration,
+		HasStaticDelegateClients:            cfg.HasStaticDelegateClients,
+		InsecureAllowHTTP:                   cfg.InsecureAllowHTTP,
+		InsecureAllowConfidentialOverLoopbackHTTP: cfg.InsecureAllowConfidentialOverLoopbackHTTP,
+		ForceConfidentialRedirectURIs:             cfg.ForceConfidentialRedirectURIs,
+		TokenExchangeEnabled:                      !cfg.DisableTokenExchange,
+		JWTBearerGrantEnabled:                     cfg.JWTBearerGrantEnabled,
+		SPIFFEClientResolver:                      cfg.SPIFFEClientResolver,
+		SPIFFEX509BundleSource:                    cfg.SPIFFEX509BundleSource,
+		SPIFFEJWTBundleSource:                     cfg.SPIFFEJWTBundleSource,
+	}, nil
+}
+
+// NewAuthorizationServer creates a new fosite OAuth2Provider with the given configuration,
+// storage, strategy, and endpoint handler factories.
+func NewAuthorizationServer(
+	config *AuthorizationServerConfig,
+	storage fosite.Storage,
+	strategy any,
+	factories ...Factory,
+) (fosite.OAuth2Provider, error) {
+	if err := ValidateConfidentialClientTransport(
+		config.AllowConfidentialClientRegistration || config.HasStaticDelegateClients,
+		config.InsecureAllowHTTP,
+		config.AccessTokenIssuer,
+		config.InsecureAllowConfidentialOverLoopbackHTTP,
+	); err != nil {
+		return nil, err
+	}
+	providerConfig := *config
+	fositeConfig := *config.Config
+	fositeConfig.AuthorizeEndpointHandlers = slices.Clone(fositeConfig.AuthorizeEndpointHandlers)
+	fositeConfig.TokenEndpointHandlers = slices.Clone(fositeConfig.TokenEndpointHandlers)
+	fositeConfig.TokenIntrospectionHandlers = slices.Clone(fositeConfig.TokenIntrospectionHandlers)
+	fositeConfig.RevocationHandlers = slices.Clone(fositeConfig.RevocationHandlers)
+	fositeConfig.PushedAuthorizeEndpointHandlers = slices.Clone(fositeConfig.PushedAuthorizeEndpointHandlers)
+	providerConfig.Config = &fositeConfig
+	provider := fosite.NewOAuth2Provider(storage, &fositeConfig)
+	// Select the fallback after constructing the provider because fosite's
+	// built-in strategy is a provider method. Preserve a caller-supplied strategy
+	// when present, then install the SPIFFE dispatcher on the provider-local copy.
+	defaultStrategy := func() fosite.ClientAuthenticationStrategy {
+		if fositeConfig.ClientAuthenticationStrategy != nil {
+			return fositeConfig.ClientAuthenticationStrategy
+		}
+		return provider.DefaultClientAuthenticationStrategy
+	}()
+	fositeConfig.ClientAuthenticationStrategy = newSPIFFEClientAuthenticationStrategy(
+		defaultStrategy, providerConfig.SPIFFEClientResolver,
+	)
+
+	for _, factory := range factories {
+		result, err := factory(&providerConfig, storage, strategy)
+		if err != nil {
+			return nil, fmt.Errorf("authorization server factory failed: %w", err)
+		}
+
+		var matched bool
+
+		if ah, ok := result.(fosite.AuthorizeEndpointHandler); ok {
+			fositeConfig.AuthorizeEndpointHandlers.Append(ah)
+			matched = true
+		}
+
+		if th, ok := result.(fosite.TokenEndpointHandler); ok {
+			fositeConfig.TokenEndpointHandlers.Append(th)
+			matched = true
+		}
+
+		if ti, ok := result.(fosite.TokenIntrospector); ok {
+			fositeConfig.TokenIntrospectionHandlers.Append(ti)
+			matched = true
+		}
+
+		if rh, ok := result.(fosite.RevocationHandler); ok {
+			fositeConfig.RevocationHandlers.Append(rh)
+			matched = true
+		}
+
+		if ph, ok := result.(fosite.PushedAuthorizeEndpointHandler); ok {
+			fositeConfig.PushedAuthorizeEndpointHandlers.Append(ph)
+			matched = true
+		}
+
+		if result != nil && !matched {
+			return nil, fmt.Errorf("authorization server factory returned unrecognized handler type %T", result)
+		}
+	}
+
+	return provider, nil
+}
+
+// GetSigningKey returns the config's signing key.
+func (c *AuthorizationServerConfig) GetSigningKey(_ context.Context) *jose.JSONWebKey {
+	return c.SigningKey
+}
+
+// GetPrivateSigningJWKS returns the config's signing JWKS containing private keys.
+//
+// WARNING: This JWKS contains PRIVATE key material and MUST NOT be exposed publicly.
+// Use PublicJWKS() for the /.well-known/jwks.json endpoint.
+func (c *AuthorizationServerConfig) GetPrivateSigningJWKS(_ context.Context) *jose.JSONWebKeySet {
+	return c.SigningJWKS
+}
+
+// PublicJWKS returns a copy of the JWKS containing only public keys.
+func (c *AuthorizationServerConfig) PublicJWKS() *jose.JSONWebKeySet {
+	if c.SigningJWKS == nil {
+		return nil
+	}
+
+	publicJWKS := &jose.JSONWebKeySet{
+		Keys: make([]jose.JSONWebKey, 0, len(c.SigningJWKS.Keys)),
+	}
+
+	for _, key := range c.SigningJWKS.Keys {
+		publicKey := key.Public()
+		publicJWKS.Keys = append(publicJWKS.Keys, publicKey)
+	}
+
+	return publicJWKS
+}
+
+// GetAccessTokenIssuer returns the issuer URL for access tokens.
+// This is an adapter method that wraps the embedded fosite.Config method.
+func (c *AuthorizationServerConfig) GetAccessTokenIssuer() string {
+	return c.AccessTokenIssuer
+}
+
+// GetAuthorizationEndpointBaseURL returns the base URL for the authorization endpoint.
+// If AuthorizationEndpointBaseURL is set, it is returned; otherwise falls back to the issuer.
+func (c *AuthorizationServerConfig) GetAuthorizationEndpointBaseURL() string {
+	if c.AuthorizationEndpointBaseURL != "" {
+		return c.AuthorizationEndpointBaseURL
+	}
+	return c.GetAccessTokenIssuer()
+}
+
+// GetAuthorizeCodeLifespan returns the lifetime for authorization codes.
+// This is an adapter method that wraps the embedded fosite.Config method.
+func (c *AuthorizationServerConfig) GetAuthorizeCodeLifespan() time.Duration {
+	return c.AuthorizeCodeLifespan
+}
+
+// GetAccessTokenLifespan returns the lifetime for access tokens.
+// This is an adapter method that wraps the embedded fosite.Config method.
+func (c *AuthorizationServerConfig) GetAccessTokenLifespan() time.Duration {
+	return c.AccessTokenLifespan
+}
+
+// GetRefreshTokenLifespan returns the lifetime for refresh tokens.
+// This is an adapter method that wraps the embedded fosite.Config method.
+func (c *AuthorizationServerConfig) GetRefreshTokenLifespan() time.Duration {
+	return c.RefreshTokenLifespan
+}

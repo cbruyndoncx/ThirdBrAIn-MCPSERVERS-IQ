@@ -1,0 +1,498 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+package networking
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"syscall"
+	"time"
+
+	"golang.org/x/oauth2"
+)
+
+// HTTPClient is an interface for making HTTP requests.
+// This interface is satisfied by *http.Client and allows for dependency injection in testing.
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+var privateIPBlocks []*net.IPNet
+
+// HttpTimeout is the timeout for outgoing HTTP requests
+const HttpTimeout = 30 * time.Second
+
+// HttpsScheme is the HTTPS scheme
+const HttpsScheme = "https"
+
+// HttpScheme is the HTTP scheme
+const HttpScheme = "http"
+
+// MaxRedirects bounds how many HTTP redirects an SSRF-guarded client follows
+// before giving up. Matches the cap used by the transparent proxy data path.
+const MaxRedirects = 10
+
+// Connection-pool bounds applied by Build.
+const (
+	// idleConnTimeout bounds how long a pooled keep-alive connection is
+	// retained after its last use. This is the leak: http.Transport's zero
+	// value means "never expire", so a client that performs one request and is
+	// then dropped pins a socket and its readLoop/writeLoop goroutine pair for
+	// the lifetime of the process. 90s matches http.DefaultTransport.
+	idleConnTimeout = 90 * time.Second
+	// maxIdleConns caps pooled idle connections across all hosts. The zero
+	// value is unlimited. 100 matches http.DefaultTransport.
+	maxIdleConns = 100
+	// maxIdleConnsPerHost caps them per host. The zero value here is already
+	// bounded (http.DefaultMaxIdleConnsPerHost is 2), so this is a deliberate
+	// increase rather than a new bound: these clients are host-scoped, and a
+	// slightly larger pool serves concurrent requests without dialing now that
+	// the idle timeout is finite.
+	maxIdleConnsPerHost = 4
+)
+
+// ErrRedirectRefused is wrapped by SameHostRedirectPolicy when it declines to
+// follow a redirect, so callers can match it with errors.Is.
+var ErrRedirectRefused = errors.New("redirect refused")
+
+// SameHostRedirectPolicy returns a value for http.Client.CheckRedirect that
+// follows only same-host redirects, refuses HTTPS-to-HTTP downgrades, and caps
+// the chain at MaxRedirects.
+//
+// Any client that fetches a URL derived from an untrusted remote server — auth
+// discovery probes, RFC 9728 resource-metadata fetches, OIDC issuer discovery —
+// must install this. Validating only the originally-supplied URL is not enough:
+// a malicious server can return a 30x that points the request at an internal
+// address (cloud IMDS, RFC1918 services), and the host-side client would follow
+// it (CWE-918). Restricting redirects to the same host as the original request
+// keeps the request on the endpoint the operator actually configured.
+//
+// This mirrors the data-plane guard in pkg/transport/proxy/transparent
+// (followRedirects); keep the two policies in sync.
+func SameHostRedirectPolicy() func(req *http.Request, via []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= MaxRedirects {
+			return fmt.Errorf("stopped after %d redirects: %w", MaxRedirects, ErrRedirectRefused)
+		}
+		// via[0] is the original request; CheckRedirect is only invoked once at
+		// least one redirect has occurred, so via is never empty.
+		original := via[0]
+		// Compare host:port (not just hostname): a redirect to a different port
+		// on the same host can reach a different internal service (a co-located
+		// metadata/admin port), so it must be treated as cross-host.
+		if !strings.EqualFold(req.URL.Host, original.URL.Host) {
+			return fmt.Errorf("refusing cross-host redirect to %q (original host %q): %w",
+				req.URL.Host, original.URL.Host, ErrRedirectRefused)
+		}
+		if original.URL.Scheme == HttpsScheme && req.URL.Scheme != HttpsScheme {
+			return fmt.Errorf("refusing redirect that downgrades from HTTPS to %q: %w",
+				req.URL.Scheme, ErrRedirectRefused)
+		}
+		return nil
+	}
+}
+
+// Dialer control function for validating addresses prior to connection
+func protectedDialerControl(_, address string, _ syscall.RawConn) error {
+	err := AddressReferencesPrivateIp(address)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// NewPrivateIPBlockingDialContext returns a DialContext that refuses to connect
+// to private, loopback, or link-local addresses. The check runs after DNS
+// resolution on the address actually being dialed, so it also defends against
+// DNS rebinding and is re-applied on every redirect hop. Pair it with
+// Transport.DisableKeepAlives so a pooled connection cannot skip the check on a
+// later request.
+//
+// Use this on clients that fetch a URL derived from untrusted input when the
+// operator-configured target is public; SameHostRedirectPolicy is the
+// redirect-following counterpart.
+func NewPrivateIPBlockingDialContext() func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return (&net.Dialer{Control: protectedDialerControl}).DialContext
+}
+
+// Dial timeouts applied to backend connections. Both match the Go standard
+// library's http.DefaultTransport dialer.
+const (
+	backendDialTimeout   = 30 * time.Second
+	backendDialKeepAlive = 30 * time.Second
+)
+
+// CloneDefaultTransportWithDialControl returns an *http.Transport equivalent to
+// http.DefaultTransport, optionally carrying a per-connection dial Control hook.
+//
+// When http.DefaultTransport is the standard *http.Transport it is cloned
+// (preserving proxy, HTTP/2, and idle-connection settings). If it has been
+// replaced (e.g. in tests) a transport with the Go standard-library defaults is
+// reconstructed instead, so proxy/timeout/HTTP2 settings are not silently
+// dropped.
+//
+// When control is non-nil, a net.Dialer carrying it — with the standard backend
+// dial timeout and keep-alive — is installed as DialContext. The hook fires on
+// the resolved peer IP before the TCP handshake, which is what lets callers
+// defeat DNS-rebinding: a name-based check cannot, because the name can resolve
+// to a blocked IP after the check passes. A nil control leaves the cloned
+// dialer untouched.
+//
+// This is the single construction point for the backend transport used by every
+// caller that needs a dial-control hook, so callers building similar transports
+// cannot drift apart. Currently used by pkg/vmcp/client and
+// pkg/vmcp/session/internal/backend.
+func CloneDefaultTransportWithDialControl(
+	control func(network, address string, c syscall.RawConn) error,
+) *http.Transport {
+	var t *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		t = dt.Clone()
+	} else {
+		t = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: backendDialTimeout, KeepAlive: backendDialKeepAlive}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          maxIdleConns,
+			IdleConnTimeout:       idleConnTimeout,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	}
+	if control != nil {
+		t.DialContext = (&net.Dialer{
+			Timeout:   backendDialTimeout,
+			KeepAlive: backendDialKeepAlive,
+			Control:   control,
+		}).DialContext
+	}
+	return t
+}
+
+// IdleConnectionCloser is the capability http.Client discovers on its outermost
+// transport to drain pooled connections (it asserts an identical unexported
+// interface). Any RoundTripper in this repo that wraps another must implement it
+// and forward the call, or every CloseIdleConnections on the resulting client is
+// a silent no-op. Assert against this named type rather than redeclaring an
+// anonymous `interface{ CloseIdleConnections() }`.
+//
+// upstream.IdleConnectionCloser is the provider-level analogue one layer up.
+type IdleConnectionCloser interface {
+	CloseIdleConnections()
+}
+
+// SetIdleConnBounds applies Build's idle-connection-pool bounds to a
+// hand-constructed *http.Transport — the transports this package cannot build
+// through Build because they need their own DialContext, CheckRedirect, or TLS
+// config. A zero IdleConnTimeout never expires a pooled connection, so a client
+// that performs one request and is dropped pins a socket and its goroutine pair
+// for the process lifetime; this is the leak Build fixes for its own clients
+// (see the constant block above). Setting all three fields together keeps a
+// call site from bounding two of the three by mistake.
+//
+// pkg/networking imports pkg/oauthproto, so leaf packages that oauthproto's
+// import graph reaches cannot call this without a cycle; those mirror the
+// values with a local const block instead.
+func SetIdleConnBounds(t *http.Transport) {
+	t.IdleConnTimeout = idleConnTimeout
+	t.MaxIdleConns = maxIdleConns
+	t.MaxIdleConnsPerHost = maxIdleConnsPerHost
+}
+
+// ForwardCloseIdle drains the idle-connection pool reachable through rt when rt
+// implements IdleConnectionCloser — as *http.Transport, and every wrapping
+// RoundTripper in this repo that forwards the call, do. A wrapping RoundTripper
+// must call this from its own CloseIdleConnections; otherwise
+// http.Client.CloseIdleConnections stops at the wrapper and the pool underneath
+// is never drained (see IdleConnectionCloser). Using this helper keeps the
+// wrapper half from silently regressing into an anonymous
+// `interface{ CloseIdleConnections() }` assertion that drifts out of sync.
+func ForwardCloseIdle(rt http.RoundTripper) {
+	if closer, ok := rt.(IdleConnectionCloser); ok {
+		closer.CloseIdleConnections()
+	}
+}
+
+// ValidatingTransport is for validating URLs prior to request
+type ValidatingTransport struct {
+	Transport         http.RoundTripper
+	InsecureAllowHTTP bool
+}
+
+// Compile-time assertion: a rename or typo of CloseIdleConnections would
+// otherwise silently re-hide the pool it wraps (see IdleConnectionCloser).
+var _ IdleConnectionCloser = (*ValidatingTransport)(nil)
+
+// RoundTrip validates the request URL prior to forwarding
+func (t *ValidatingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Skip validation if INSECURE_DISABLE_URL_VALIDATION is set or if InsecureAllowHTTP is true
+	if strings.EqualFold(os.Getenv("INSECURE_DISABLE_URL_VALIDATION"), "true") || t.InsecureAllowHTTP {
+		return t.Transport.RoundTrip(req)
+	}
+
+	// Check for valid URL specification
+	parsedUrl, err := url.Parse(req.URL.String())
+	if err != nil {
+		return nil, fmt.Errorf("the supplied URL %s is malformed", req.URL.String())
+	}
+
+	// Check for HTTPS scheme
+	if parsedUrl.Scheme != HttpsScheme {
+		return nil, fmt.Errorf("the supplied URL %s is not HTTPS scheme", req.URL.String())
+	}
+
+	return t.Transport.RoundTrip(req)
+}
+
+// CloseIdleConnections forwards to the wrapped transport so that
+// http.Client.CloseIdleConnections reaches the real connection pool.
+//
+// Because Build always wraps the pool in a ValidatingTransport, omitting this
+// method would make every client's CloseIdleConnections a silent no-op — see
+// IdleConnectionCloser. The assertion is required because the field is an
+// http.RoundTripper; it holds an *http.Transport for every client Build produces.
+func (t *ValidatingTransport) CloseIdleConnections() {
+	ForwardCloseIdle(t.Transport)
+}
+
+// closeIdlerTransport wraps a RoundTripper that does not implement
+// CloseIdleConnections (oauth2.Transport) and forwards the call to the
+// *http.Transport owning the connection pool underneath it.
+type closeIdlerTransport struct {
+	http.RoundTripper
+	pool *http.Transport
+}
+
+var _ IdleConnectionCloser = (*closeIdlerTransport)(nil)
+
+// CloseIdleConnections closes the idle connections held by the underlying pool.
+func (t *closeIdlerTransport) CloseIdleConnections() {
+	t.pool.CloseIdleConnections()
+}
+
+// createTokenSourceFromFile creates an oauth2.TokenSource from a token file
+func createTokenSourceFromFile(tokenFile string) (oauth2.TokenSource, error) {
+	tokenBytes, err := os.ReadFile(tokenFile) // #nosec G304 - tokenFile path is provided by user via CLI flag
+	if err != nil {
+		return nil, fmt.Errorf("failed to read auth token file: %w", err)
+	}
+
+	// Remove any trailing newlines/whitespace
+	tokenStr := strings.TrimSpace(string(tokenBytes))
+	if tokenStr == "" {
+		return nil, fmt.Errorf("auth token file is empty")
+	}
+
+	// Create a static token source
+	token := &oauth2.Token{
+		AccessToken: tokenStr,
+		TokenType:   "Bearer",
+	}
+
+	return oauth2.StaticTokenSource(token), nil
+}
+
+// HttpClientBuilder provides a fluent interface for building HTTP clients
+type HttpClientBuilder struct {
+	clientTimeout         time.Duration
+	tlsHandshakeTimeout   time.Duration
+	responseHeaderTimeout time.Duration
+	caCertPath            string
+	caCertUsesSystemRoots bool
+	authTokenFile         string
+	allowPrivate          bool
+	insecureAllowHTTP     bool
+	disableKeepAlives     bool
+}
+
+// NewHttpClientBuilder returns a new HttpClientBuilder
+func NewHttpClientBuilder() *HttpClientBuilder {
+	return &HttpClientBuilder{
+		clientTimeout:         HttpTimeout,
+		tlsHandshakeTimeout:   10 * time.Second,
+		responseHeaderTimeout: 10 * time.Second,
+	}
+}
+
+// NewHostScopedClientBuilder returns an HttpClientBuilder pre-configured with
+// the SSRF-guard policy (CWE-918) appropriate for a host explicitly configured
+// by an operator. By default the returned builder blocks plain HTTP and
+// connections to private/loopback/link-local IP ranges. Both gates are relaxed
+// automatically for loopback hosts (development/testing) and when
+// INSECURE_DISABLE_URL_VALIDATION is set.
+//
+// allowPrivateIPs widens only the private-IP gate — for example an in-cluster
+// provider reachable solely over an RFC-1918 address — without enabling plain
+// HTTP for non-loopback hosts. insecureAllowHTTP additionally permits
+// plain-HTTP for non-loopback hosts and must never be set in production.
+//
+// The returned builder is not yet built: callers may chain further options
+// (e.g. WithTimeout, WithDisableKeepAlives) before calling Build. This builder
+// carries the policy for operator-configured hosts only; a host named by a
+// remote server or by a document it serves must use
+// NewServerSuppliedHostClientBuilder instead.
+func NewHostScopedClientBuilder(host string, allowPrivateIPs, insecureAllowHTTP bool) *HttpClientBuilder {
+	allowInsecure := IsLocalhost(host) ||
+		insecureAllowHTTP ||
+		strings.EqualFold(os.Getenv("INSECURE_DISABLE_URL_VALIDATION"), "true")
+	return NewHttpClientBuilder().
+		WithInsecureAllowHTTP(allowInsecure).
+		WithPrivateIPs(allowInsecure || allowPrivateIPs)
+}
+
+// NewServerSuppliedHostClientBuilder returns an HttpClientBuilder for a host
+// supplied by a remote server or its metadata. It permits HTTP for localhost,
+// explicit insecure configuration, or INSECURE_DISABLE_URL_VALIDATION to
+// preserve compatibility, but private/loopback/link-local dialing is enabled
+// only by allowPrivateIPs. In particular, localhost and the environment
+// override never widen the private-IP gate for server-supplied endpoints:
+// INSECURE_DISABLE_URL_VALIDATION deliberately relaxes only the HTTPS
+// requirement here, because a remote server that can name an endpoint must not
+// be able to reach an internal address just because a developer set that
+// variable.
+func NewServerSuppliedHostClientBuilder(host string, allowPrivateIPs, insecureAllowHTTP bool) *HttpClientBuilder {
+	allowInsecure := IsLocalhost(host) ||
+		insecureAllowHTTP ||
+		strings.EqualFold(os.Getenv("INSECURE_DISABLE_URL_VALIDATION"), "true")
+	return NewHttpClientBuilder().
+		WithInsecureAllowHTTP(allowInsecure).
+		WithPrivateIPs(allowPrivateIPs)
+}
+
+// WithCABundle sets a pinned CA certificate bundle path. When a bundle is
+// configured, only certificates from that bundle are trusted (system roots are
+// not included).
+func (b *HttpClientBuilder) WithCABundle(path string) *HttpClientBuilder {
+	b.caCertPath = path
+	b.caCertUsesSystemRoots = false
+	return b
+}
+
+// WithSystemRootsPlusCABundle sets a CA certificate bundle path and preserves
+// trust in the system root pool. Use this when an upstream may use either a
+// publicly trusted certificate or a private CA.
+func (b *HttpClientBuilder) WithSystemRootsPlusCABundle(path string) *HttpClientBuilder {
+	b.caCertPath = path
+	b.caCertUsesSystemRoots = true
+	return b
+}
+
+// WithTokenFromFile sets the auth token file path
+func (b *HttpClientBuilder) WithTokenFromFile(path string) *HttpClientBuilder {
+	b.authTokenFile = path
+	return b
+}
+
+// WithPrivateIPs allows connections to private IP addresses
+func (b *HttpClientBuilder) WithPrivateIPs(allow bool) *HttpClientBuilder {
+	b.allowPrivate = allow
+	return b
+}
+
+// WithInsecureAllowHTTP allows HTTP (non-HTTPS) URLs
+// WARNING: This is insecure and should NEVER be used in production
+func (b *HttpClientBuilder) WithInsecureAllowHTTP(allow bool) *HttpClientBuilder {
+	b.insecureAllowHTTP = allow
+	return b
+}
+
+// WithDisableKeepAlives disables HTTP keep-alive on the transport. When true,
+// each request uses a fresh connection, ensuring the per-dial SSRF check fires
+// on every request rather than being bypassed by a reused connection.
+func (b *HttpClientBuilder) WithDisableKeepAlives(disable bool) *HttpClientBuilder {
+	b.disableKeepAlives = disable
+	return b
+}
+
+// WithTimeout sets the HTTP client timeout
+func (b *HttpClientBuilder) WithTimeout(timeout time.Duration) *HttpClientBuilder {
+	b.clientTimeout = timeout
+	return b
+}
+
+// Build creates the configured HTTP client
+func (b *HttpClientBuilder) Build() (*http.Client, error) {
+	transport := &http.Transport{
+		TLSHandshakeTimeout:   b.tlsHandshakeTimeout,
+		ResponseHeaderTimeout: b.responseHeaderTimeout,
+	}
+	SetIdleConnBounds(transport)
+	transport.DisableKeepAlives = b.disableKeepAlives
+
+	if !b.allowPrivate {
+		transport.DialContext = (&net.Dialer{
+			Control: protectedDialerControl,
+		}).DialContext
+	}
+
+	if b.caCertPath != "" {
+		caCert, err := os.ReadFile(b.caCertPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA certificate bundle: %w", err)
+		}
+
+		caCertPool := x509.NewCertPool()
+		if b.caCertUsesSystemRoots {
+			caCertPool, err = x509.SystemCertPool()
+			if err != nil {
+				return nil, fmt.Errorf("failed to load system CA certificate pool: %w", err)
+			}
+			if caCertPool == nil {
+				return nil, fmt.Errorf("failed to load system CA certificate pool: pool is nil")
+			}
+		}
+
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate bundle")
+		}
+
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{
+				MinVersion: tls.VersionTLS12,
+			}
+		}
+		transport.TLSClientConfig.RootCAs = caCertPool
+	}
+
+	// Start with validation transport
+	var clientTransport http.RoundTripper = &ValidatingTransport{
+		Transport:         transport,
+		InsecureAllowHTTP: b.insecureAllowHTTP,
+	}
+
+	// Add auth transport if token file is provided using oauth2.Transport
+	if b.authTokenFile != "" {
+		tokenSource, err := createTokenSourceFromFile(b.authTokenFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create token source: %w", err)
+		}
+
+		// oauth2.Transport wraps our existing transport and adds Bearer token
+		// authentication. It exposes only RoundTrip/CancelRequest, so wrap it
+		// again to keep http.Client.CloseIdleConnections reaching the pool.
+		clientTransport = &closeIdlerTransport{
+			RoundTripper: &oauth2.Transport{
+				Source: tokenSource,
+				Base:   clientTransport, // Preserves our ValidatingTransport
+			},
+			pool: transport,
+		}
+	}
+
+	client := &http.Client{
+		Transport: clientTransport,
+		Timeout:   b.clientTimeout,
+	}
+
+	return client, nil
+}

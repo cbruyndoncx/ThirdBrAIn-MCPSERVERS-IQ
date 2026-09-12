@@ -1,0 +1,679 @@
+# Skills System
+
+The skills system lets ToolHive discover, build, distribute, install, and manage **Agent Skills** for AI coding assistants like Claude Code. Skills are not MCP servers -- they are markdown-based instructions (SKILL.md files) that extend an AI assistant's capabilities, packaged and distributed as OCI artifacts through the same registry infrastructure that serves MCP servers.
+
+## Why This Exists
+
+MCP servers provide tools and resources that AI assistants can call. Skills fill a different gap: they provide **instructions and knowledge** that shape how an AI assistant approaches tasks. A skill might teach Claude Code how to review PRs in your organization's style, how to run your test suite, or how to follow your team's coding conventions.
+
+Without ToolHive's skill system, teams would need to manually copy SKILL.md files between machines, track versions by hand, and have no central catalog for discovery. ToolHive brings the same managed lifecycle to skills that it already provides for MCP servers: a registry for discovery, OCI for distribution, scoped installation, and multi-client support.
+
+**Key design decision:** Skills and MCP servers are separate systems that share infrastructure (registry, groups, OCI distribution) but have distinct purposes, formats, and lifecycles.
+
+| Aspect | Skills | MCP Servers |
+|--------|--------|-------------|
+| **Purpose** | Agent instructions and knowledge | Remote tools and resources |
+| **Protocol** | Agent Skills spec (SKILL.md) | Model Context Protocol (JSON-RPC) |
+| **Format** | Markdown with YAML frontmatter | Container images or remote endpoints |
+| **Runtime** | Read by AI client at prompt time | Executed as running processes |
+| **Distribution** | OCI artifacts (tar.gz layers) | Container images |
+
+## Architecture
+
+```mermaid
+graph TB
+    subgraph "Skill Sources"
+        OCI[OCI Registry<br/>ghcr.io, Docker Hub]
+        Git[Git Repository<br/>git://github.com/org/repo]
+        Local[Local Directory<br/>SKILL.md + files]
+        RegistryAPI[Registry API<br/>Skill Catalog]
+    end
+
+    subgraph "ToolHive Skills Service"
+        SVC[SkillService<br/>pkg/skills/skillsvc]
+        Lookup[SkillLookup<br/>Registry name resolution]
+        GitRes[GitResolver<br/>Git clone + extract]
+        OCIClient[OCI Registry Client<br/>Pull/push artifacts]
+        Packager[SkillPackager<br/>Build OCI artifacts]
+        Installer[Installer<br/>Extract + validate]
+        Store[SkillStore<br/>SQLite persistence]
+    end
+
+    subgraph "Client Filesystem"
+        UserSkills["~/.claude/skills/<br/>(user scope)"]
+        ProjectSkills[".claude/skills/<br/>(project scope)"]
+    end
+
+    subgraph "Access Layer"
+        CLI[thv skill CLI]
+        API[REST API<br/>/api/v1beta/skills]
+        HTTPClient[Skills HTTP Client]
+    end
+
+    OCI --> OCIClient
+    Git --> GitRes
+    RegistryAPI --> Lookup
+    Local --> Packager
+
+    CLI --> SVC
+    API --> SVC
+    HTTPClient --> API
+
+    SVC --> Lookup
+    SVC --> GitRes
+    SVC --> OCIClient
+    SVC --> Packager
+    SVC --> Installer
+    SVC --> Store
+
+    Installer --> UserSkills
+    Installer --> ProjectSkills
+
+    style SVC fill:#90caf9,stroke:#1565c0,stroke-width:2px
+    style Store fill:#e3f2fd
+    style UserSkills fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style ProjectSkills fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style CLI fill:#fff9c4
+    style API fill:#fff9c4
+```
+
+## Core Concepts
+
+### SKILL.md Format
+
+A skill is defined by a `SKILL.md` file with YAML frontmatter and a markdown body:
+
+```markdown
+---
+name: code-review
+description: Reviews code for best practices and security patterns
+version: 1.0.0
+allowed-tools: Read Glob Grep
+toolhive.requires: ghcr.io/org/base-skill:v1
+license: Apache-2.0
+compatibility: claude-code >= 1.0
+metadata:
+  author: team-name
+---
+
+# Code Review Skill
+
+Instructions for how the AI assistant should perform code reviews...
+```
+
+**Frontmatter fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | 2-64 chars; lowercase alphanumeric and hyphens; must start and end with alphanumeric; no consecutive hyphens |
+| `description` | Yes | Human-readable description (max 1024 chars) |
+| `version` | No | Semantic version |
+| `allowed-tools` | No | Space or comma-delimited tool names |
+| `toolhive.requires` | No | OCI references for skill dependencies |
+| `license` | No | SPDX license identifier |
+| `compatibility` | No | Client compatibility string (max 500 chars) |
+| `metadata` | No | Arbitrary string-keyed, string-valued metadata |
+
+**Implementation:** `pkg/skills/types.go` (SkillFrontmatter), `pkg/skills/parser.go`, `pkg/skills/validator.go`
+
+### Installation Scopes
+
+Skills install to one of two scopes:
+
+**User scope** (`~/.claude/skills/<skill-name>/SKILL.md`):
+- Available across all projects for the current user
+- Default scope when no `--scope` flag is provided
+- Useful for general-purpose skills (code review, testing, etc.)
+
+**Project scope** (`<project-root>/.claude/skills/<skill-name>/SKILL.md`):
+- Available only within a specific project
+- Requires `--project-root` or auto-detected git root
+- Useful for project-specific conventions and workflows
+
+**Implementation:** `pkg/skills/types.go` (Scope, PathResolver)
+
+### Multi-Client Support
+
+Skills can be installed for multiple AI clients simultaneously. Each client has its own skill directory structure, so installing a skill for `claude-code` places files differently than for `cursor`.
+
+```bash
+# Install for all skill-supporting clients (default)
+thv skill install code-review
+
+# Install for specific clients
+thv skill install code-review --clients claude-code
+```
+
+The `PathResolver` interface maps (client, skill-name, scope, project-root) to the correct filesystem path for each client.
+
+**Implementation:** `pkg/skills/types.go` (PathResolver), `pkg/client/`
+
+## Skill Lifecycle
+
+### 1. Discovery
+
+Skills are discovered through the registry system:
+
+- **Registry API**: The `SkillsClient` queries the ToolHive Registry API at `/v0.1/x/dev.toolhive/skills` with pagination and search support.
+- **Browsing API**: The `GET /registry/{name}/v0.1/x/dev.toolhive/skills` endpoint on the local API server exposes skills from the configured registry provider.
+- **Local catalog**: The embedded registry includes curated skills.
+
+**Implementation:** `pkg/registry/api/skills_client.go` (SkillsClient), `pkg/api/v1/registry_v01_skills.go`
+
+### 2. Building
+
+Build a local skill directory into an OCI artifact:
+
+```bash
+thv skill build ./my-skill/         # Build with auto-detected tag
+thv skill build ./my-skill/ --tag v1.0.0
+```
+
+**Build process:**
+1. Load and parse `SKILL.md` from the directory
+2. Validate the skill definition (name, frontmatter, filesystem safety)
+3. Package all files into a tar.gz OCI layer
+4. Store in the local OCI store with the specified tag
+
+**Implementation:** `pkg/skills/skillsvc/build.go` (Build), `toolhive-core/oci/skills` (SkillPackager)
+
+### 3. Publishing
+
+Push a locally-built artifact to a remote OCI registry:
+
+```bash
+thv skill push ghcr.io/org/my-skill:v1.0.0
+```
+
+**Implementation:** `pkg/skills/skillsvc/build.go` (Push), `toolhive-core/oci/skills` (RegistryClient)
+
+**Signing:** Every push is signed by default — the RFC THV-0080 trust model
+has no unsigned publish path. `thv skill push` requires exactly one of three
+mutually exclusive choices:
+
+- `--key <path>`: sign with a cosign private key (`COSIGN_PASSWORD`
+  decrypts encrypted keys, read server-side by `thv serve`, which performs
+  the signing). This is accepted only through automatic local server
+  discovery: the owner-protected discovery file supplies a separate random
+  capability that the CLI sends with the key-bearing request. Loopback or IPC
+  transport alone is not authorization, because a public reverse proxy can
+  make an untrusted caller appear local. Remote and manually configured API
+  URLs must use keyless signing instead.
+- `--identity-token <token-or-path>`: sign keylessly. The CLI acquires an
+  OIDC identity token and forwards it in the push request; the server
+  exchanges it with Fulcio for a short-lived certificate, signs, and records
+  a Rekor transparency-log entry (`toolhive-core/container/signer`). The
+  server never handles long-lived credentials — only the already-acquired,
+  short-lived token.
+- `--no-sign`: push unsigned. Consumers installing project-scoped need an
+  explicit unsigned exception.
+
+When none of the three is given, `pkg/skills/identitytoken` runs an
+acquisition ladder before the push request is made, so a failure here never
+leaves an unsigned artifact published:
+
+1. A GitHub Actions ambient OIDC token, when the job has
+   `permissions: id-token: write` (`ACTIONS_ID_TOKEN_REQUEST_URL` /
+   `_TOKEN`, scoped to the `sigstore` audience).
+2. Otherwise, on an interactive terminal only: a y/N prompt, then a browser
+   sign-in against the public-good Sigstore OAuth instance
+   (`oauth2.sigstore.dev`).
+3. If neither yields a token (non-interactive with no ambient token, or the
+   prompt declined): the push fails with an actionable error naming all
+   three signing choices, never silently unsigned.
+
+`--key` and `--identity-token` are mutually exclusive; the identity token,
+once resolved, is always forwarded even alongside `--key` so the server
+reports the conflict rather than the client silently picking one.
+
+**Push happens before signing.** `skillsvc.Push` uploads the artifact to the
+registry first, then signs it and attaches the signature manifest. A signing
+failure therefore returns an error *after* the artifact is already published,
+leaving it live and unsigned in the registry — the acquisition ladder above
+narrows the window (a missing credential fails before anything is pushed) but
+does not close it, since Fulcio and Rekor can still fail once the upload has
+happened. Recovering means re-running the push, which re-signs the same
+digest. This ordering predates keyless signing and is unchanged by it;
+consumers are protected by the install-side requirement for a valid
+signature, not by the publisher's ordering.
+
+**In CI:** release pushes (`.github/workflows/skills-publish.yml`, called
+only from `releaser.yml`) run `thv skill push` with no signing flags at all,
+so the ambient rung of the ladder signs them with the job's OIDC token. That
+needs `id-token: write` on both the reusable workflow's job *and* the calling
+job — GitHub caps a reusable workflow's permissions at what its caller
+declares, so granting it in only one place silently yields no token and fails
+the push.
+
+Building is a separate workflow (`skills-build.yml`, called from
+`run-on-pr.yml` and `run-on-main.yml`) that publishes nothing and holds
+neither `packages: write` nor `id-token: write`. The split is the reason
+those permissions exist in one place only: the build executes repository
+code — `thv serve` and `thv skill build` — which on a pull request is code
+from the pull request itself, and GitHub validates a called workflow's
+permissions against its caller's statically, so a single workflow behind a
+`push:` input would have forced every caller to grant the union regardless.
+
+Interoperability with the wider Sigstore ecosystem is covered separately by
+`.github/workflows/skills-keyless-signing-e2e.yml`, which signs a throwaway
+skill against Sigstore's *staging* Fulcio and Rekor (via the
+`TOOLHIVE_SIGSTORE_FULCIO_URL` / `TOOLHIVE_SIGSTORE_REKOR_URL` overrides read
+by `thv serve`) and then verifies it with stock `cosign verify` rather than
+ToolHive's own verifier — so a signature that only ToolHive can read fails
+the job. It runs post-merge on `main` only, and is non-blocking: staging
+carries no SLO guarantee and re-signs its TUF metadata every few days, so its
+outages are reported without gating anything.
+
+It is deliberately not wired into `run-on-pr.yml`. Minting the ambient OIDC
+token needs `id-token: write`, and the job builds and runs repository code to
+use it — which on a pull request is code from the pull request. That code
+could not impersonate the release signer (a different workflow path yields a
+different certificate SAN, and lock provenance pins the path), but it could
+mint a token for any *other* audience from the request variables in its
+environment. Running it only on merged code keeps that capability out of
+reach; to exercise it on a branch, dispatch the "Main build" workflow there.
+
+### 4. Installation
+
+```bash
+thv skill install code-review                          # By name (registry lookup)
+thv skill install ghcr.io/org/skill:v1.0.0             # By OCI reference
+thv skill install git://github.com/org/repo@v1#skills/my-skill  # From git
+```
+
+**Installation flow:**
+
+```mermaid
+flowchart TD
+    A[Install Request] --> B{Reference Type?}
+    B -->|git://| C[Git Resolver]
+    B -->|OCI ref| D[OCI Pull]
+    B -->|Plain name| E[Registry Lookup]
+
+    C --> F[Clone repo with timeout]
+    F --> G[Extract skill files]
+
+    E --> H{Found in local store?}
+    H -->|Yes| I[Use local artifact]
+    H -->|No| J[Query registry/index]
+    J --> D
+
+    D --> K[Pull from registry]
+    K --> L[Decompress + extract tar.gz]
+    G --> L
+
+    I --> L
+
+    L --> M[Validate: no symlinks, path traversal]
+    M --> N[Sanitize permissions]
+    N --> O[Write to client skill directory]
+    O --> P[Create DB record]
+    P --> Q{Group specified?}
+    Q -->|Yes| R[Add to group]
+    Q -->|No| S[Done]
+    R --> S
+
+    style A fill:#e3f2fd
+    style S fill:#c8e6c9
+    style M fill:#fff3e0
+    style N fill:#fff3e0
+```
+
+**Key details:**
+
+1. **Reference parsing**: The service determines the source type from the reference format:
+   - Starts with `git://` -> git resolver
+   - Contains `/`, `:`, or `@` -> OCI reference
+   - Otherwise -> plain name (registry lookup)
+
+2. **Per-skill locking**: A mutex map keyed by (scope, name, projectRoot) prevents concurrent installs of the same skill.
+
+3. **Supply chain validation**: For OCI installs, the skill name in the artifact must match the repository name in the reference.
+
+4. **Client targeting**: When no `--clients` flag is provided, all skill-supporting clients detected on the host are targeted by default. Specify `--clients claude-code` to target a particular client.
+
+**Implementation:** `pkg/skills/skillsvc/install.go` (Install)
+
+### 5. Uninstallation
+
+```bash
+thv skill uninstall code-review
+```
+
+Removes the skill files from the filesystem, deletes the database record, and removes the skill from all groups.
+
+**Implementation:** `pkg/skills/skillsvc/uninstall.go` (Uninstall), `pkg/groups/skills.go` (RemoveSkillFromAllGroups)
+
+## Git-Based Skill Resolution
+
+Skills can be installed directly from git repositories using the `git://` scheme:
+
+```
+git://github.com/org/repo                    # Repo root, default branch
+git://github.com/org/repo@v1.0.0             # Specific tag
+git://github.com/org/repo#skills/my-skill    # Subdirectory
+git://github.com/org/repo@main#skills/my-skill  # Branch + subdirectory
+```
+
+**Resolution process:**
+1. Parse the git reference (host, repo, ref, path)
+2. Resolve authentication (`GITHUB_TOKEN` for github.com, `GITLAB_TOKEN` for gitlab.com — both host-scoped to prevent credential exfiltration; `GIT_TOKEN` as an unscoped fallback sent to any host)
+3. Clone the repository (2-minute timeout; shallow clone when a branch or tag is specified)
+4. Extract the skill directory files
+5. Validate and install as normal
+
+**Security:** The resolver validates hosts against SSRF (no localhost, no private IPs unless in dev mode), validates refs against shell injection, and rejects path traversal.
+
+**Implementation:** `pkg/skills/gitresolver/`
+
+## Storage
+
+Skill installation records are persisted in SQLite across four tables. The `entries` table is a shared parent for all entry types (skills share it with future entry kinds); `installed_skills` holds skill-specific columns and references `entries` via a foreign key; `oci_tags` is reserved for caching OCI reference-to-digest mappings but is not currently populated:
+
+```
+entries table
+├── id             (INTEGER PRIMARY KEY)
+├── entry_type     (TEXT, e.g. "skill")
+├── name           (TEXT, skill name)
+├── created_at     (TEXT, ISO 8601)
+├── updated_at     (TEXT, ISO 8601)
+└── UNIQUE(entry_type, name)
+
+installed_skills table
+├── id             (INTEGER PRIMARY KEY)
+├── entry_id       (FK → entries.id, CASCADE delete)
+├── scope          (user | project)
+├── project_root   (path, empty for user scope)
+├── reference      (OCI ref or git URL)
+├── tag            (OCI tag)
+├── digest         (OCI digest for upgrade detection)
+├── version        (semantic version)
+├── description    (TEXT)
+├── author         (TEXT)
+├── tags           (BLOB, JSONB-encoded []string)
+├── client_apps    (BLOB, JSONB-encoded []string)
+├── status         (installed | pending | failed)
+├── installed_at   (TEXT, ISO 8601)
+├── managed        (INTEGER, 0/1 — tracked in the project's toolhive.lock.yaml; see below)
+└── UNIQUE(entry_id, scope, project_root)
+
+skill_dependencies table
+├── installed_skill_id  (FK → installed_skills.id, CASCADE delete)
+├── dep_name            (TEXT)
+├── dep_reference       (OCI ref)
+├── dep_digest          (TEXT)
+└── PRIMARY KEY(installed_skill_id, dep_reference)
+
+oci_tags table (reserved; not currently populated)
+├── reference  (TEXT, PRIMARY KEY — OCI reference string)
+└── digest     (TEXT NOT NULL — content digest)
+```
+
+**Implementation:** `pkg/storage/sqlite/skill_store.go`, `pkg/storage/interfaces.go` (SkillStore), `pkg/storage/sqlite/migrations/001_create_entries_and_skills.sql`, `003_add_managed_flag.sql`
+
+## Project Lock File
+
+RFC [THV-0080](https://github.com/stacklok/toolhive-rfcs/blob/main/rfcs/THV-0080-skills-lock-file.md) adds a project-level `toolhive.lock.yaml`, committed at the project root, that pins the exact content of every project-scoped skill install — the same guarantee `package-lock.json`, `Cargo.lock`, and `go.sum` provide elsewhere. Two teammates (or a CI runner) cloning the same repo restore identical skill content via `thv skill sync`, rather than whatever the source currently resolves to.
+
+**Trust model, stated plainly:** project-scoped installs are verified against Sigstore signatures, and the lock file records the trust decisions those verifications produce. On first install of a signed skill the observed signer identity is recorded (trust on first use) as the entry's `provenance:` block and **displayed to the user**; every later install, sync, and upgrade enforces that identity *inside* the Sigstore verification policy — OCI artifacts through their attached signature bundles, git commits through gitsign signature-and-chain verification (currently `provisional: true`: the transparency-log proof of signing time is not yet validated, so the replay window is unbounded until that lands). Sync additionally re-verifies each entry's stored signature bundle offline (embedded trust root, no network) before counting it current, and upgrade refuses to move to an artifact signed by a different identity without an explicit `--allow-signer-change`. An unsigned candidate is not a signer change but a failure (`unsigned-rejected`): upgrade has no unsigned-consent flag, and `--allow-signer-change` re-verifies from scratch, which an unsigned artifact still fails, so the failure names the project-scoped reinstall with `--allow-unsigned` that records the exception explicitly.
+
+**First install need not be blind.** When a skill resolves through the registry/catalog (a plain name like `thv skill install code-review`, not a direct OCI or git reference) and that catalog entry declares an expected `provenance` (`toolhive-core`'s `registry.Skill.Provenance`, RFC THV-0080 follow-up [#6310](https://github.com/stacklok/toolhive/issues/6310)), the very first project-scoped install is checked against it instead of unconditionally trusting whatever the artifact's signature says. Each non-empty supported field constrains independently; an empty or absent catalog provenance preserves ordinary trust on first use. For multi-signed OCI artifacts, every cryptographically valid signature is considered until one satisfies all declared constraints. A lock entry, including a legacy entry with no recorded trust state, always takes precedence over the catalog — the catalog only fills the gap before any trust decision has been recorded. User-scoped installs do not use project lock-file verification and therefore do not apply catalog provenance.
+
+Catalog constraints the skill verifier cannot enforce are refused rather than silently skipped. Attestations are not yet compared, and `sigstore_url` selects trust material in the registry schema while the skill verifier currently uses its embedded public-good trust root. A non-empty `sigstore_url` or any declared `attestation` therefore fails a true first project install; existing lock entries remain authoritative.
+
+The Sigstore policy alone is not the whole guarantee: its SAN match deliberately leaves the signing workflow's git ref unpinned (`(@.*)?$`), so identity alone is satisfied by "the right workflow, on any branch." Two additional certificate fields — the git ref the signing workflow ran on and the runner class it executed in (`repositoryRef:`/`runnerEnvironment:` in `provenance:`) — are enforced separately, after the Sigstore policy succeeds, against the certificate's Fulcio extensions. An entry recorded before these fields existed, or a certificate that carries neither (a signer outside CI), is unconstrained on that field — never a wildcard match once something IS recorded. Install, sync, and upgrade all require the recorded ref and runner class to match exactly, with no automatic allowance for any kind of change, ref rotation included: an earlier version of this guard let a recorded tag ref rotate to any other tag ref automatically, reasoning that a release workflow signs each version on its own tag, but review found that this let a candidate signed from an attacker's own tag on the same repository (e.g. `refs/tags/attacker-release`) replace a pinned tag just as easily, since nothing tied the candidate's tag to the version actually being upgraded to. A ref or runner-class change of any shape is now blocked exactly like a genuine signer-identity change, and needs the same explicit `--allow-signer-change` to proceed and re-record it.
+
+A `provenance:` block records exactly one trust anchor. Keyless entries record a certificate identity (`signerIdentity:` plus `certIssuer:`, optionally narrowed by the certificate-derived fields above). Key-pair entries record `publicKey:` instead — the base64 DER SPKI form of the cosign public key — and must leave every certificate field empty, since a key-pair signature carries none. The two are mutually exclusive: they are checked by different policies against different trust roots, so an entry carrying both would not say which applies.
+
+The full key is stored rather than a digest of it because the key is recoverable from neither the artifact nor the stored bundle — cosign's signature manifest defines no annotation carrying it — so a digest would have nothing to hash at verification time. That also makes the field safe to add without a schema version bump: a build predating it sees an entry with no `signerIdentity`, reports it as required, and fails the whole lock file closed rather than treating the entry as unpinned.
+
+What is still trusted on faith, deliberately and visibly:
+
+- **Unsigned skills** install only with an explicit `--allow-unsigned`, recorded as `unsigned: true` in the lock entry. That entry is a standing exception: lock-driven operations (sync restores, upgrade re-pins) honor it without re-asking.
+- **The lock file itself** remains a repository-editable policy document. A diff converting a `provenance:` block to `unsigned: true` is a trust downgrade that sync will honor — it cannot happen without a lock file edit, which is exactly what lock-file review must catch. Reviewing `provenance`, `unsigned`, `digest`, and `resolvedReference` changes carries the same weight as reviewing the AI-executed skill content itself.
+- **First use** anchors trust to whatever identity signed the artifact at that moment; verify the printed identity is the publisher you expect.
+
+Publishing is signed by default: `thv skill push` requires `--key` (a cosign private key), an OIDC identity token for keyless signing (supplied with `--identity-token` or acquired automatically), or an explicit `--no-sign`. Either signing path attaches the signature manifest next to the artifact, and the bundle is retrievable at install. See [Publishing](#3-publishing) for the full ladder.
+
+Both paths produce an installable artifact, but they differ in what the consumer must supply. A cosign key pair carries no certificate to chain to the keyless (Fulcio) trust root, and the signing public key is recoverable neither from the artifact nor from the attached bundle — the cosign manifest defines no annotation for it. So the key has to arrive from outside the artifact: a project-scoped install of a `--key`-signed skill requires `--public-key` on first use, which verifies the signature and pins that key in the lock entry as `publicKey:`. Later installs read it back from the lock and need no flag.
+
+`--allow-unsigned` does **not** substitute for the key, in either direction: the artifact *is* signed, so it never produces the unsigned verdict that exception applies to. Nor does `--allow-signer-change` re-anchor an entry to a new key — a key-pair bundle carries no identity to observe, so honoring one would re-anchor on the strength of the caller having named it. Re-anchoring means removing the lock entry and reinstalling.
+
+Dispatch between the two paths is decided by the **lock entry, never the artifact**: a `publicKey:` pin selects the key path, a certificate pin the keyless one. Letting the artifact choose would let a republished key-signed artifact walk out of the identity its entry is pinned to. A supplied key that disagrees with what the entry pins is refused up front rather than silently ignored.
+
+Verifying a key-pair signature binds it to the artifact explicitly. The signature covers cosign's simple-signing payload, and signature manifests are discovered by a tag derived from the digest being verified — so attachment proves nothing about which artifact a signature describes. The payload digest is reconstructed from the requested reference and each candidate must sign exactly those bytes, which is what stops one artifact's signature from being replayed onto another by copying its signature layer into that artifact's `.sig` manifest (`bundleSignsPayload`).
+
+Once an entry is pinned, the key does its job on the lock-driven operations too, because the anchor is read from the entry rather than supplied again:
+
+- **`sync`** re-verifies the stored bundle against the pinned key offline. This has to be a distinct path — the keyless verifier refuses a key-pinned entry, and sync reads a refusal as drift it can heal by reinstalling, so a key-pinned skill would report as modified on every run and `--check` would fail permanently on a project that is in fact intact.
+- **`upgrade`** applies the pinned key to the candidate. Verifying against it *is* the evidence the signer has not changed, since there is no certificate identity to compare. The candidate is measured against the pin whether or not `--allow-signer-change` was passed, and the two modes differ in exactly one case: a candidate that conclusively no longer verifies against the key *and* carries a keyless signature that does verify is a genuine key-to-keyless move — blocked as a signer change without the override, and permitted with it, which drops the recorded key and re-anchors to the observed identity. Everything else is the same in both modes. A candidate signed by a *different* key is a failure: re-anchoring in place is not supported, so it needs an uninstall and a reinstall, and the failure prints that command. An unsigned candidate is an `unsigned-rejected` failure rather than a signer change, because upgrade has no unsigned-consent flag and `--allow-signer-change` is not one — it re-verifies from scratch, which an unsigned artifact still fails. And an operational failure — registry, transport, or context — is never read as evidence about which key signed the artifact: it fails the plan and leaves the pin exactly where it was, in both modes, so a transient fault under a project-wide override cannot unpin an artifact that still carries a valid signature by the pinned key. The override is also narrowed per entry: a skill that needs it does not unpin every key-pinned skill beside it.
+- **`sync --adopt`** refuses a key-signed install. Adoption back-fills trust from what the stored bundle reveals, and a key-pair bundle reveals no identity and does not carry the key; recording the install as unsigned instead would file a false trust decision about an artifact that is signed.
+
+Scope for v1 (issue [#6442](https://github.com/stacklok/toolhive/issues/6442)): `--public-key` is accepted on `install` only — `upgrade` and `sync` use the anchor the lock already records and take no key of their own, and in-place re-anchoring to a different key is deliberately not offered. The plugins surface carries the same contract, flag for flag: `thv ai-plugin push --key`, `thv ai-plugin install --public-key`, the same lock-first dispatch, and the same install-only scope.
+
+Plugins carry the same trust model over the same lock file: project-scoped plugin installs are recorded under the file's `plugins:` key, verified on the same TOFU/`allow_unsigned`/`allow_signer_change` terms, and published signed-by-default through `thv ai-plugin push`. See [Trust Model](14-plugins-system.md#trust-model) in the plugins document for what differs.
+
+### Schema
+
+```yaml
+version: 1
+skills:
+  - name: code-review
+    version: "1.0.0"
+    source: code-review                          # exactly what the user/registry resolver requested; never rewritten
+    resolvedReference: ghcr.io/org/code-review:1.0.0
+    digest: sha256:9f2b1e...                      # the pin: OCI manifest digest or git commit hash
+    contentDigest: sha256:a1b2c3d4...              # deterministic dirhash of the materialized files, for on-disk integrity
+    requiredBy: [parent-skill]                    # present only for transitively materialized toolhive.requires deps
+    explicit: true                                 # false for a dependency that was never directly installed by name
+```
+
+Entries are sorted by name for stable diffs. `source` is never rewritten by `sync` or `upgrade` — only `upgrade` re-resolves it, and only to decide whether newer content exists.
+
+**Implementation:** `pkg/skills/lockfile/` (schema, load/save, atomic writes via `os.Root`, `contentDigest` dirhash algorithm)
+
+### Install and Uninstall Hooks
+
+For project-scope installs, `skillsvc.Install`'s single existing choke point (`installAndRegister` — every dispatch path, OCI or git, direct or registry-resolved, converges there) additionally:
+
+1. Computes `contentDigest` from the extracted files.
+2. Materializes `toolhive.requires` dependencies recursively — reading `SKILL.md` back from disk (not from the resolver's own parse, so this works uniformly across OCI and git sources), with a `Visited` set guarding cycles and `skills.MaxDependencies` bounding the whole tree.
+3. Upserts the lock entry, merging `requiredBy` when a dependency is shared by multiple parents.
+
+**A lock-write failure fails the entire install** (rolling back the DB record, matching the existing group-registration failure/rollback pattern) — RFC THV-0080 treats "installed but unpinned" as worse than "not installed."
+
+`Uninstall` mirrors this: for a lock-managed skill, it removes the skill's own lock entry and cascades to any dependency that consequently loses its last requiring parent (and is not itself `explicit`), via `Lockfile.RemoveParentFromRequiredBy` — itself cycle-safe.
+
+**Implementation:** `pkg/skills/skillsvc/lock.go`, `pkg/skills/skillsvc/install.go`, `pkg/skills/skillsvc/uninstall.go`
+
+### Sync
+
+`thv skill sync` reconciles installed skills against the lock file:
+
+| Lock file vs. installed state | Outcome |
+|---|---|
+| Digest and contentDigest both match | Reported as up to date |
+| DB record exists but digest or contentDigest differs | Drifted — reinstalled at the pinned reference (`--check`: reported only, nothing written) |
+| No DB record for a locked entry | Missing — installed fresh at the pinned reference |
+| Installed, `managed`, but no lock entry | Removed from lock — reported (`--prune`: uninstalled) |
+| Installed, not `managed`, no lock entry | Never managed — reported (`--adopt`: lock entry written from current state) |
+
+Reinstalling *at the pinned reference* (never re-resolving `source`) uses `buildPinnedReference` (`pkg/skills/skillsvc/pin.go`) to rewrite the entry's `resolvedReference` with its pinned digest substituted in (an OCI digest reference, or a git reference with the commit hash spliced in as the ref). A subtlety this surfaced: reinstalling at an *unchanged* digest — the normal case when repairing on-disk drift — would otherwise hit the install path's "same digest means content is already correct" fast path and silently skip re-extraction. An internal `InstallOptions.SyncRestore` flag bypasses that fast path specifically for this case.
+
+**Implementation:** `pkg/skills/skillsvc/sync.go`, `pkg/skills/skillsvc/pin.go`
+
+### Upgrade
+
+`thv skill upgrade [name...]` re-resolves each targeted entry's `source` (via the same git/OCI/registry dispatch order `Install` uses, stopping short of extraction — `resolveLatestState`) and installs newer content when the resolved digest changed. Entries pinned to an immutable reference (an OCI digest, or a git reference already pinned to a full commit hash — `isImmutableSource`) are reported not-upgradable. `--preview` reports what would change without persisting it (an OCI preview still pulls the artifact into the local store — there's no lighter "digest only" primitive — so it is not fully side-effect-free, matching the RFC's own caveat). `--allow-ref-change` permits the resolved reference itself changing; `--fail-on-changes` gives CI a freshness gate — it evaluates the same plan, never installs, and returns the full outcome set (exit codes are derived client-side from the outcomes, so a genuine resolution failure still surfaces as a partial failure rather than "lock is stale").
+
+**Implementation:** `pkg/skills/skillsvc/upgrade.go`
+
+### CLI Confirmation and Exit Codes
+
+Because skill content is a set of AI-followed instructions, `sync` and `upgrade` gate real installs behind a confirmation prompt (skipped by `--check`/`--preview`/`--fail-on-changes`, which never write to the lock file or extracted skill directories — an OCI `--preview` still pulls the artifact to compare digests, but persists nothing). The prompt is printed to stderr together with a summary of the lock entries being acted on (name, source, short digest) so the human gate has something concrete to judge, and everything echoed into it is stripped of non-graphic characters so a hostile directory or entry name cannot repaint the prompt with terminal escapes. On a non-interactive terminal without `--yes`, the command refuses outright rather than silently proceeding. This confirmation is an intentional review point in addition to the signature and lock-file trust controls above.
+
+Exit codes follow a CI-oriented contract distinct from the generic `1` used elsewhere in the CLI:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Generic/unclassified error (cobra's default) |
+| `2` | Check/freshness failure — `sync --check` found drifted or missing installs, or `upgrade --fail-on-changes` found available changes |
+| `3` | Partial failure — some, but not all, targeted skills failed |
+| `4` | Policy rejection — the confirmation gate declined a non-interactive run, or `--allow-ref-change` blocked a reference change |
+
+**Implementation:** `cmd/thv/app/exitcode.go`, `cmd/thv/app/skill_confirm.go`, `cmd/thv/app/skill_sync.go`, `cmd/thv/app/skill_upgrade.go`
+
+## API
+
+### REST Endpoints
+
+**Skill management** (mounted at `/api/v1beta/skills`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | List installed skills (filter by scope, client, project_root, group) |
+| `POST` | `/` | Install a skill |
+| `GET` | `/{name}` | Get skill info |
+| `DELETE` | `/{name}` | Uninstall a skill |
+| `POST` | `/validate` | Validate a SKILL.md |
+| `POST` | `/build` | Build skill to OCI artifact |
+| `POST` | `/push` | Push built skill to registry |
+| `GET` | `/builds` | List local builds |
+| `DELETE` | `/builds/{tag}` | Delete a local build |
+| `GET` | `/content` | Get a skill's SKILL.md body and file listing for a reference |
+| `POST` | `/sync` | Restore project skills to match the lock file ([Project Lock File](#project-lock-file), RFC THV-0080) |
+| `POST` | `/upgrade` | Re-resolve project skills and install newer pinned content ([Project Lock File](#project-lock-file), RFC THV-0080) |
+
+`/sync` and `/upgrade` are served only when the configured `SkillService` also implements `skills.SkillLockService` (as `skillsvc.New`'s does) — otherwise they return `501 Not Implemented`.
+
+**Implementation:** `pkg/api/v1/skills.go`
+
+**Skill browsing** (mounted at `/registry/{name}/v0.1/x/dev.toolhive/skills`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | List available skills from registry (search, pagination) |
+| `GET` | `/{namespace}/{skillName}` | Get a specific skill from registry |
+
+**Implementation:** `pkg/api/v1/registry_v01_skills.go`
+
+### CLI Commands
+
+```
+thv skill
+├── install [name]       Install a skill from registry, OCI, or git
+├── uninstall [name]     Remove an installed skill
+├── list                 List installed skills (text or JSON output)
+├── info [name]          Show detailed skill information
+├── validate [path]      Validate a SKILL.md file
+├── build [path]         Build skill to OCI artifact
+├── push [reference]     Push built skill to registry
+├── builds               List locally-built OCI artifacts
+├── builds remove [tag]  Delete a locally-built artifact
+├── sync                 Restore project skills to match the lock file
+└── upgrade [name...]    Re-resolve project skills and install newer pinned content
+```
+
+**Implementation:** `cmd/thv/app/skill*.go`
+
+### HTTP Client
+
+The `pkg/skills/client/` package provides an HTTP client that implements the `SkillService` interface, allowing remote skill management through the REST API. It auto-discovers the API server via `TOOLHIVE_API_URL` or a local discovery file.
+
+## Group Integration
+
+Skills can be organized into groups alongside MCP servers:
+
+```bash
+thv skill install code-review --group dev-tools
+thv skill list --group dev-tools
+```
+
+- `AddSkillToGroup()` adds a skill name to a group's Skills slice (deduplicated)
+- `RemoveSkillFromAllGroups()` cleans up group references on uninstall
+
+Groups provide a shared organizational model for both skills and workloads.
+
+**Implementation:** `pkg/groups/skills.go`
+
+## Security Model
+
+The skills system applies defense-in-depth across multiple layers:
+
+### Archive Extraction Safety
+- **Size limits**: 500MB total decompressed, 100MB per file, 1000 files max
+- **Symlink rejection**: Archives containing symlinks or hardlinks are rejected
+- **Path traversal prevention**: No `..` components, no absolute paths in archives
+- **Permission sanitization**: Strips setuid/setgid/sticky bits, caps at 0644
+- **Pre-extraction validation**: Walks parent path components checking for symlinks before writing
+- **Post-extraction verification**: Scans the extracted directory for filesystem anomalies
+
+### Dangerous Path Protection
+- Refuses to remove filesystem roots, home directories, or shallow paths (< 4 components)
+- Uses `Lstat` (not `Stat`) to detect symlinks without following them
+- Resolves symlinks in parent components before applying depth checks
+
+### Supply Chain
+- OCI artifact skill name must match the last path component of the OCI repository
+- Git authentication is host-scoped (GitHub token only sent to github.com)
+- SSRF prevention: rejects localhost and private IPs in git references
+- Push signing is keyless by default; see "3. Publishing" above for the
+  credential ladder and the CLI-acquires / server-signs split
+  (`pkg/skills/identitytoken`, `toolhive-core/container/signer`)
+
+### Input Validation
+- Skill names: 2-64 chars, lowercase alphanumeric + hyphens, no consecutive hyphens
+- Frontmatter size limit: 64KB
+- Dependency limit: 100 per skill
+- Git refs validated against shell injection characters
+
+**Implementation:** `pkg/skills/installer.go`, `pkg/skills/validator.go`, `pkg/skills/gitresolver/reference.go`, `pkg/skills/gitresolver/auth.go`
+
+## Dependency on toolhive-core
+
+The skills system depends on `github.com/stacklok/toolhive-core` for shared primitives:
+
+| Package | Purpose |
+|---------|---------|
+| `oci/skills.Store` | Local OCI artifact storage |
+| `oci/skills.SkillPackager` | Building OCI artifacts from skill files |
+| `oci/skills.RegistryClient` | Push/pull artifacts to/from OCI registries |
+| `oci/skills.DecompressWithLimit` | Safe gzip decompression with size bounds |
+| `oci/skills.ExtractTarWithLimit` | Safe tar extraction rejecting symlinks/traversal |
+| `registry/types.Skill` | Canonical skill type for registry discovery |
+
+ToolHive owns the installation lifecycle, scoping model, CLI/API interfaces, and group integration. toolhive-core owns the OCI artifact format, registry protocol types, and low-level extraction utilities.
+
+## Key Files
+
+| Responsibility | Files |
+|---|---|
+| Type definitions | `pkg/skills/types.go` |
+| Service interface | `pkg/skills/service.go` |
+| Service implementation | `pkg/skills/skillsvc/` |
+| Options / DTOs | `pkg/skills/options.go` |
+| Validation | `pkg/skills/validator.go` |
+| Parsing | `pkg/skills/parser.go` |
+| Extraction | `pkg/skills/installer.go` |
+| Git resolution | `pkg/skills/gitresolver/` |
+| Storage interface | `pkg/storage/interfaces.go` |
+| SQLite backend | `pkg/storage/sqlite/skill_store.go` |
+| REST API | `pkg/api/v1/skills.go` |
+| Registry browsing API | `pkg/api/v1/registry_v01_skills.go` |
+| HTTP client | `pkg/skills/client/` |
+| CLI commands | `cmd/thv/app/skill*.go` |
+| Group integration | `pkg/groups/skills.go` |
+| Lock file schema | `pkg/skills/lockfile/` |
+| Install/uninstall lock hooks | `pkg/skills/skillsvc/lock.go` |
+| Sync | `pkg/skills/skillsvc/sync.go`, `pkg/skills/skillsvc/pin.go` |
+| Upgrade | `pkg/skills/skillsvc/upgrade.go` |
+| CLI exit codes / confirmation | `cmd/thv/app/exitcode.go`, `cmd/thv/app/skill_confirm.go` |
+
+## Related Documentation
+
+- [Core Concepts](02-core-concepts.md) - Platform nouns and verbs
+- [Registry System](06-registry-system.md) - Registry architecture shared by skills and servers
+- [Groups](07-groups.md) - Group concept used to organize skills and workloads
+- [Architecture Overview](00-overview.md) - Platform overview
+- [Plugins System](14-plugins-system.md) - Sibling distribution system (OCI artifacts, multi-client install)

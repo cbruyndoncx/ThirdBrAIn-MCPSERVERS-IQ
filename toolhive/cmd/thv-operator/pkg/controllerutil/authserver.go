@@ -1,0 +1,1568 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+package controllerutil
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	k8sptr "k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	mcpv1beta1 "github.com/stacklok/toolhive/cmd/thv-operator/api/v1beta1"
+	"github.com/stacklok/toolhive/cmd/thv-operator/pkg/oidc"
+	"github.com/stacklok/toolhive/cmd/thv-operator/pkg/validation"
+	"github.com/stacklok/toolhive/pkg/authserver"
+	authrunner "github.com/stacklok/toolhive/pkg/authserver/runner"
+	"github.com/stacklok/toolhive/pkg/authserver/server/tokenexchange"
+	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/runner"
+)
+
+// Constants for auth server volume mounting
+const (
+	// AuthServerKeysVolumePrefix is the prefix for signing key volume names
+	AuthServerKeysVolumePrefix = "authserver-signing-key-"
+
+	// AuthServerHMACVolumePrefix is the prefix for HMAC secret volume names
+	AuthServerHMACVolumePrefix = "authserver-hmac-secret-"
+
+	// RedisTLSCACertVolumePrefix is the prefix for Redis TLS CA cert volume names
+	RedisTLSCACertVolumePrefix = "redis-tls-ca-"
+
+	// RedisTLSCACertMountPath is the base path where Redis TLS CA certs are mounted
+	RedisTLSCACertMountPath = "/etc/toolhive/authserver/redis-tls"
+
+	// RedisTLSCACertFileName is the filename for the master CA cert
+	RedisTLSCACertFileName = "ca.crt"
+
+	// RedisSentinelTLSCACertFileName is the filename for the sentinel CA cert
+	RedisSentinelTLSCACertFileName = "sentinel-ca.crt"
+
+	// AuthServerKeysMountPath is the base path where signing keys are mounted
+	AuthServerKeysMountPath = "/etc/toolhive/authserver/keys"
+
+	// AuthServerHMACMountPath is the base path where HMAC secrets are mounted
+	AuthServerHMACMountPath = "/etc/toolhive/authserver/hmac"
+
+	// AuthServerKeyFilePattern is the pattern for signing key filenames
+	AuthServerKeyFilePattern = "key-%d.pem"
+
+	// AuthServerHMACFilePattern is the pattern for HMAC secret filenames
+	AuthServerHMACFilePattern = "hmac-%d"
+
+	// AuthServerUpstreamCABundleVolumePrefix is the prefix for upstream CA bundle volume names.
+	AuthServerUpstreamCABundleVolumePrefix = "authserver-upstream-ca-"
+
+	// AuthServerUpstreamCABundleMountPath is the base path for upstream CA bundles.
+	AuthServerUpstreamCABundleMountPath = "/etc/toolhive/authserver/upstream-ca"
+
+	// AuthServerUpstreamCABundleFileName is the fixed projected filename for upstream CA bundles.
+	AuthServerUpstreamCABundleFileName = validation.OIDCCABundleDefaultKey
+
+	// AuthServerTrustedIssuerCABundleVolumePrefix is the prefix for trusted issuer CA bundle volume names.
+	AuthServerTrustedIssuerCABundleVolumePrefix = "authserver-issuer-ca-"
+
+	// AuthServerTrustedIssuerCABundleMountPath is the base path for trusted issuer CA bundles.
+	AuthServerTrustedIssuerCABundleMountPath = "/etc/toolhive/authserver/issuer-ca"
+
+	// AuthServerCABundleChecksumAnnotation triggers a rollout when a selected CA bundle changes.
+	AuthServerCABundleChecksumAnnotation = "toolhive.stacklok.dev/authserver-ca-checksum"
+
+	// UpstreamClientSecretEnvVar is the prefix for upstream client secret environment variables.
+	// Actual names are TOOLHIVE_UPSTREAM_CLIENT_SECRET_<PROVIDER> where PROVIDER is the
+	// upstream name uppercased with hyphens replaced by underscores (e.g.,
+	// "acme-idp" -> TOOLHIVE_UPSTREAM_CLIENT_SECRET_ACME_IDP).
+	// #nosec G101 -- This is an environment variable name, not a hardcoded credential
+	UpstreamClientSecretEnvVar = "TOOLHIVE_UPSTREAM_CLIENT_SECRET"
+
+	// UpstreamDCRInitialAccessTokenEnvVarPrefix is the prefix for RFC 7591
+	// initial access token environment variables used with Dynamic Client
+	// Registration. Actual env var names are constructed as
+	// <prefix>_<PROVIDER> where PROVIDER is the upstream name uppercased
+	// with hyphens replaced by underscores (e.g., "acme-idp" ->
+	// TOOLHIVE_UPSTREAM_DCR_INITIAL_ACCESS_TOKEN_ACME_IDP).
+	// #nosec G101 -- This is an environment variable name, not a hardcoded credential
+	UpstreamDCRInitialAccessTokenEnvVarPrefix = "TOOLHIVE_UPSTREAM_DCR_INITIAL_ACCESS_TOKEN"
+
+	// DelegateClientSecretEnvVarPrefix is the prefix for static delegate-client
+	// secret environment variables. The suffix is the zero-based list position,
+	// not the client ID, so arbitrary client IDs cannot influence pod env names.
+	// #nosec G101 -- This is an environment variable name, not a hardcoded credential
+	DelegateClientSecretEnvVarPrefix = "TOOLHIVE_DELEGATE_CLIENT_SECRET"
+
+	// DefaultSentinelPort is the default Redis Sentinel port
+	DefaultSentinelPort = 26379
+)
+
+// EmbeddedAuthServerConfigSource identifies the reference that supplied an
+// embedded auth server configuration.
+type EmbeddedAuthServerConfigSource string
+
+const (
+	// EmbeddedAuthServerConfigSourceExternalAuthConfigRef identifies externalAuthConfigRef.
+	EmbeddedAuthServerConfigSourceExternalAuthConfigRef EmbeddedAuthServerConfigSource = "externalAuthConfigRef"
+	// EmbeddedAuthServerConfigSourceAuthServerRef identifies authServerRef.
+	EmbeddedAuthServerConfigSourceAuthServerRef EmbeddedAuthServerConfigSource = "authServerRef"
+)
+
+// InvalidEmbeddedAuthServerConfigError identifies an embedded auth server
+// configuration that must be corrected before reconciliation can continue.
+// It deliberately excludes errors retrieving referenced Kubernetes resources,
+// which remain retryable transient errors.
+type InvalidEmbeddedAuthServerConfigError struct {
+	Err    error
+	Source EmbeddedAuthServerConfigSource
+}
+
+func (e *InvalidEmbeddedAuthServerConfigError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *InvalidEmbeddedAuthServerConfigError) Unwrap() error {
+	return e.Err
+}
+
+func invalidEmbeddedAuthServerConfig(err error) error {
+	return invalidEmbeddedAuthServerConfigFrom("", err)
+}
+
+func invalidEmbeddedAuthServerConfigFrom(source EmbeddedAuthServerConfigSource, err error) error {
+	return &InvalidEmbeddedAuthServerConfigError{Err: err, Source: source}
+}
+
+// upstreamSecretBinding binds an upstream provider to the env var names for
+// the secrets it owns (client secret and, optionally, the DCR initial access
+// token). Both GenerateAuthServerEnvVars (Pod env) and buildUpstreamRunConfig
+// (runtime config) MUST use these bindings so the env var names stay consistent.
+type upstreamSecretBinding struct {
+	Provider                    *mcpv1beta1.UpstreamProviderConfig
+	EnvVarName                  string
+	DCRInitialAccessTokenEnvVar string
+}
+
+// buildUpstreamSecretBindings computes the canonical env var names for each
+// upstream provider's secrets. Names are derived from the provider's Name
+// field (uppercased, hyphens replaced with underscores) to keep bindings
+// stable across provider reordering in the CRD.
+func buildUpstreamSecretBindings(
+	providers []mcpv1beta1.UpstreamProviderConfig,
+) []upstreamSecretBinding {
+	bindings := make([]upstreamSecretBinding, len(providers))
+	for i := range providers {
+		suffix := strings.ToUpper(strings.ReplaceAll(providers[i].Name, "-", "_"))
+		bindings[i] = upstreamSecretBinding{
+			Provider:                    &providers[i],
+			EnvVarName:                  fmt.Sprintf("%s_%s", UpstreamClientSecretEnvVar, suffix),
+			DCRInitialAccessTokenEnvVar: fmt.Sprintf("%s_%s", UpstreamDCRInitialAccessTokenEnvVarPrefix, suffix),
+		}
+	}
+	return bindings
+}
+
+// buildUpstreamSecretEnvVars returns the Pod env vars that expose the
+// client-secret and, when DCR is configured, the initial access token for a
+// single upstream provider. Returns nil if the provider has no relevant
+// secret references.
+func buildUpstreamSecretEnvVars(b *upstreamSecretBinding) []corev1.EnvVar {
+	clientSecretRef, initialAccessTokenRef := extractUpstreamSecretRefs(b.Provider)
+
+	var envVars []corev1.EnvVar
+	if clientSecretRef != nil {
+		envVars = append(envVars, envVarFromSecretRef(b.EnvVarName, clientSecretRef))
+	}
+	if initialAccessTokenRef != nil {
+		envVars = append(envVars, envVarFromSecretRef(b.DCRInitialAccessTokenEnvVar, initialAccessTokenRef))
+	}
+	return envVars
+}
+
+// extractUpstreamSecretRefs returns the client-secret and DCR initial-access-token
+// secret references for an upstream provider.
+//
+// What can be returned, given the admission-time invariants on
+// UpstreamProviderConfig (see the kubebuilder XValidation rule on the type and
+// the matching Go-level check in validateUpstreamProvider, which together
+// enforce that exactly one of OIDCConfig / OAuth2Config is set and that it
+// matches Type):
+//   - OIDC providers: only the client-secret ref is ever non-nil. The
+//     initial-access-token ref is always nil because DCR is OAuth2-only and
+//     OAuth2Config must be nil for OIDC-typed providers.
+//   - OAuth2 providers: the two refs are independent — either, both, or
+//     neither may be non-nil.
+//   - Any other (currently unreachable) Type value: both are nil.
+//
+// Callers must not rely on the third bullet to mask an admission-bypassing
+// object — `BuildAuthServerRunConfig` is the reconcile-time backstop for that.
+func extractUpstreamSecretRefs(
+	provider *mcpv1beta1.UpstreamProviderConfig,
+) (*mcpv1beta1.SecretKeyRef, *mcpv1beta1.SecretKeyRef) {
+	var clientSecretRef, initialAccessTokenRef *mcpv1beta1.SecretKeyRef
+	switch provider.Type {
+	case mcpv1beta1.UpstreamProviderTypeOIDC:
+		if provider.OIDCConfig != nil {
+			clientSecretRef = provider.OIDCConfig.ClientSecretRef
+			if provider.OIDCConfig.DCRConfig != nil {
+				initialAccessTokenRef = provider.OIDCConfig.DCRConfig.InitialAccessTokenRef
+			}
+		}
+	case mcpv1beta1.UpstreamProviderTypeOAuth2:
+		if provider.OAuth2Config != nil {
+			clientSecretRef = provider.OAuth2Config.ClientSecretRef
+			if provider.OAuth2Config.DCRConfig != nil {
+				initialAccessTokenRef = provider.OAuth2Config.DCRConfig.InitialAccessTokenRef
+			}
+		}
+	}
+	return clientSecretRef, initialAccessTokenRef
+}
+
+// envVarFromSecretRef builds a corev1.EnvVar that sources its value from the
+// given SecretKeyRef.
+func envVarFromSecretRef(name string, ref *mcpv1beta1.SecretKeyRef) corev1.EnvVar {
+	return corev1.EnvVar{
+		Name: name,
+		ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: ref.Name,
+				},
+				Key: ref.Key,
+			},
+		},
+	}
+}
+
+func delegateClientSecretEnvVarName(index int) string {
+	return fmt.Sprintf("%s_%d", DelegateClientSecretEnvVarPrefix, index)
+}
+
+// buildDelegateClientRunConfigs converts Secret references to their reserved
+// pod env-var names. The Secret values remain Kubernetes-managed and are never
+// materialized in the generated runtime configuration.
+func buildDelegateClientRunConfigs(
+	clients []mcpv1beta1.DelegateClientConfig,
+) ([]authserver.DelegateClientRunConfig, error) {
+	configs := make([]authserver.DelegateClientRunConfig, len(clients))
+	for i, delegateClient := range clients {
+		secretRef := delegateClient.ClientSecretRef
+		if secretRef == nil || secretRef.Name == "" || secretRef.Key == "" {
+			return nil, fmt.Errorf("delegateClients[%d].clientSecretRef.name and clientSecretRef.key are required", i)
+		}
+		configs[i] = authserver.DelegateClientRunConfig{
+			ClientID:           delegateClient.ClientID,
+			ClientSecretEnvVar: delegateClientSecretEnvVarName(i),
+			Scopes:             append([]string(nil), delegateClient.Scopes...),
+			Audiences:          append([]string(nil), delegateClient.Audiences...),
+		}
+	}
+	return configs, nil
+}
+
+// buildTrustedIssuerRunConfigs converts CRD TrustedIssuerConfig entries to
+// tokenexchange.TrustedIssuer, the runtime type authserver.RunConfig.TrustedIssuers
+// already consumes directly. Unlike DelegateClientConfig, none of these fields
+// reference a Secret, so no env-var indirection is needed here.
+func buildTrustedIssuerRunConfigs(issuers []mcpv1beta1.TrustedIssuerConfig) []tokenexchange.TrustedIssuer {
+	configs := make([]tokenexchange.TrustedIssuer, len(issuers))
+	for i, ti := range issuers {
+		configs[i] = tokenexchange.TrustedIssuer{
+			Name:                   ti.Name,
+			IssuerURL:              ti.IssuerURL,
+			ExpectedAudience:       ti.ExpectedAudience,
+			JWKSURL:                ti.JWKSURL,
+			InsecureAllowHTTP:      ti.InsecureAllowHTTP,
+			AllowPrivateIPs:        ti.AllowPrivateIPs,
+			ActorClaim:             ti.ActorClaim,
+			AllowedActors:          append([]string(nil), ti.AllowedActors...),
+			ActorMatcher:           ti.ActorMatcher,
+			AllowedDelegateClients: append([]string(nil), ti.AllowedDelegateClients...),
+			AllowMayAct:            ti.AllowMayAct,
+			JWTBearerGrant:         buildJWTBearerGrantPolicy(ti.JWTBearerGrant),
+		}
+		if ti.CABundleRef != nil {
+			configs[i].CAFilePath = trustedIssuerCABundleFilePath(i)
+		}
+	}
+	return configs
+}
+
+func buildJWTBearerGrantPolicy(config *mcpv1beta1.JWTBearerGrantConfig) *tokenexchange.JWTBearerGrantPolicy {
+	if config == nil {
+		return nil
+	}
+	policy := &tokenexchange.JWTBearerGrantPolicy{
+		SubjectBindings:   make([]tokenexchange.JWTBearerSubjectBinding, len(config.SubjectBindings)),
+		AcceptedAudiences: append([]string(nil), config.AcceptedAudiences...),
+	}
+	if config.MaxAssertionAge != nil {
+		policy.MaxAssertionAge = config.MaxAssertionAge.Duration.String()
+	}
+	for i, binding := range config.SubjectBindings {
+		policy.SubjectBindings[i] = tokenexchange.JWTBearerSubjectBinding{
+			Subject:          binding.Subject,
+			AllowedResources: append([]string(nil), binding.AllowedResources...),
+		}
+	}
+	return policy
+}
+
+// buildSPIFFETrustDomainRunConfigs converts CRD SPIFFETrustDomainConfig
+// entries to authserver.SPIFFETrustDomainRunConfig, the runtime type
+// authserver.RunConfig.SPIFFETrustDomains consumes directly. None of these
+// fields reference a Secret, so no env-var indirection is needed here.
+func buildSPIFFETrustDomainRunConfigs(
+	domains []mcpv1beta1.SPIFFETrustDomainConfig,
+) []authserver.SPIFFETrustDomainRunConfig {
+	configs := make([]authserver.SPIFFETrustDomainRunConfig, len(domains))
+	for i, domain := range domains {
+		methods := make([]authserver.SPIFFEAuthenticationMethod, len(domain.Methods))
+		for j, method := range domain.Methods {
+			methods[j] = authserver.SPIFFEAuthenticationMethod(method)
+		}
+		configs[i] = authserver.SPIFFETrustDomainRunConfig{
+			Name:         domain.Name,
+			TrustDomain:  domain.TrustDomain,
+			Methods:      methods,
+			BundleSource: buildSPIFFEBundleSourceRunConfig(domain.BundleSource),
+		}
+	}
+	return configs
+}
+
+// buildSPIFFEBundleSourceRunConfig converts the CRD's discriminated
+// bundle-source union to the runtime shape.
+func buildSPIFFEBundleSourceRunConfig(source mcpv1beta1.SPIFFEBundleSourceConfig) authserver.SPIFFEBundleSourceRunConfig {
+	converted := authserver.SPIFFEBundleSourceRunConfig{Type: authserver.SPIFFEBundleSourceType(source.Type)}
+	if source.Endpoint != nil {
+		converted.Endpoint = &authserver.SPIFFEBundleEndpointSourceRunConfig{
+			URL:     source.Endpoint.URL,
+			Profile: authserver.SPIFFEBundleEndpointProfile(source.Endpoint.Profile),
+		}
+	}
+	if source.WorkloadAPI != nil {
+		converted.WorkloadAPI = &authserver.SPIFFEWorkloadAPIBundleSourceRunConfig{}
+	}
+	return converted
+}
+
+// buildSPIFFEClientAuthRunConfigs converts CRD SPIFFEClientConfig entries to
+// authserver.SPIFFEClientAuthRunConfig. GrantTypes is not a CRD field: the
+// runtime only accepts exactly the RFC 8693 token-exchange grant for a
+// SPIFFE client (validateSPIFFEGrants in pkg/authserver/spiffe_trust.go), so
+// it is always supplied here rather than configured.
+func buildSPIFFEClientAuthRunConfigs(
+	clients []mcpv1beta1.SPIFFEClientConfig,
+) []authserver.SPIFFEClientAuthRunConfig {
+	configs := make([]authserver.SPIFFEClientAuthRunConfig, len(clients))
+	for i, spiffeClient := range clients {
+		methods := make([]authserver.SPIFFEAuthenticationMethod, len(spiffeClient.Methods))
+		for j, method := range spiffeClient.Methods {
+			methods[j] = authserver.SPIFFEAuthenticationMethod(method)
+		}
+		configs[i] = authserver.SPIFFEClientAuthRunConfig{
+			TrustDomainRef:   spiffeClient.TrustDomainRef,
+			PrincipalPattern: spiffeClient.PrincipalPattern,
+			ClientID:         spiffeClient.ClientID,
+			Methods:          methods,
+			Resources:        append([]string(nil), spiffeClient.Resources...),
+			Audiences:        append([]string(nil), spiffeClient.Audiences...),
+			Scopes:           append([]string(nil), spiffeClient.Scopes...),
+			GrantTypes:       []string{authserver.SPIFFEGrantTypeTokenExchange},
+		}
+	}
+	return configs
+}
+
+// EmbeddedAuthServerConfigName returns the config name that should be used for
+// embedded auth server volume/env generation, or empty string if neither ref applies.
+// AuthServerRef takes precedence; externalAuthConfigRef is used as a fallback.
+func EmbeddedAuthServerConfigName(
+	extAuthRef *mcpv1beta1.ExternalAuthConfigRef,
+	authServerRef *mcpv1beta1.AuthServerRef,
+) string {
+	if authServerRef != nil {
+		return authServerRef.Name
+	}
+	if extAuthRef != nil {
+		return extAuthRef.Name
+	}
+	return ""
+}
+
+// GenerateAuthServerConfigByName fetches an MCPExternalAuthConfig by name and, if its type
+// is embeddedAuthServer, returns the corresponding volumes, volume mounts, and env vars.
+// Returns empty slices (no error) if the config type is not embeddedAuthServer, because
+// this function may be called via the externalAuthConfigRef fallback path where non-embedded
+// types (headerInjection, tokenExchange, etc.) are valid — they simply don't need auth
+// server volumes. Type validation for the authServerRef path is handled earlier by
+// handleAuthServerRef which sets an InvalidType condition.
+func GenerateAuthServerConfigByName(
+	ctx context.Context,
+	c client.Client,
+	namespace string,
+	configName string,
+) ([]corev1.Volume, []corev1.VolumeMount, []corev1.EnvVar, error) {
+	externalAuthConfig, err := GetExternalAuthConfigByName(ctx, c, namespace, configName)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to get MCPExternalAuthConfig: %w", err)
+	}
+
+	if externalAuthConfig.Spec.Type != mcpv1beta1.ExternalAuthTypeEmbeddedAuthServer {
+		return nil, nil, nil, nil
+	}
+
+	authServerConfig := externalAuthConfig.Spec.EmbeddedAuthServer
+	if authServerConfig == nil {
+		return nil, nil, nil, fmt.Errorf("embedded auth server configuration is nil for type embeddedAuthServer")
+	}
+
+	if err := ValidateEmbeddedAuthServerCABundles(ctx, c, namespace, authServerConfig); err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to validate embedded auth server CA bundles: %w", err)
+	}
+
+	volumes, volumeMounts, err := GenerateAuthServerVolumes(authServerConfig)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	envVars := GenerateAuthServerEnvVars(authServerConfig)
+
+	return volumes, volumeMounts, envVars, nil
+}
+
+// EmbeddedAuthServerCABundleChecksum returns a checksum of the selected bytes in all
+// CA ConfigMaps used by an embedded auth server. ConfigMap metadata and unselected
+// keys are deliberately excluded.
+func EmbeddedAuthServerCABundleChecksum(
+	ctx context.Context, c client.Client, namespace, configName string,
+) (string, error) {
+	config, err := GetExternalAuthConfigByName(ctx, c, namespace, configName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get MCPExternalAuthConfig: %w", err)
+	}
+	if config.Spec.Type != mcpv1beta1.ExternalAuthTypeEmbeddedAuthServer || config.Spec.EmbeddedAuthServer == nil {
+		return "", nil
+	}
+	return EmbeddedAuthServerCABundleChecksumForConfig(ctx, c, namespace, config.Spec.EmbeddedAuthServer)
+}
+
+// EmbeddedAuthServerCABundleChecksumForConfig returns a checksum of the selected
+// bytes in all CA ConfigMaps used by an inline embedded auth server. ConfigMap
+// metadata and unselected keys are deliberately excluded.
+func EmbeddedAuthServerCABundleChecksumForConfig(
+	ctx context.Context, c client.Client, namespace string, config *mcpv1beta1.EmbeddedAuthServerConfig,
+) (string, error) {
+	if config == nil {
+		return "", nil
+	}
+
+	hash := sha256.New()
+	found := false
+	for i := range config.UpstreamProviders {
+		ref := config.UpstreamProviders[i].CABundleRef()
+		if ref == nil {
+			continue
+		}
+		value, err := ResolveCABundle(ctx, c, namespace, ref)
+		if err != nil {
+			return "", err
+		}
+		_, _ = hash.Write(value)
+		_, _ = hash.Write([]byte{0})
+		found = true
+	}
+	wroteIssuerMarker := false
+	for i := range config.TrustedIssuers {
+		ref := config.TrustedIssuers[i].CABundleRef
+		if ref == nil {
+			continue
+		}
+		value, err := ResolveCABundle(ctx, c, namespace, ref)
+		if err != nil {
+			return "", err
+		}
+		if !wroteIssuerMarker {
+			_, _ = hash.Write([]byte("trustedIssuers\x00"))
+			wroteIssuerMarker = true
+		}
+		_, _ = hash.Write(value)
+		_, _ = hash.Write([]byte{0})
+		found = true
+	}
+	if !found {
+		return "", nil
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// GenerateAuthServerVolumes generates volumes and mounts for auth server
+// signing keys, HMAC secrets, Redis CA certificates, and CA bundles.
+// Returns an error when a CA bundle reference is malformed.
+// The volumes are configured with 0400 permissions for security.
+//
+// For signing keys, files are mounted at /etc/toolhive/authserver/keys/key-{N}.pem
+// For HMAC secrets, files are mounted at /etc/toolhive/authserver/hmac/hmac-{N}
+//
+// Returns nil slices if authConfig is nil.
+func GenerateAuthServerVolumes(
+	authConfig *mcpv1beta1.EmbeddedAuthServerConfig,
+) ([]corev1.Volume, []corev1.VolumeMount, error) {
+	if authConfig == nil {
+		return nil, nil, nil
+	}
+
+	var volumes []corev1.Volume
+	var volumeMounts []corev1.VolumeMount
+
+	// Generate volumes for signing keys
+	for idx, keyRef := range authConfig.SigningKeySecretRefs {
+		volumeName := fmt.Sprintf("%s%d", AuthServerKeysVolumePrefix, idx)
+		fileName := fmt.Sprintf(AuthServerKeyFilePattern, idx)
+
+		volumes = append(volumes, corev1.Volume{
+			Name: volumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: keyRef.Name,
+					Items: []corev1.KeyToPath{{
+						Key:  keyRef.Key,
+						Path: fileName,
+					}},
+					DefaultMode: k8sptr.To(int32(0400)), // Read-only for owner
+				},
+			},
+		})
+
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      volumeName,
+			MountPath: fmt.Sprintf("%s/%s", AuthServerKeysMountPath, fileName),
+			SubPath:   fileName,
+			ReadOnly:  true,
+		})
+	}
+
+	// Generate volumes for HMAC secrets
+	for idx, hmacRef := range authConfig.HMACSecretRefs {
+		volumeName := fmt.Sprintf("%s%d", AuthServerHMACVolumePrefix, idx)
+		fileName := fmt.Sprintf(AuthServerHMACFilePattern, idx)
+
+		volumes = append(volumes, corev1.Volume{
+			Name: volumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: hmacRef.Name,
+					Items: []corev1.KeyToPath{{
+						Key:  hmacRef.Key,
+						Path: fileName,
+					}},
+					DefaultMode: k8sptr.To(int32(0400)), // Read-only for owner
+				},
+			},
+		})
+
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      volumeName,
+			MountPath: fmt.Sprintf("%s/%s", AuthServerHMACMountPath, fileName),
+			SubPath:   fileName,
+			ReadOnly:  true,
+		})
+	}
+
+	// Generate volumes for Redis TLS CA certificates
+	if authConfig.Storage != nil && authConfig.Storage.Redis != nil {
+		redis := authConfig.Storage.Redis
+		if redis.TLS != nil && redis.TLS.CACertSecretRef != nil {
+			ref := redis.TLS.CACertSecretRef
+			volumeName := RedisTLSCACertVolumePrefix + "master"
+			volumes = append(volumes, corev1.Volume{
+				Name: volumeName,
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: ref.Name,
+						Items: []corev1.KeyToPath{{
+							Key:  ref.Key,
+							Path: RedisTLSCACertFileName,
+						}},
+						DefaultMode: k8sptr.To(int32(0400)),
+					},
+				},
+			})
+			volumeMounts = append(volumeMounts, corev1.VolumeMount{
+				Name:      volumeName,
+				MountPath: fmt.Sprintf("%s/%s", RedisTLSCACertMountPath, RedisTLSCACertFileName),
+				SubPath:   RedisTLSCACertFileName,
+				ReadOnly:  true,
+			})
+		}
+		if redis.SentinelTLS != nil && redis.SentinelTLS.CACertSecretRef != nil {
+			ref := redis.SentinelTLS.CACertSecretRef
+			volumeName := RedisTLSCACertVolumePrefix + "sentinel"
+			volumes = append(volumes, corev1.Volume{
+				Name: volumeName,
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: ref.Name,
+						Items: []corev1.KeyToPath{{
+							Key:  ref.Key,
+							Path: RedisSentinelTLSCACertFileName,
+						}},
+						DefaultMode: k8sptr.To(int32(0400)),
+					},
+				},
+			})
+			volumeMounts = append(volumeMounts, corev1.VolumeMount{
+				Name:      volumeName,
+				MountPath: fmt.Sprintf("%s/%s", RedisTLSCACertMountPath, RedisSentinelTLSCACertFileName),
+				SubPath:   RedisSentinelTLSCACertFileName,
+				ReadOnly:  true,
+			})
+		}
+	}
+
+	upstreamVolumes, upstreamMounts, err := generateUpstreamCABundleVolumes(authConfig.UpstreamProviders)
+	if err != nil {
+		return nil, nil, err
+	}
+	trustedIssuerVolumes, trustedIssuerMounts, err := generateTrustedIssuerCABundleVolumes(authConfig.TrustedIssuers)
+	if err != nil {
+		return nil, nil, err
+	}
+	volumes = append(volumes, upstreamVolumes...)
+	volumes = append(volumes, trustedIssuerVolumes...)
+	volumeMounts = append(volumeMounts, upstreamMounts...)
+	volumeMounts = append(volumeMounts, trustedIssuerMounts...)
+
+	return volumes, volumeMounts, nil
+}
+
+func generateUpstreamCABundleVolumes(
+	providers []mcpv1beta1.UpstreamProviderConfig,
+) ([]corev1.Volume, []corev1.VolumeMount, error) {
+	refs := make([]*mcpv1beta1.CABundleSource, len(providers))
+	for i := range providers {
+		refs[i] = providers[i].CABundleRef()
+	}
+	return generateCABundleVolumes(
+		refs, AuthServerUpstreamCABundleVolumePrefix, AuthServerUpstreamCABundleMountPath, "upstreamProviders")
+}
+
+func generateTrustedIssuerCABundleVolumes(
+	issuers []mcpv1beta1.TrustedIssuerConfig,
+) ([]corev1.Volume, []corev1.VolumeMount, error) {
+	refs := make([]*mcpv1beta1.CABundleSource, len(issuers))
+	for i := range issuers {
+		refs[i] = issuers[i].CABundleRef
+	}
+	return generateCABundleVolumes(
+		refs, AuthServerTrustedIssuerCABundleVolumePrefix, AuthServerTrustedIssuerCABundleMountPath, "trustedIssuers")
+}
+
+func generateCABundleVolumes(
+	refs []*mcpv1beta1.CABundleSource, volumePrefix, mountBase, fieldPrefix string,
+) ([]corev1.Volume, []corev1.VolumeMount, error) {
+	var volumes []corev1.Volume
+	var mounts []corev1.VolumeMount
+	for index, ref := range refs {
+		if ref == nil {
+			continue
+		}
+		if ref.ConfigMapRef == nil || ref.ConfigMapRef.Name == "" {
+			return nil, nil, fmt.Errorf("%s[%d].caBundleRef.configMapRef.name is required", fieldPrefix, index)
+		}
+		key := ref.ConfigMapRef.Key
+		if key == "" {
+			key = AuthServerUpstreamCABundleFileName
+		}
+		volumeName := fmt.Sprintf("%s%d", volumePrefix, index)
+		mountPath := caBundleFilePath(mountBase, index)
+		volumes = append(volumes, corev1.Volume{
+			Name: volumeName,
+			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: ref.ConfigMapRef.Name},
+				Items:                []corev1.KeyToPath{{Key: key, Path: AuthServerUpstreamCABundleFileName}},
+			}},
+		})
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: volumeName, MountPath: mountPath, SubPath: AuthServerUpstreamCABundleFileName, ReadOnly: true,
+		})
+	}
+	return volumes, mounts, nil
+}
+
+// upstreamCABundleFilePath returns the path for the provider at the given index.
+// The index must match the provider's position in UpstreamProviders.
+func upstreamCABundleFilePath(index int) string {
+	return caBundleFilePath(AuthServerUpstreamCABundleMountPath, index)
+}
+
+// trustedIssuerCABundleFilePath returns the path for the issuer at the given index.
+// The index must match the issuer's position in TrustedIssuers.
+func trustedIssuerCABundleFilePath(index int) string {
+	return caBundleFilePath(AuthServerTrustedIssuerCABundleMountPath, index)
+}
+
+func caBundleFilePath(mountBase string, index int) string {
+	return fmt.Sprintf("%s/%d/%s", mountBase, index, AuthServerUpstreamCABundleFileName)
+}
+
+// GenerateAuthServerEnvVars creates environment variables for embedded auth server.
+// Generates TOOLHIVE_UPSTREAM_CLIENT_SECRET_<PROVIDER> env vars for each upstream
+// provider that has a client secret reference configured, where PROVIDER is the
+// provider name uppercased with hyphens replaced by underscores.
+//
+// Returns nil slice if authConfig is nil or if no client secrets are configured.
+func GenerateAuthServerEnvVars(
+	authConfig *mcpv1beta1.EmbeddedAuthServerConfig,
+) []corev1.EnvVar {
+	if authConfig == nil {
+		return nil
+	}
+
+	var envVars []corev1.EnvVar
+
+	// Generate env vars for upstream client secrets using shared bindings
+	for _, b := range buildUpstreamSecretBindings(authConfig.UpstreamProviders) {
+		envVars = append(envVars, buildUpstreamSecretEnvVars(&b)...)
+	}
+
+	// Generate env vars for static delegate client secrets. Their names are
+	// indexed by list position to avoid deriving a reserved env-var name from
+	// arbitrary client ID text.
+	delegateClients := authConfig.DelegateClients
+	if authConfig.InboundGrants != nil && authConfig.InboundGrants.TokenExchange != nil {
+		delegateClients = authConfig.InboundGrants.TokenExchange.DelegateClients
+	}
+	for i, delegateClient := range delegateClients {
+		if delegateClient.ClientSecretRef != nil {
+			envVars = append(envVars, envVarFromSecretRef(
+				delegateClientSecretEnvVarName(i), delegateClient.ClientSecretRef))
+		}
+	}
+
+	// Generate env vars for Redis ACL credentials if configured
+	if authConfig.Storage != nil &&
+		authConfig.Storage.Type == mcpv1beta1.AuthServerStorageTypeRedis &&
+		authConfig.Storage.Redis != nil &&
+		authConfig.Storage.Redis.ACLUserConfig != nil {
+		aclConfig := authConfig.Storage.Redis.ACLUserConfig
+
+		if aclConfig.UsernameSecretRef != nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name: authrunner.RedisUsernameEnvVar,
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: aclConfig.UsernameSecretRef.Name,
+						},
+						Key: aclConfig.UsernameSecretRef.Key,
+					},
+				},
+			})
+		}
+
+		if aclConfig.PasswordSecretRef != nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name: authrunner.RedisPasswordEnvVar,
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: aclConfig.PasswordSecretRef.Name,
+						},
+						Key: aclConfig.PasswordSecretRef.Key,
+					},
+				},
+			})
+		}
+	}
+
+	return envVars
+}
+
+// AddEmbeddedAuthServerConfigOptions adds embedded auth server configuration to
+// runner options when the external auth type is embeddedAuthServer.
+// This is called by the runconfig generation logic to configure the auth server.
+//
+// The function:
+// 1. Fetches the MCPExternalAuthConfig by name
+// 2. Checks if the type is embeddedAuthServer
+// 3. Validates that oidcConfig is provided with ResourceURL (required for RFC 8707 compliance)
+// 4. Adds the appropriate runner options for embedded auth server configuration
+//
+// The oidcConfig parameter provides:
+//   - AllowedAudiences: from oidcConfig.ResourceURL (REQUIRED)
+//   - ScopesSupported: from oidcConfig.Scopes (optional, defaults to ["openid", "offline_access"])
+//
+// Returns nil if externalAuthConfigRef is nil or if the auth type is not embeddedAuthServer.
+// Returns error if oidcConfig is nil or oidcConfig.ResourceURL is empty when using embedded auth server.
+func AddEmbeddedAuthServerConfigOptions(
+	ctx context.Context,
+	c client.Client,
+	namespace string,
+	mcpServerName string,
+	externalAuthConfigRef *mcpv1beta1.ExternalAuthConfigRef,
+	oidcConfig *oidc.OIDCConfig,
+	options *[]runner.RunConfigBuilderOption,
+) error {
+	if externalAuthConfigRef == nil {
+		return nil
+	}
+
+	// Fetch the MCPExternalAuthConfig
+	externalAuthConfig, err := GetExternalAuthConfigByName(ctx, c, namespace, externalAuthConfigRef.Name)
+	if err != nil {
+		return fmt.Errorf("failed to get MCPExternalAuthConfig: %w", err)
+	}
+
+	// Only process embeddedAuthServer type
+	if externalAuthConfig.Spec.Type != mcpv1beta1.ExternalAuthTypeEmbeddedAuthServer {
+		return nil
+	}
+
+	authServerConfig := externalAuthConfig.Spec.EmbeddedAuthServer
+	if authServerConfig == nil {
+		return invalidEmbeddedAuthServerConfigFrom(
+			EmbeddedAuthServerConfigSourceExternalAuthConfigRef,
+			fmt.Errorf("embedded auth server configuration is nil for type embeddedAuthServer"),
+		)
+	}
+
+	if err := validateOIDCConfigForEmbeddedAuthServer(oidcConfig); err != nil {
+		return invalidEmbeddedAuthServerConfigFrom(EmbeddedAuthServerConfigSourceExternalAuthConfigRef, err)
+	}
+
+	// Build the embedded auth server config for runner
+	embeddedConfig, err := BuildAuthServerRunConfig(
+		namespace, mcpServerName, authServerConfig,
+		[]string{oidcConfig.ResourceURL}, oidcConfig.Scopes,
+		oidcConfig.ResourceURL,
+	)
+	if err != nil {
+		return invalidEmbeddedAuthServerConfigFrom(
+			EmbeddedAuthServerConfigSourceExternalAuthConfigRef,
+			fmt.Errorf("failed to build embedded auth server config: %w", err),
+		)
+	}
+
+	// Add the configuration option
+	*options = append(*options, runner.WithEmbeddedAuthServerConfig(embeddedConfig))
+
+	return nil
+}
+
+// validateOIDCConfigForEmbeddedAuthServer validates OIDC configuration
+// requirements when an embedded auth server is active.
+//
+// The embedded auth server mints tokens with aud = ResourceURL (the value
+// clients send as the RFC 8707 resource parameter via discovery). The token
+// validator checks aud against Audience. If these differ, every authenticated
+// request fails with an audience mismatch.
+//
+// We validate consistency at reconciliation time (rather than silently
+// overriding Audience with ResourceURL) so that operators see exactly what
+// values are in play and control both sides explicitly. This mirrors the
+// existing vMCP inline config validation (ValidateAuthServerIntegration).
+func validateOIDCConfigForEmbeddedAuthServer(oidcConfig *oidc.OIDCConfig) error {
+	if oidcConfig == nil {
+		return fmt.Errorf("OIDC config is required for embedded auth server: OIDCConfigRef must be set on the MCPServer")
+	}
+	if oidcConfig.ResourceURL == "" {
+		return fmt.Errorf("OIDC config resourceUrl is required for embedded auth server: set resourceUrl in OIDCConfigRef")
+	}
+	if oidcConfig.Audience == "" {
+		return fmt.Errorf(
+			"oidcConfigRef.audience is required when an embedded auth server is active; "+
+				"set audience to %q to match resourceUrl",
+			oidcConfig.ResourceURL,
+		)
+	}
+	if oidcConfig.Audience != oidcConfig.ResourceURL {
+		return fmt.Errorf(
+			"oidcConfigRef.audience %q must match resourceUrl %q when an embedded auth server is active; "+
+				"set audience to %q or set resourceUrl to match audience",
+			oidcConfig.Audience, oidcConfig.ResourceURL, oidcConfig.ResourceURL,
+		)
+	}
+	return nil
+}
+
+func buildInboundGrantsRunConfig(
+	config *mcpv1beta1.InboundGrantsConfig,
+) (*authserver.InboundGrantsRunConfig, error) {
+	if config == nil {
+		return nil, nil
+	}
+	grants := &authserver.InboundGrantsRunConfig{
+		SPIFFEClientAuth: buildSPIFFEClientAuthRunConfigs(config.SPIFFEClientAuth),
+	}
+	if config.TokenExchange != nil {
+		delegateClients, err := buildDelegateClientRunConfigs(config.TokenExchange.DelegateClients)
+		if err != nil {
+			return nil, err
+		}
+		policies := make([]authserver.TokenExchangeIssuerPolicyRunConfig, len(config.TokenExchange.IssuerPolicies))
+		for i, policy := range config.TokenExchange.IssuerPolicies {
+			policies[i] = authserver.TokenExchangeIssuerPolicyRunConfig{
+				IssuerRef:              policy.IssuerRef,
+				ExpectedAudience:       policy.ExpectedAudience,
+				ActorClaim:             policy.ActorClaim,
+				AllowedActors:          append([]string(nil), policy.AllowedActors...),
+				ActorMatcher:           policy.ActorMatcher,
+				AllowedDelegateClients: append([]string(nil), policy.AllowedDelegateClients...),
+				AllowMayAct:            policy.AllowMayAct,
+			}
+		}
+		grants.TokenExchange = &authserver.TokenExchangeInboundGrantRunConfig{
+			DelegateClients: delegateClients,
+			IssuerPolicies:  policies,
+		}
+	}
+	if config.JWTBearer != nil {
+		policies := make([]authserver.JWTBearerIssuerPolicyRunConfig, len(config.JWTBearer.IssuerPolicies))
+		for i, policy := range config.JWTBearer.IssuerPolicies {
+			if policy.MaxAssertionAge == nil {
+				return nil, fmt.Errorf("jwtBearer.issuerPolicies[%d].maxAssertionAge is required", i)
+			}
+			policies[i] = authserver.JWTBearerIssuerPolicyRunConfig{
+				IssuerRef:         policy.IssuerRef,
+				MaxAssertionAge:   policy.MaxAssertionAge.Duration.String(),
+				SubjectBindings:   buildJWTBearerSubjectBindings(policy.SubjectBindings),
+				AcceptedAudiences: append([]string(nil), policy.AcceptedAudiences...),
+			}
+		}
+		grants.JWTBearer = &authserver.JWTBearerInboundGrantRunConfig{IssuerPolicies: policies}
+	}
+	return grants, nil
+}
+
+func buildJWTBearerSubjectBindings(
+	bindings []mcpv1beta1.JWTBearerSubjectBinding,
+) []tokenexchange.JWTBearerSubjectBinding {
+	converted := make([]tokenexchange.JWTBearerSubjectBinding, len(bindings))
+	for i, binding := range bindings {
+		converted[i] = tokenexchange.JWTBearerSubjectBinding{
+			Subject: binding.Subject, AllowedResources: append([]string(nil), binding.AllowedResources...),
+		}
+	}
+	return converted
+}
+
+// BuildAuthServerRunConfig converts CRD EmbeddedAuthServerConfig to authserver.RunConfig.
+// The RunConfig is serializable and contains file paths for secrets (not the secrets themselves).
+//
+// AllowedAudiences, ScopesSupported, and resourceURL are caller-provided because different
+// controllers derive them from different sources (MCPServer uses oidcConfig.ResourceURL/Scopes;
+// VirtualMCPServer derives from the resolved vmcp Config).
+//
+// resourceURL is used to default the RedirectURI on upstream providers when not explicitly set.
+// The default is {resourceURL}/oauth/callback as documented in the MCPExternalAuthConfig CRD.
+func BuildAuthServerRunConfig(
+	namespace string,
+	name string,
+	authConfig *mcpv1beta1.EmbeddedAuthServerConfig,
+	allowedAudiences []string,
+	scopesSupported []string,
+	resourceURL string,
+) (config *authserver.RunConfig, err error) {
+	defer func() {
+		if err != nil {
+			err = invalidEmbeddedAuthServerConfig(err)
+		}
+	}()
+
+	if err := authConfig.ValidateInboundGrants(); err != nil {
+		return nil, err
+	}
+	inboundGrants, err := buildInboundGrantsRunConfig(authConfig.InboundGrants)
+	if err != nil {
+		return nil, err
+	}
+	config = &authserver.RunConfig{
+		SchemaVersion:                authserver.CurrentSchemaVersion,
+		Issuer:                       authConfig.Issuer,
+		AuthorizationEndpointBaseURL: authConfig.AuthorizationEndpointBaseURL,
+		AllowedAudiences:             allowedAudiences,
+		ScopesSupported:              scopesSupported,
+		BaselineClientScopes:         authConfig.BaselineClientScopes,
+		InboundGrants:                inboundGrants,
+		SPIFFETrustDomains:           buildSPIFFETrustDomainRunConfigs(authConfig.SPIFFETrustDomains),
+	}
+
+	if len(authConfig.DelegateClients) > 0 {
+		delegateClients, err := buildDelegateClientRunConfigs(authConfig.DelegateClients)
+		if err != nil {
+			return nil, err
+		}
+		config.DelegateClients = delegateClients
+	}
+
+	if len(authConfig.TrustedIssuers) > 0 {
+		config.TrustedIssuers = buildTrustedIssuerRunConfigs(authConfig.TrustedIssuers)
+	}
+
+	// Wire signing-key file paths, HMAC secret file paths, and token lifespans.
+	buildAuthServerSecretsConfig(config, authConfig)
+
+	// Build upstream provider configs using shared bindings
+	bindings := buildUpstreamSecretBindings(authConfig.UpstreamProviders)
+	config.Upstreams = make([]authserver.UpstreamRunConfig, 0, len(bindings))
+	for index, b := range bindings {
+		upstream, err := buildUpstreamRunConfig(&b, index, resourceURL)
+		if err != nil {
+			return nil, fmt.Errorf("upstream %q: %w", b.Provider.Name, err)
+		}
+		config.Upstreams = append(config.Upstreams, *upstream)
+	}
+
+	// Build storage configuration
+	storageCfg, err := buildStorageRunConfig(namespace, name, authConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build storage config: %w", err)
+	}
+	config.Storage = storageCfg
+
+	applySimpleAuthServerConfigFields(config, authConfig)
+
+	if err := validateDelegateClientsAndTrustedIssuers(config); err != nil {
+		return nil, err
+	}
+
+	return config, nil
+}
+
+// applySimpleAuthServerConfigFields wires the remaining CRD fields that
+// require no conversion (booleans, string lists, and CIMD) onto config.
+// Split out of BuildAuthServerRunConfig purely to keep that function's
+// cyclomatic complexity down; it has no independent validation role.
+func applySimpleAuthServerConfigFields(config *authserver.RunConfig, authConfig *mcpv1beta1.EmbeddedAuthServerConfig) {
+	// Wire through upstream token injection flag
+	config.DisableUpstreamTokenInjection = authConfig.DisableUpstreamTokenInjection
+
+	// Wire through the insecure HTTP issuer flag from the CRD field.
+	// This replaces any auto-inference and moves control to the deployer.
+	config.InsecureAllowHTTP = authConfig.InsecureAllowHTTP
+
+	// Wire through the confidential-client DCR flag (default off).
+	config.AllowConfidentialClientRegistration = authConfig.AllowConfidentialClientRegistration
+
+	// Wire through the private-key JWT DCR capability (default off).
+	config.AllowPrivateKeyJWTRegistration = authConfig.AllowPrivateKeyJWTRegistration
+
+	// Wire through the force-confidential-redirect-uris override list.
+	config.ForceConfidentialRedirectURIs = authConfig.ForceConfidentialRedirectURIs
+
+	// Wire through the confidential-over-loopback-http opt-in (default off).
+	config.InsecureAllowConfidentialOverLoopbackHTTP = authConfig.InsecureAllowConfidentialOverLoopbackHTTP
+}
+
+// buildAuthServerSecretsConfig wires signing-key file paths, HMAC secret file
+// paths, token lifespans, and CIMD settings from the CRD onto config.
+func buildAuthServerSecretsConfig(config *authserver.RunConfig, authConfig *mcpv1beta1.EmbeddedAuthServerConfig) {
+	if len(authConfig.SigningKeySecretRefs) > 0 {
+		signingKeyConfig := &authserver.SigningKeyRunConfig{
+			KeyDir: AuthServerKeysMountPath,
+		}
+		for idx := range authConfig.SigningKeySecretRefs {
+			fileName := fmt.Sprintf(AuthServerKeyFilePattern, idx)
+			if idx == 0 {
+				signingKeyConfig.SigningKeyFile = fileName
+			} else {
+				signingKeyConfig.FallbackKeyFiles = append(signingKeyConfig.FallbackKeyFiles, fileName)
+			}
+		}
+		config.SigningKeyConfig = signingKeyConfig
+	}
+
+	for idx := range authConfig.HMACSecretRefs {
+		hmacPath := fmt.Sprintf("%s/%s", AuthServerHMACMountPath, fmt.Sprintf(AuthServerHMACFilePattern, idx))
+		config.HMACSecretFiles = append(config.HMACSecretFiles, hmacPath)
+	}
+
+	// Set token lifespans from config (as strings, will be parsed at runtime)
+	if authConfig.TokenLifespans != nil {
+		config.TokenLifespans = &authserver.TokenLifespanRunConfig{
+			AccessTokenLifespan:  authConfig.TokenLifespans.AccessTokenLifespan,
+			RefreshTokenLifespan: authConfig.TokenLifespans.RefreshTokenLifespan,
+			AuthCodeLifespan:     authConfig.TokenLifespans.AuthCodeLifespan,
+		}
+	}
+
+	// CacheFallbackTTL is passed as-is (string); resolveCIMDConfig in the
+	// runner parses it to time.Duration at startup.
+	if authConfig.CIMD != nil && authConfig.CIMD.Enabled {
+		config.CIMD = &authserver.CIMDRunConfig{
+			Enabled:          authConfig.CIMD.Enabled,
+			CacheMaxSize:     authConfig.CIMD.CacheMaxSize,
+			CacheFallbackTTL: authConfig.CIMD.CacheFallbackTTL,
+		}
+	}
+}
+
+// validateDelegateClientsAndTrustedIssuers re-validates delegate clients and
+// trusted issuers at reconcile time via RunConfig.Validate(), the same check
+// authserver startup performs. Reconcile-time construction (BuildAuthServerRunConfig)
+// runs before authserver startup, so this catches an invalid CRD-level
+// configuration (e.g. an issuer_url colliding with the server's own issuer,
+// or allow_may_act combined with the delegate-client wildcard) as a
+// reconcile error rather than a pod crash loop.
+func validateDelegateClientsAndTrustedIssuers(config *authserver.RunConfig) error {
+	if len(config.DelegateClients) == 0 && len(config.TrustedIssuers) == 0 && config.InboundGrants == nil &&
+		len(config.SPIFFETrustDomains) == 0 {
+		return nil
+	}
+
+	validationConfig := &authserver.RunConfig{
+		Issuer:                         config.Issuer,
+		AllowedAudiences:               config.AllowedAudiences,
+		ScopesSupported:                config.ScopesSupported,
+		InsecureAllowHTTP:              config.InsecureAllowHTTP,
+		AllowPrivateKeyJWTRegistration: config.AllowPrivateKeyJWTRegistration,
+		InsecureAllowConfidentialOverLoopbackHTTP: config.InsecureAllowConfidentialOverLoopbackHTTP,
+		DelegateClients:    config.DelegateClients,
+		TrustedIssuers:     config.TrustedIssuers,
+		InboundGrants:      config.InboundGrants,
+		SPIFFETrustDomains: config.SPIFFETrustDomains,
+	}
+	if err := validationConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid embedded auth server delegate clients or trusted issuers: %w", err)
+	}
+	return nil
+}
+
+// buildStorageRunConfig converts CRD AuthServerStorageConfig to storage.RunConfig.
+// Returns nil (memory storage default) if no storage config is specified.
+func buildStorageRunConfig(
+	namespace string,
+	mcpServerName string,
+	authConfig *mcpv1beta1.EmbeddedAuthServerConfig,
+) (*storage.RunConfig, error) {
+	if authConfig.Storage == nil || authConfig.Storage.Type == mcpv1beta1.AuthServerStorageTypeMemory {
+		return nil, nil
+	}
+
+	if authConfig.Storage.Type != mcpv1beta1.AuthServerStorageTypeRedis {
+		return nil, fmt.Errorf("unsupported storage type: %s", authConfig.Storage.Type)
+	}
+
+	redisConfig := authConfig.Storage.Redis
+	if redisConfig == nil {
+		return nil, fmt.Errorf("redis config is required when storage type is redis")
+	}
+
+	if redisConfig.Addr != "" && redisConfig.SentinelConfig != nil {
+		return nil, fmt.Errorf("addr and sentinelConfig are mutually exclusive for Redis storage")
+	}
+	if redisConfig.Addr == "" && redisConfig.SentinelConfig == nil {
+		return nil, fmt.Errorf("one of addr (standalone or cluster) or sentinelConfig (Sentinel) is required for Redis storage")
+	}
+
+	if redisConfig.ACLUserConfig == nil ||
+		redisConfig.ACLUserConfig.PasswordSecretRef == nil {
+		return nil, fmt.Errorf("ACL user config is required for Redis storage")
+	}
+
+	// Build key prefix for multi-tenancy using namespace and MCP server name
+	keyPrefix := storage.DeriveKeyPrefix(namespace, mcpServerName)
+
+	aclRunConfig := &storage.ACLUserRunConfig{
+		PasswordEnvVar: authrunner.RedisPasswordEnvVar,
+	}
+	if redisConfig.ACLUserConfig.UsernameSecretRef != nil {
+		aclRunConfig.UsernameEnvVar = authrunner.RedisUsernameEnvVar
+	}
+
+	rc := &storage.RedisRunConfig{
+		Addr:          redisConfig.Addr,
+		ClusterMode:   redisConfig.ClusterMode,
+		AuthType:      storage.AuthTypeACLUser,
+		ACLUserConfig: aclRunConfig,
+		KeyPrefix:     keyPrefix,
+		DialTimeout:   redisConfig.DialTimeout,
+		ReadTimeout:   redisConfig.ReadTimeout,
+		WriteTimeout:  redisConfig.WriteTimeout,
+		TLS:           convertRedisTLSConfig(redisConfig.TLS, false),
+	}
+
+	if redisConfig.SentinelConfig != nil {
+		// Resolve Sentinel addresses (static or via Kubernetes Service discovery)
+		sentinelAddrs, err := resolveSentinelAddrs(redisConfig.SentinelConfig, namespace)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve sentinel addresses: %w", err)
+		}
+		rc.SentinelConfig = &storage.SentinelRunConfig{
+			MasterName:    redisConfig.SentinelConfig.MasterName,
+			SentinelAddrs: sentinelAddrs,
+			DB:            int(redisConfig.SentinelConfig.DB),
+		}
+		rc.SentinelTLS = convertRedisTLSConfig(redisConfig.SentinelTLS, true)
+	}
+
+	return &storage.RunConfig{
+		Type:        string(storage.TypeRedis),
+		RedisConfig: rc,
+	}, nil
+}
+
+// convertRedisTLSConfig converts CRD RedisTLSConfig to RunConfig.
+// isSentinel determines which mount path to use for the CA cert file.
+func convertRedisTLSConfig(cfg *mcpv1beta1.RedisTLSConfig, isSentinel bool) *storage.RedisTLSRunConfig {
+	if cfg == nil {
+		return nil
+	}
+	rc := &storage.RedisTLSRunConfig{
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+	}
+	if cfg.CACertSecretRef != nil {
+		fileName := RedisTLSCACertFileName
+		if isSentinel {
+			fileName = RedisSentinelTLSCACertFileName
+		}
+		rc.CACertFile = fmt.Sprintf("%s/%s", RedisTLSCACertMountPath, fileName)
+	}
+	return rc
+}
+
+// resolveSentinelAddrs resolves Sentinel addresses from static config or Kubernetes Service DNS.
+func resolveSentinelAddrs(
+	sentinelConfig *mcpv1beta1.RedisSentinelConfig,
+	defaultNamespace string,
+) ([]string, error) {
+	// If static addresses are provided, use them directly
+	if len(sentinelConfig.SentinelAddrs) > 0 {
+		return sentinelConfig.SentinelAddrs, nil
+	}
+
+	// Otherwise, construct the Kubernetes Service DNS name.
+	// go-redis tries all sentinel addresses in parallel and auto-discovers
+	// other sentinels via the SENTINEL SENTINELS command after connecting,
+	// so a single DNS name is sufficient.
+	if sentinelConfig.SentinelService == nil {
+		return nil, fmt.Errorf("either sentinelAddrs or sentinelService must be specified")
+	}
+
+	svc := sentinelConfig.SentinelService
+	namespace := svc.Namespace
+	if namespace == "" {
+		namespace = defaultNamespace
+	}
+	port := svc.Port
+	if port == 0 {
+		port = DefaultSentinelPort
+	}
+
+	dnsName := fmt.Sprintf("%s.%s.svc.cluster.local:%d", svc.Name, namespace, port)
+	return []string{dnsName}, nil
+}
+
+// defaultRedirectURI returns the default redirect URI for an upstream provider
+// when one is not explicitly configured. The default is {resourceURL}/oauth/callback
+// as documented in the MCPExternalAuthConfig CRD.
+func defaultRedirectURI(resourceURL string) string {
+	return strings.TrimRight(resourceURL, "/") + "/oauth/callback"
+}
+
+// buildUpstreamRunConfig converts CRD UpstreamProviderConfig to authserver.UpstreamRunConfig.
+// The binding carries the provider and the env var names computed by
+// buildUpstreamSecretBindings so Pod env and runtime config stay in sync.
+// When a provider's RedirectURI is empty, it is defaulted to
+// {resourceURL}/oauth/callback.
+//
+// Returns an error when the OAuth2 provider's ClientID and DCRConfig
+// combination is invalid (the same XOR enforced at admission by CEL).
+// Failing at reconcile time — rather than at authserver startup — matches
+// the project convention of rejecting malformed objects as early as possible.
+func buildUpstreamRunConfig(
+	b *upstreamSecretBinding,
+	index int,
+	resourceURL string,
+) (*authserver.UpstreamRunConfig, error) {
+	provider := b.Provider
+	config := &authserver.UpstreamRunConfig{
+		Name: provider.Name,
+		Type: authserver.UpstreamProviderType(provider.Type),
+	}
+
+	switch provider.Type {
+	case mcpv1beta1.UpstreamProviderTypeOIDC:
+		if provider.OIDCConfig != nil {
+			oidcRunConfig, err := buildOIDCUpstreamRunConfig(
+				provider.OIDCConfig, b.EnvVarName, b.DCRInitialAccessTokenEnvVar, index, resourceURL)
+			if err != nil {
+				return nil, err
+			}
+			config.OIDCConfig = oidcRunConfig
+		}
+	case mcpv1beta1.UpstreamProviderTypeOAuth2:
+		if provider.OAuth2Config != nil {
+			oauth2, err := buildOAuth2UpstreamRunConfig(
+				provider.OAuth2Config, b.EnvVarName, b.DCRInitialAccessTokenEnvVar, index, resourceURL)
+			if err != nil {
+				return nil, err
+			}
+			config.OAuth2Config = oauth2
+		}
+	}
+
+	return config, nil
+}
+
+// buildOIDCUpstreamRunConfig converts a CRD OIDCUpstreamConfig to the
+// runtime representation. `clientSecretEnvVar` is the resolved env var name
+// used when ClientSecretRef is configured.
+func buildOIDCUpstreamRunConfig(
+	cfg *mcpv1beta1.OIDCUpstreamConfig,
+	clientSecretEnvVar string,
+	initialAccessTokenEnvVar string,
+	index int,
+	resourceURL string,
+) (*authserver.OIDCUpstreamRunConfig, error) {
+	if err := mcpv1beta1.ValidateOIDCDCRConfig(cfg); err != nil {
+		return nil, err
+	}
+	redirectURI := cfg.RedirectURI
+	if redirectURI == "" && resourceURL != "" {
+		redirectURI = defaultRedirectURI(resourceURL)
+	}
+	runConfig := &authserver.OIDCUpstreamRunConfig{
+		IssuerURL:                     cfg.IssuerURL,
+		ClientID:                      cfg.ClientID,
+		RedirectURI:                   redirectURI,
+		Scopes:                        cfg.Scopes,
+		AdditionalAuthorizationParams: cfg.AdditionalAuthorizationParams,
+		SubjectClaim:                  cfg.SubjectClaim,
+		AllowPrivateIPs:               cfg.AllowPrivateIPs,
+	}
+	if cfg.ClientSecretRef != nil {
+		runConfig.ClientSecretEnvVar = clientSecretEnvVar
+	}
+	if cfg.CABundleRef != nil {
+		runConfig.CAFilePath = upstreamCABundleFilePath(index)
+	}
+	if cfg.DCRConfig != nil {
+		runConfig.DCRConfig = buildDCRUpstreamRunConfig(cfg.DCRConfig, initialAccessTokenEnvVar)
+	}
+	if cfg.UserInfoOverride != nil {
+		runConfig.UserInfoOverride = buildUserInfoRunConfig(cfg.UserInfoOverride)
+	}
+	return runConfig, nil
+}
+
+// buildOAuth2UpstreamRunConfig converts a CRD OAuth2UpstreamConfig to the
+// runtime representation. The signature mirrors buildOIDCUpstreamRunConfig:
+// the caller passes the resolved env-var names directly. `clientSecretEnvVar`
+// is used when ClientSecretRef is configured; `initialAccessTokenEnvVar` is
+// used when DCRConfig.InitialAccessTokenRef is configured.
+//
+// It rejects malformed ClientID/DCRConfig pairs before producing a RunConfig —
+// mirroring the CEL XValidation rules on OAuth2UpstreamConfig /
+// DCRUpstreamConfig — so objects that reached etcd without passing admission
+// (stored-before-CEL, apiserver patches, test fixtures bypassing validation)
+// fail at reconcile time rather than at authserver startup. The validator
+// error is returned unwrapped so the outer wrap in BuildAuthServerRunConfig
+// (`upstream %q: %w`) supplies the upstream name exactly once.
+func buildOAuth2UpstreamRunConfig(
+	cfg *mcpv1beta1.OAuth2UpstreamConfig,
+	clientSecretEnvVar string,
+	initialAccessTokenEnvVar string,
+	index int,
+	resourceURL string,
+) (*authserver.OAuth2UpstreamRunConfig, error) {
+	if err := mcpv1beta1.ValidateOAuth2DCRConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	redirectURI := cfg.RedirectURI
+	if redirectURI == "" && resourceURL != "" {
+		redirectURI = defaultRedirectURI(resourceURL)
+	}
+	runConfig := &authserver.OAuth2UpstreamRunConfig{
+		AuthorizationEndpoint:         cfg.AuthorizationEndpoint,
+		TokenEndpoint:                 cfg.TokenEndpoint,
+		ClientID:                      cfg.ClientID,
+		TokenEndpointAuthMethod:       cfg.TokenEndpointAuthMethod,
+		RedirectURI:                   redirectURI,
+		Scopes:                        cfg.Scopes,
+		AdditionalAuthorizationParams: cfg.AdditionalAuthorizationParams,
+		InsecureAllowHTTP:             cfg.InsecureAllowHTTP,
+		AllowPrivateIPs:               cfg.AllowPrivateIPs,
+	}
+	if cfg.ClientSecretRef != nil {
+		runConfig.ClientSecretEnvVar = clientSecretEnvVar
+	}
+	if cfg.CABundleRef != nil {
+		runConfig.CAFilePath = upstreamCABundleFilePath(index)
+	}
+	if cfg.UserInfo != nil {
+		runConfig.UserInfo = buildUserInfoRunConfig(cfg.UserInfo)
+	}
+	if cfg.TokenResponseMapping != nil {
+		m := cfg.TokenResponseMapping
+		runConfig.TokenResponseMapping = &authserver.TokenResponseMappingRunConfig{
+			AccessTokenPath:  m.AccessTokenPath,
+			ScopePath:        m.ScopePath,
+			RefreshTokenPath: m.RefreshTokenPath,
+			ExpiresInPath:    m.ExpiresInPath,
+		}
+	}
+	if cfg.IdentityFromToken != nil {
+		ift := cfg.IdentityFromToken
+		runConfig.IdentityFromToken = &authserver.IdentityFromTokenRunConfig{
+			SubjectPath: ift.SubjectPath,
+			NamePath:    ift.NamePath,
+			EmailPath:   ift.EmailPath,
+		}
+	}
+	if cfg.DCRConfig != nil {
+		runConfig.DCRConfig = buildDCRUpstreamRunConfig(cfg.DCRConfig, initialAccessTokenEnvVar)
+	}
+	return runConfig, nil
+}
+
+// buildDCRUpstreamRunConfig converts CRD DCRUpstreamConfig to
+// authserver.DCRUpstreamConfig. When an InitialAccessTokenRef is present on
+// the CRD, the resolver reads the token value from the supplied env var
+// (populated from the secret ref by GenerateAuthServerEnvVars), mirroring the
+// ClientSecretRef → env-var pattern.
+func buildDCRUpstreamRunConfig(
+	dcr *mcpv1beta1.DCRUpstreamConfig,
+	initialAccessTokenEnvVar string,
+) *authserver.DCRUpstreamConfig {
+	rc := &authserver.DCRUpstreamConfig{
+		DiscoveryURL:         dcr.DiscoveryURL,
+		RegistrationEndpoint: dcr.RegistrationEndpoint,
+		SoftwareID:           dcr.SoftwareID,
+		SoftwareStatement:    dcr.SoftwareStatement,
+	}
+	if dcr.InitialAccessTokenRef != nil {
+		rc.InitialAccessTokenEnvVar = initialAccessTokenEnvVar
+	}
+	return rc
+}
+
+// buildUserInfoRunConfig converts CRD UserInfoConfig to authserver.UserInfoRunConfig.
+func buildUserInfoRunConfig(
+	userInfo *mcpv1beta1.UserInfoConfig,
+) *authserver.UserInfoRunConfig {
+	config := &authserver.UserInfoRunConfig{
+		EndpointURL:       userInfo.EndpointURL,
+		HTTPMethod:        userInfo.HTTPMethod,
+		AdditionalHeaders: userInfo.AdditionalHeaders,
+	}
+
+	if userInfo.FieldMapping != nil {
+		config.FieldMapping = &authserver.UserInfoFieldMappingRunConfig{
+			SubjectFields: userInfo.FieldMapping.SubjectFields,
+			NameFields:    userInfo.FieldMapping.NameFields,
+			EmailFields:   userInfo.FieldMapping.EmailFields,
+		}
+	}
+
+	return config
+}
+
+// ValidateAndAddAuthServerRefOptions performs conflict validation between authServerRef
+// and externalAuthConfigRef, then resolves authServerRef if present.
+// Returns error if both fields point to an embedded auth server configuration.
+func ValidateAndAddAuthServerRefOptions(
+	ctx context.Context,
+	c client.Client,
+	namespace string,
+	mcpServerName string,
+	authServerRef *mcpv1beta1.AuthServerRef,
+	externalAuthConfigRef *mcpv1beta1.ExternalAuthConfigRef,
+	oidcConfig *oidc.OIDCConfig,
+	options *[]runner.RunConfigBuilderOption,
+) error {
+	// Conflict validation: both authServerRef and externalAuthConfigRef pointing to
+	// embedded auth server is an error (use one or the other, not both)
+	if authServerRef != nil && externalAuthConfigRef != nil {
+		extConfig, err := GetExternalAuthConfigByName(ctx, c, namespace, externalAuthConfigRef.Name)
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to fetch externalAuthConfigRef for conflict validation: %w", err)
+			}
+			// Not found - skip conflict check, will be caught by AddExternalAuthConfigOptions
+		} else if extConfig.Spec.Type == mcpv1beta1.ExternalAuthTypeEmbeddedAuthServer {
+			return fmt.Errorf(
+				"conflict: both authServerRef and externalAuthConfigRef reference an embedded auth server; " +
+					"use authServerRef for the embedded auth server and externalAuthConfigRef for outgoing auth only",
+			)
+		}
+	}
+
+	// Add auth server ref configuration if specified
+	return AddAuthServerRefOptions(ctx, c, namespace, mcpServerName, authServerRef, oidcConfig, options)
+}
+
+// AddAuthServerRefOptions resolves an authServerRef (TypedLocalObjectReference),
+// validates the kind and type, and appends the corresponding RunConfigBuilderOption.
+// Returns nil if authServerRef is nil (no-op).
+// Returns error if the kind is not MCPExternalAuthConfig, the type is not embeddedAuthServer,
+// or if fetching or building the config fails.
+func AddAuthServerRefOptions(
+	ctx context.Context,
+	c client.Client,
+	namespace string,
+	mcpServerName string,
+	authServerRef *mcpv1beta1.AuthServerRef,
+	oidcConfig *oidc.OIDCConfig,
+	options *[]runner.RunConfigBuilderOption,
+) error {
+	if authServerRef == nil {
+		return nil
+	}
+
+	// Validate the Kind
+	if authServerRef.Kind != "MCPExternalAuthConfig" {
+		return fmt.Errorf("unsupported authServerRef kind %q: only MCPExternalAuthConfig is supported", authServerRef.Kind)
+	}
+
+	// Fetch the MCPExternalAuthConfig
+	externalAuthConfig, err := GetExternalAuthConfigByName(ctx, c, namespace, authServerRef.Name)
+	if err != nil {
+		return fmt.Errorf("failed to get MCPExternalAuthConfig for authServerRef: %w", err)
+	}
+
+	// Validate the type is embeddedAuthServer
+	if externalAuthConfig.Spec.Type != mcpv1beta1.ExternalAuthTypeEmbeddedAuthServer {
+		return fmt.Errorf(
+			"authServerRef must reference a MCPExternalAuthConfig with type %q, got %q",
+			mcpv1beta1.ExternalAuthTypeEmbeddedAuthServer, externalAuthConfig.Spec.Type,
+		)
+	}
+
+	authServerConfig := externalAuthConfig.Spec.EmbeddedAuthServer
+	if authServerConfig == nil {
+		return invalidEmbeddedAuthServerConfigFrom(
+			EmbeddedAuthServerConfigSourceAuthServerRef,
+			fmt.Errorf("embedded auth server configuration is nil for type embeddedAuthServer"),
+		)
+	}
+
+	if err := validateOIDCConfigForEmbeddedAuthServer(oidcConfig); err != nil {
+		return invalidEmbeddedAuthServerConfigFrom(EmbeddedAuthServerConfigSourceAuthServerRef, err)
+	}
+
+	// Build the embedded auth server config for runner
+	embeddedConfig, err := BuildAuthServerRunConfig(
+		namespace, mcpServerName, authServerConfig,
+		[]string{oidcConfig.ResourceURL}, oidcConfig.Scopes,
+		oidcConfig.ResourceURL,
+	)
+	if err != nil {
+		return invalidEmbeddedAuthServerConfigFrom(
+			EmbeddedAuthServerConfigSourceAuthServerRef,
+			fmt.Errorf("failed to build embedded auth server config: %w", err),
+		)
+	}
+
+	// Add the configuration option
+	*options = append(*options, runner.WithEmbeddedAuthServerConfig(embeddedConfig))
+
+	return nil
+}

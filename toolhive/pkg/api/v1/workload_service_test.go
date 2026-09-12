@@ -1,0 +1,1562 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+package v1
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/adrg/xdg"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
+
+	"github.com/stacklok/toolhive-core/httperr"
+	"github.com/stacklok/toolhive-core/permissions"
+	regtypes "github.com/stacklok/toolhive-core/registry/types"
+	"github.com/stacklok/toolhive/pkg/auth"
+	"github.com/stacklok/toolhive/pkg/config"
+	"github.com/stacklok/toolhive/pkg/container/templates"
+	groupsmocks "github.com/stacklok/toolhive/pkg/groups/mocks"
+	"github.com/stacklok/toolhive/pkg/runner"
+	"github.com/stacklok/toolhive/pkg/runner/retriever"
+	"github.com/stacklok/toolhive/pkg/secrets"
+	"github.com/stacklok/toolhive/pkg/state"
+	"github.com/stacklok/toolhive/pkg/workloads"
+	workloadsmocks "github.com/stacklok/toolhive/pkg/workloads/mocks"
+)
+
+func TestWorkloadService_GetWorkloadNamesFromRequest(t *testing.T) {
+	t.Parallel()
+
+	t.Run("with names", func(t *testing.T) {
+		t.Parallel()
+
+		service := &WorkloadService{configProvider: config.NewDefaultProvider()}
+
+		req := bulkOperationRequest{
+			Names: []string{"workload1", "workload2"},
+		}
+
+		result, err := service.GetWorkloadNamesFromRequest(context.Background(), req)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"workload1", "workload2"}, result)
+	})
+
+	t.Run("with group", func(t *testing.T) {
+		t.Parallel()
+
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockGroupManager := groupsmocks.NewMockManager(ctrl)
+		mockGroupManager.EXPECT().
+			Exists(gomock.Any(), "test-group").
+			Return(true, nil)
+
+		mockWorkloadManager := workloadsmocks.NewMockManager(ctrl)
+		mockWorkloadManager.EXPECT().
+			ListWorkloadsInGroup(gomock.Any(), "test-group").
+			Return([]string{"workload1", "workload2"}, nil)
+
+		service := &WorkloadService{
+			groupManager:    mockGroupManager,
+			workloadManager: mockWorkloadManager,
+			configProvider:  config.NewDefaultProvider(),
+		}
+
+		req := bulkOperationRequest{
+			Group: "test-group",
+		}
+
+		result, err := service.GetWorkloadNamesFromRequest(context.Background(), req)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"workload1", "workload2"}, result)
+	})
+
+	t.Run("invalid group name", func(t *testing.T) {
+		t.Parallel()
+
+		service := &WorkloadService{configProvider: config.NewDefaultProvider()}
+
+		req := bulkOperationRequest{
+			Group: "invalid-group-name-with-special-chars!@#",
+		}
+
+		result, err := service.GetWorkloadNamesFromRequest(context.Background(), req)
+
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "invalid group name")
+	})
+
+	t.Run("group does not exist", func(t *testing.T) {
+		t.Parallel()
+
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockGroupManager := groupsmocks.NewMockManager(ctrl)
+		mockGroupManager.EXPECT().
+			Exists(gomock.Any(), "non-existent-group").
+			Return(false, nil)
+
+		service := &WorkloadService{
+			groupManager:   mockGroupManager,
+			configProvider: config.NewDefaultProvider(),
+		}
+
+		req := bulkOperationRequest{
+			Group: "non-existent-group",
+		}
+
+		result, err := service.GetWorkloadNamesFromRequest(context.Background(), req)
+
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "group 'non-existent-group' does not exist")
+	})
+
+	t.Run("list workloads error", func(t *testing.T) {
+		t.Parallel()
+
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockGroupManager := groupsmocks.NewMockManager(ctrl)
+		mockGroupManager.EXPECT().
+			Exists(gomock.Any(), "test-group").
+			Return(true, nil)
+
+		mockWorkloadManager := workloadsmocks.NewMockManager(ctrl)
+		mockWorkloadManager.EXPECT().
+			ListWorkloadsInGroup(gomock.Any(), "test-group").
+			Return(nil, errors.New("database error"))
+
+		service := &WorkloadService{
+			groupManager:    mockGroupManager,
+			workloadManager: mockWorkloadManager,
+			configProvider:  config.NewDefaultProvider(),
+		}
+
+		req := bulkOperationRequest{
+			Group: "test-group",
+		}
+
+		result, err := service.GetWorkloadNamesFromRequest(context.Background(), req)
+
+		assert.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "failed to list workloads in group")
+	})
+}
+
+func TestNewWorkloadService(t *testing.T) {
+	t.Parallel()
+
+	service := NewWorkloadService(nil, nil, nil, false)
+	require.NotNil(t, service)
+	assert.NotNil(t, service.configProvider,
+		"configProvider must be initialized so config is read fresh on each call, not snapshotted at construction")
+	assert.Equal(t, retriever.VerifyImageWarn, service.imageVerification,
+		"imageVerification must default to warn so registry-resolved and imageRetriever paths stay consistent")
+}
+
+// TestBuildFullRunConfig_ThreadsImageVerification verifies the imageRetriever path
+// uses s.imageVerification rather than a hardcoded value. Paired with the registry-
+// resolved path's direct call to retriever.VerifyImage(imageURL, imageMetadata,
+// s.imageVerification), this ensures both paths read the mode from the same field.
+func TestBuildFullRunConfig_ThreadsImageVerification(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGroupManager := groupsmocks.NewMockManager(ctrl)
+	mockGroupManager.EXPECT().Exists(gomock.Any(), "default").Return(true, nil)
+
+	const testImage = "test-image"
+
+	var observed string
+	mockRetriever := func(
+		_ context.Context,
+		_ string, _ string,
+		verificationType string,
+		_ string,
+		_ *templates.RuntimeConfig,
+	) (string, regtypes.ServerMetadata, error) {
+		observed = verificationType
+		return testImage, &regtypes.ImageMetadata{Image: testImage}, nil
+	}
+
+	service := &WorkloadService{
+		groupManager:      mockGroupManager,
+		imageRetriever:    mockRetriever,
+		imagePuller:       func(_ context.Context, _ string) error { return nil },
+		configProvider:    config.NewDefaultProvider(),
+		imageVerification: retriever.VerifyImageDisabled,
+	}
+
+	req := &createRequest{
+		Name:          "testserver",
+		updateRequest: updateRequest{Image: testImage},
+	}
+
+	_, err := service.BuildFullRunConfig(context.Background(), req, 0, nil)
+	require.NoError(t, err)
+	assert.Equal(t, retriever.VerifyImageDisabled, observed,
+		"imageRetriever must receive s.imageVerification verbatim")
+}
+
+func TestBuildFullRunConfig_BindsCanonicalOIDCToAuthMiddleware(t *testing.T) {
+	t.Parallel()
+
+	const testImage = "test-image"
+	tests := []struct {
+		name     string
+		oidc     oidcOptions
+		wantOIDC *auth.TokenValidatorConfig
+	}{
+		{
+			name: "ordinary configuration",
+			oidc: oidcOptions{
+				Issuer: "https://issuer.example.com", Audience: "api://toolhive",
+				JwksURL: "https://issuer.example.com/keys", ClientID: "toolhive",
+				Scopes: []string{"openid", "profile"},
+			},
+			wantOIDC: &auth.TokenValidatorConfig{
+				Issuer: "https://issuer.example.com", Audience: "api://toolhive",
+				JWKSURL: "https://issuer.example.com/keys", ClientID: "toolhive",
+				Scopes: []string{"openid", "profile"},
+			},
+		},
+		{
+			name: "introspection and client secret activate authentication",
+			oidc: oidcOptions{
+				IntrospectionURL: "https://issuer.example.com/introspect", ClientSecret: "test-secret",
+			},
+			wantOIDC: &auth.TokenValidatorConfig{
+				IntrospectionURL: "https://issuer.example.com/introspect", ClientSecret: "test-secret",
+			},
+		},
+		{name: "scopes only does not enable authentication", oidc: oidcOptions{Scopes: []string{"openid"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctrl := gomock.NewController(t)
+			mockGroupManager := groupsmocks.NewMockManager(ctrl)
+			mockGroupManager.EXPECT().Exists(gomock.Any(), "default").Return(true, nil)
+			service := &WorkloadService{
+				groupManager: mockGroupManager,
+				imageRetriever: func(
+					_ context.Context, _ string, _ string, _ string, _ string, _ *templates.RuntimeConfig,
+				) (string, regtypes.ServerMetadata, error) {
+					return testImage, &regtypes.ImageMetadata{Image: testImage}, nil
+				},
+				imagePuller:       func(_ context.Context, _ string) error { return nil },
+				configProvider:    config.NewPathProvider(t.TempDir() + "/config.yaml"),
+				imageVerification: retriever.VerifyImageWarn,
+			}
+
+			runConfig, err := service.BuildFullRunConfig(context.Background(), &createRequest{
+				Name: "testserver", updateRequest: updateRequest{Image: testImage, OIDC: tt.oidc},
+			}, 0, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantOIDC, runConfig.OIDCConfig)
+
+			for _, middlewareConfig := range runConfig.MiddlewareConfigs {
+				if middlewareConfig.Type != auth.MiddlewareType {
+					continue
+				}
+				var params auth.MiddlewareParams
+				require.NoError(t, json.Unmarshal(middlewareConfig.Parameters, &params))
+				assert.Equal(t, tt.wantOIDC, params.OIDCConfig)
+				return
+			}
+			t.Fatal("authentication middleware configuration not found")
+		})
+	}
+}
+
+// TestBuildFullRunConfig_AppliesOtelFromConfig verifies that workloads created
+// via the API inherit OpenTelemetry settings from the application config (i.e.
+// from "thv config set-otel-endpoint" or an enterprise config server). Without
+// this, telemetry silently doesn't work for any workload created via
+// POST /api/v1/workloads — only CLI-created workloads would have telemetry.
+// See issue #5253.
+func TestBuildFullRunConfig_AppliesOtelFromConfig(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGroupManager := groupsmocks.NewMockManager(ctrl)
+	mockGroupManager.EXPECT().Exists(gomock.Any(), "default").Return(true, nil)
+
+	const (
+		testImage    = "test-image"
+		otelEndpoint = "http://collector:4318"
+	)
+
+	mockRetriever := func(
+		_ context.Context,
+		_ string, _ string, _ string, _ string,
+		_ *templates.RuntimeConfig,
+	) (string, regtypes.ServerMetadata, error) {
+		return testImage, &regtypes.ImageMetadata{Image: testImage}, nil
+	}
+
+	configPath := t.TempDir() + "/config.yaml"
+	provider := config.NewPathProvider(configPath)
+	require.NoError(t, provider.UpdateConfig(func(c *config.Config) error {
+		c.OTEL = config.OpenTelemetryConfig{
+			Endpoint:     otelEndpoint,
+			SamplingRate: 0.1,
+		}
+		return nil
+	}))
+
+	service := &WorkloadService{
+		groupManager:      mockGroupManager,
+		imageRetriever:    mockRetriever,
+		imagePuller:       func(_ context.Context, _ string) error { return nil },
+		configProvider:    provider,
+		imageVerification: retriever.VerifyImageWarn,
+	}
+
+	req := &createRequest{
+		Name:          "testserver",
+		updateRequest: updateRequest{Image: testImage},
+	}
+
+	runConfig, err := service.BuildFullRunConfig(context.Background(), req, 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, runConfig.TelemetryConfig,
+		"TelemetryConfig must be populated from config.OTEL when set — workloads created via the API would otherwise drop the endpoint")
+	assert.Equal(t, otelEndpoint, runConfig.TelemetryConfig.Endpoint,
+		"endpoint must be carried over from config.OTEL.Endpoint")
+	assert.True(t, runConfig.TelemetryConfig.TracingEnabled,
+		"TracingEnabled must default to true when config does not set it, matching CLI behavior")
+	assert.True(t, runConfig.TelemetryConfig.MetricsEnabled,
+		"MetricsEnabled must default to true when config does not set it, matching CLI behavior")
+}
+
+// TestBuildFullRunConfig_ThreadsAllowDockerGateway verifies that the
+// allow_docker_gateway request field reaches the resulting RunConfig, since
+// the CLI already exposes --allow-docker-gateway but the API previously
+// dropped the value on the floor.
+func TestBuildFullRunConfig_ThreadsAllowDockerGateway(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGroupManager := groupsmocks.NewMockManager(ctrl)
+	mockGroupManager.EXPECT().Exists(gomock.Any(), "default").Return(true, nil)
+
+	const testImage = "test-image"
+
+	mockRetriever := func(
+		_ context.Context,
+		_ string, _ string, _ string, _ string,
+		_ *templates.RuntimeConfig,
+	) (string, regtypes.ServerMetadata, error) {
+		return testImage, &regtypes.ImageMetadata{Image: testImage}, nil
+	}
+
+	configPath := t.TempDir() + "/config.yaml"
+	provider := config.NewPathProvider(configPath)
+
+	service := &WorkloadService{
+		groupManager:      mockGroupManager,
+		imageRetriever:    mockRetriever,
+		imagePuller:       func(_ context.Context, _ string) error { return nil },
+		configProvider:    provider,
+		imageVerification: retriever.VerifyImageWarn,
+	}
+
+	req := &createRequest{
+		Name: "testserver",
+		updateRequest: updateRequest{
+			Image:              testImage,
+			AllowDockerGateway: true,
+		},
+	}
+
+	runConfig, err := service.BuildFullRunConfig(context.Background(), req, 0, nil)
+	require.NoError(t, err)
+	assert.True(t, runConfig.AllowDockerGateway)
+}
+
+func TestBuildFullRunConfig_MaxRequestBodySize(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		maxBytes  int64
+		wantError bool
+	}{
+		{name: "zero preserves default semantics", maxBytes: 0},
+		{name: "positive value is preserved", maxBytes: 16 << 20},
+		{name: "negative value is rejected", maxBytes: -1, wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGroupManager := groupsmocks.NewMockManager(ctrl)
+			mockGroupManager.EXPECT().Exists(gomock.Any(), "default").Return(true, nil)
+
+			service := &WorkloadService{
+				groupManager:   mockGroupManager,
+				configProvider: config.NewDefaultProvider(),
+			}
+			req := &createRequest{
+				Name: "testserver",
+				updateRequest: updateRequest{
+					URL:                "https://mcp.example.com/mcp",
+					MaxRequestBodySize: tt.maxBytes,
+				},
+			}
+
+			runConfig, err := service.BuildFullRunConfig(context.Background(), req, 0, nil)
+			if tt.wantError {
+				require.Error(t, err)
+				assert.Nil(t, runConfig)
+				assert.Contains(t, err.Error(), "must be non-negative")
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.maxBytes, runConfig.MaxRequestBodySize)
+		})
+	}
+}
+
+func TestBuildFullRunConfig_ProxyReadTimeout(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		readTimeout  string
+		wantTimeout  string
+		wantErrorMsg string
+	}{
+		{name: "empty preserves default semantics"},
+		{name: "positive value is preserved", readTimeout: "45s", wantTimeout: "45s"},
+		{name: "duration is normalized", readTimeout: "1m", wantTimeout: "1m0s"},
+		{name: "invalid duration is rejected", readTimeout: "not-a-duration", wantErrorMsg: "proxy_read_timeout"},
+		{name: "negative duration is rejected", readTimeout: "-1s", wantErrorMsg: "must be non-negative"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGroupManager := groupsmocks.NewMockManager(ctrl)
+			mockGroupManager.EXPECT().Exists(gomock.Any(), "default").Return(true, nil)
+
+			service := &WorkloadService{
+				groupManager:   mockGroupManager,
+				configProvider: config.NewDefaultProvider(),
+			}
+			req := &createRequest{
+				Name: "testserver",
+				updateRequest: updateRequest{
+					URL:              "https://mcp.example.com/mcp",
+					ProxyReadTimeout: tt.readTimeout,
+				},
+			}
+
+			runConfig, err := service.BuildFullRunConfig(context.Background(), req, 0, nil)
+			if tt.wantErrorMsg != "" {
+				require.Error(t, err)
+				assert.Nil(t, runConfig)
+				assert.Contains(t, err.Error(), tt.wantErrorMsg)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantTimeout, runConfig.ProxyReadTimeout)
+		})
+	}
+}
+
+// TestBuildFullRunConfig_NoOtelConfigLeavesTelemetryNil verifies that when no
+// OpenTelemetry config is set, the RunConfig's TelemetryConfig remains nil —
+// the API path does not invent an endpoint.
+func TestBuildFullRunConfig_NoOtelConfigLeavesTelemetryNil(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGroupManager := groupsmocks.NewMockManager(ctrl)
+	mockGroupManager.EXPECT().Exists(gomock.Any(), "default").Return(true, nil)
+
+	const testImage = "test-image"
+
+	mockRetriever := func(
+		_ context.Context,
+		_ string, _ string, _ string, _ string,
+		_ *templates.RuntimeConfig,
+	) (string, regtypes.ServerMetadata, error) {
+		return testImage, &regtypes.ImageMetadata{Image: testImage}, nil
+	}
+
+	service := &WorkloadService{
+		groupManager:      mockGroupManager,
+		imageRetriever:    mockRetriever,
+		imagePuller:       func(_ context.Context, _ string) error { return nil },
+		configProvider:    config.NewPathProvider(t.TempDir() + "/empty.yaml"),
+		imageVerification: retriever.VerifyImageWarn,
+	}
+
+	req := &createRequest{
+		Name:          "testserver",
+		updateRequest: updateRequest{Image: testImage},
+	}
+
+	runConfig, err := service.BuildFullRunConfig(context.Background(), req, 0, nil)
+	require.NoError(t, err)
+	assert.Nil(t, runConfig.TelemetryConfig,
+		"TelemetryConfig must remain nil when config.OTEL has no endpoint or prometheus path")
+}
+
+// writeFactorySentinelConfig writes a YAML config file with DisableUsageMetrics: true
+// as a sentinel value and returns its path.
+func writeFactorySentinelConfig(t *testing.T, dir string) string {
+	t.Helper()
+	configPath := dir + "/config.yaml"
+	require.NoError(t, os.WriteFile(configPath, []byte("disable_usage_metrics: true\n"), 0600))
+	return configPath
+}
+
+// TestNewWorkloadService_RespectsRegisteredFactory verifies that NewWorkloadService
+// uses config.NewProvider() (which checks the registered ProviderFactory) rather than
+// config.NewDefaultProvider() (which always uses the default XDG path and bypasses factories).
+//
+//nolint:paralleltest // Mutates global state: config.registeredFactory
+func TestNewWorkloadService_RespectsRegisteredFactory(t *testing.T) {
+	configPath := writeFactorySentinelConfig(t, t.TempDir())
+
+	config.RegisterProviderFactory(func() config.Provider {
+		return config.NewPathProvider(configPath)
+	})
+	t.Cleanup(func() { config.RegisterProviderFactory(nil) })
+
+	service := NewWorkloadService(nil, nil, nil, false)
+	require.NotNil(t, service)
+
+	cfg := service.configProvider.GetConfig()
+	assert.True(t, cfg.DisableUsageMetrics,
+		"configProvider must use the factory-backed provider — DisableUsageMetrics is the sentinel set by the factory config")
+}
+
+func TestRuntimeConfigFromRequest(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil request", func(t *testing.T) {
+		t.Parallel()
+		assert.Nil(t, runtimeConfigFromRequest(nil))
+	})
+
+	t.Run("nil runtime config", func(t *testing.T) {
+		t.Parallel()
+		req := &createRequest{}
+		assert.Nil(t, runtimeConfigFromRequest(req))
+	})
+
+	t.Run("empty runtime config returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		req := &createRequest{
+			updateRequest: updateRequest{
+				RuntimeConfig: &templates.RuntimeConfig{
+					BuilderImage:       "   ",
+					AdditionalPackages: []string{"", "   "},
+				},
+			},
+		}
+
+		assert.Nil(t, runtimeConfigFromRequest(req))
+	})
+
+	t.Run("trims builder image", func(t *testing.T) {
+		t.Parallel()
+
+		req := &createRequest{
+			updateRequest: updateRequest{
+				RuntimeConfig: &templates.RuntimeConfig{
+					BuilderImage: "  golang:1.24-alpine  ",
+				},
+			},
+		}
+
+		result := runtimeConfigFromRequest(req)
+		require.NotNil(t, result)
+		assert.Equal(t, "golang:1.24-alpine", result.BuilderImage)
+	})
+
+	t.Run("trims and filters additional packages", func(t *testing.T) {
+		t.Parallel()
+
+		req := &createRequest{
+			updateRequest: updateRequest{
+				RuntimeConfig: &templates.RuntimeConfig{
+					AdditionalPackages: []string{" git ", "", "  ", "curl"},
+				},
+			},
+		}
+
+		result := runtimeConfigFromRequest(req)
+		require.NotNil(t, result)
+		assert.Equal(t, []string{"git", "curl"}, result.AdditionalPackages)
+	})
+
+	t.Run("copies runtime config", func(t *testing.T) {
+		t.Parallel()
+
+		req := &createRequest{
+			updateRequest: updateRequest{
+				RuntimeConfig: &templates.RuntimeConfig{
+					BuilderImage:       "golang:1.24-alpine",
+					AdditionalPackages: []string{"git"},
+				},
+			},
+		}
+
+		result := runtimeConfigFromRequest(req)
+		require.NotNil(t, result)
+		assert.Equal(t, "golang:1.24-alpine", result.BuilderImage)
+		assert.Equal(t, []string{"git"}, result.AdditionalPackages)
+
+		// Verify a copy is made for slice fields.
+		req.RuntimeConfig.AdditionalPackages[0] = "curl"
+		assert.Equal(t, []string{"git"}, result.AdditionalPackages)
+	})
+
+	t.Run("trims and filters build_with, carries runtime_env", func(t *testing.T) {
+		t.Parallel()
+
+		req := &createRequest{
+			updateRequest: updateRequest{
+				RuntimeConfig: &templates.RuntimeConfig{
+					BuildWith:  []string{" mcp<2 ", "", "  "},
+					RuntimeEnv: map[string]string{"NODE_ENV": "production"},
+				},
+			},
+		}
+
+		result := runtimeConfigFromRequest(req)
+		require.NotNil(t, result)
+		assert.Equal(t, []string{"mcp<2"}, result.BuildWith)
+		assert.Equal(t, map[string]string{"NODE_ENV": "production"}, result.RuntimeEnv)
+	})
+}
+
+func TestRuntimeConfigForImageBuild(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil override returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := runtimeConfigForImageBuild(
+			&createRequest{updateRequest: updateRequest{Image: "go://github.com/example/server"}},
+			nil,
+			nil,
+		)
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("rejects non protocol image", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := runtimeConfigForImageBuild(
+			&createRequest{updateRequest: updateRequest{Image: "nginx:latest"}},
+			&templates.RuntimeConfig{BuilderImage: "golang:1.24-alpine"},
+			nil,
+		)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "runtime_config is only supported for protocol-scheme images")
+	})
+
+	t.Run("rejects remote url requests", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := runtimeConfigForImageBuild(
+			&createRequest{updateRequest: updateRequest{URL: "https://example.com"}},
+			&templates.RuntimeConfig{BuilderImage: "golang:1.24-alpine"},
+			nil,
+		)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "runtime_config is only supported for protocol-scheme images")
+	})
+
+	t.Run("rejects invalid builder image", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := runtimeConfigForImageBuild(
+			&createRequest{updateRequest: updateRequest{Image: "go://github.com/example/server"}},
+			&templates.RuntimeConfig{BuilderImage: "not a valid image ref"},
+			nil,
+		)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "runtime_config: invalid builder_image")
+	})
+
+	t.Run("rejects invalid additional package names", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := runtimeConfigForImageBuild(
+			&createRequest{updateRequest: updateRequest{Image: "go://github.com/example/server"}},
+			&templates.RuntimeConfig{AdditionalPackages: []string{"curl;rm -rf /"}},
+			nil,
+		)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "runtime_config: invalid package name")
+	})
+
+	t.Run("rejects option like additional package names", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := runtimeConfigForImageBuild(
+			&createRequest{updateRequest: updateRequest{Image: "go://github.com/example/server"}},
+			&templates.RuntimeConfig{AdditionalPackages: []string{"--allow-untrusted"}},
+			nil,
+		)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "runtime_config: invalid package name")
+	})
+
+	t.Run("rejects additional packages starting with . or _", func(t *testing.T) {
+		t.Parallel()
+
+		for _, pkg := range []string{".foo", "_foo"} {
+			result, err := runtimeConfigForImageBuild(
+				&createRequest{updateRequest: updateRequest{Image: "go://github.com/example/server"}},
+				&templates.RuntimeConfig{AdditionalPackages: []string{pkg}},
+				nil,
+			)
+			require.Error(t, err, "package %q should be rejected", pkg)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), "runtime_config: invalid package name")
+		}
+	})
+
+	t.Run("merges override with base defaults for protocol images", func(t *testing.T) {
+		t.Parallel()
+
+		override := &templates.RuntimeConfig{
+			BuilderImage:       "golang:1.24-alpine",
+			AdditionalPackages: []string{"curl"},
+		}
+		result, err := runtimeConfigForImageBuild(
+			&createRequest{updateRequest: updateRequest{Image: "go://github.com/example/server"}},
+			override,
+			nil,
+		)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "golang:1.24-alpine", result.BuilderImage)
+
+		base := getBaseRuntimeConfig(templates.TransportTypeGO)
+		expectedPackages := append([]string{}, base.AdditionalPackages...)
+		expectedPackages = append(expectedPackages, "curl")
+		assert.Equal(t, expectedPackages, result.AdditionalPackages)
+
+		override.AdditionalPackages[0] = "git"
+		assert.Equal(t, expectedPackages, result.AdditionalPackages)
+	})
+
+	t.Run("build_with and runtime_env survive the merge for uvx", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := runtimeConfigForImageBuild(
+			&createRequest{updateRequest: updateRequest{Image: "uvx://arxiv-mcp-server"}},
+			&templates.RuntimeConfig{
+				BuildWith:  []string{"mcp<2"},
+				RuntimeEnv: map[string]string{"NODE_ENV": "production"},
+			},
+			nil,
+		)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, []string{"mcp<2"}, result.BuildWith)
+		assert.Equal(t, map[string]string{"NODE_ENV": "production"}, result.RuntimeEnv)
+	})
+}
+
+// testDenyPolicyGate is a test helper that always blocks server creation with
+// the configured error.
+type testDenyPolicyGate struct {
+	runner.NoopPolicyGate
+	err error
+}
+
+func (g *testDenyPolicyGate) CheckCreateServer(_ context.Context, _ *runner.RunConfig) error {
+	return g.err
+}
+
+// TestCreateWorkloadFromRequest_PolicyGateDenied verifies that
+// CreateWorkloadFromRequest returns an error immediately when the policy gate
+// blocks the operation, and that RunWorkloadDetached is never called.
+//
+//nolint:paralleltest // Mutates the global policy gate.
+func TestCreateWorkloadFromRequest_PolicyGateDenied(t *testing.T) {
+	sentinel := errors.New("blocked by test policy gate")
+
+	// Save and restore the global gate around the test.
+	original := runner.ActivePolicyGate()
+	runner.RegisterPolicyGate(&testDenyPolicyGate{err: sentinel})
+	t.Cleanup(func() { runner.RegisterPolicyGate(original) })
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	// The group manager must confirm the "default" group exists so that
+	// BuildFullRunConfig can reach the policy check without failing earlier.
+	mockGroupManager := groupsmocks.NewMockManager(ctrl)
+	mockGroupManager.EXPECT().
+		Exists(gomock.Any(), "default").
+		Return(true, nil)
+
+	// No RunWorkloadDetached expectation: any unexpected call will cause gomock
+	// to fail the test, verifying that the policy gate stops execution early.
+	mockWorkloadManager := workloadsmocks.NewMockManager(ctrl)
+
+	service := &WorkloadService{
+		groupManager:    mockGroupManager,
+		workloadManager: mockWorkloadManager,
+		configProvider:  config.NewDefaultProvider(),
+		// imageRetriever and imagePuller are nil because req.URL != "" means the
+		// local image pull path is skipped entirely.
+	}
+
+	req := &createRequest{
+		Name: "testserver",
+		updateRequest: updateRequest{
+			URL: "https://mcp.example.com/mcp",
+		},
+	}
+
+	_, err := service.CreateWorkloadFromRequest(context.Background(), req)
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, sentinel)
+}
+
+// testCapturePolicyGate snapshots the RuntimeConfig it was asked to check,
+// so a test can assert what the policy gate actually evaluated at call time
+// - not just what the same object looks like later. Storing the
+// *runner.RunConfig pointer instead would be wrong: a caller that mutates it
+// after this call returns (e.g. a restore-after-the-fact) would make a later
+// inspection of the pointer lie about what the gate actually saw.
+type testCapturePolicyGate struct {
+	runner.NoopPolicyGate
+	called   bool
+	snapshot *templates.RuntimeConfig
+}
+
+func (g *testCapturePolicyGate) CheckCreateServer(_ context.Context, rc *runner.RunConfig) error {
+	g.called = true
+	g.snapshot = rc.RuntimeConfig.Clone()
+	return nil
+}
+
+// TestBuildFullRunConfig_EchoedRuntimeConfigVisibleToPolicyGate guards the
+// echo fix's synchronous policy gate: EnforcePolicyAndPullImage runs inside
+// BuildFullRunConfig, so for an unchanged runtime_config echo on a
+// non-protocol image, the gate must still see the real runtime_config, not
+// nil. A clear-then-restore-after-BuildFullRunConfig-returns approach (an
+// earlier version of this fix) would let a policy restricting builder
+// images, packages, build constraints or runtime env silently approve the
+// edit, since the gate runs before the restore. Threading persisted straight
+// into BuildFullRunConfig, so req.RuntimeConfig is never touched, closes
+// that gap: the retriever/build input is suppressed for the echo, but
+// runConfig.RuntimeConfig - what the policy gate and the caller both see -
+// is always populated from the request.
+//
+//nolint:paralleltest // Mutates the global policy gate.
+func TestBuildFullRunConfig_EchoedRuntimeConfigVisibleToPolicyGate(t *testing.T) {
+	const testImage = "toolhivelocal/uvx-arxiv-mcp-server:20260101000000"
+
+	gate := &testCapturePolicyGate{}
+	original := runner.ActivePolicyGate()
+	runner.RegisterPolicyGate(gate)
+	t.Cleanup(func() { runner.RegisterPolicyGate(original) })
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGroupManager := groupsmocks.NewMockManager(ctrl)
+	mockGroupManager.EXPECT().Exists(gomock.Any(), "default").Return(true, nil)
+
+	echoedConfig := &templates.RuntimeConfig{
+		BuilderImage:       "python:3.14-slim",
+		AdditionalPackages: []string{"ca-certificates"},
+		BuildWith:          []string{"mcp<2"},
+		RuntimeEnv:         map[string]string{"NODE_ENV": "production"},
+	}
+	persisted := &runner.RunConfig{Image: testImage, RuntimeConfig: echoedConfig}
+
+	mockRetriever := func(
+		_ context.Context, _ string, _ string, _ string, _ string, rc *templates.RuntimeConfig,
+	) (string, regtypes.ServerMetadata, error) {
+		// The retriever/build input is suppressed for an echo - nothing to build.
+		assert.Nil(t, rc)
+		return testImage, &regtypes.ImageMetadata{Image: testImage}, nil
+	}
+
+	service := &WorkloadService{
+		groupManager:      mockGroupManager,
+		imageRetriever:    mockRetriever,
+		imagePuller:       func(_ context.Context, _ string) error { return nil },
+		configProvider:    config.NewDefaultProvider(),
+		imageVerification: retriever.VerifyImageWarn,
+	}
+
+	req := &createRequest{
+		updateRequest: updateRequest{
+			Image:         testImage,
+			RuntimeConfig: echoedConfig,
+		},
+	}
+
+	runConfig, err := service.BuildFullRunConfig(context.Background(), req, 0, persisted)
+	require.NoError(t, err)
+	require.NotNil(t, runConfig.RuntimeConfig,
+		"echoed runtime_config must survive on the built RunConfig, not just be accepted")
+	assert.Equal(t, echoedConfig, runConfig.RuntimeConfig)
+
+	require.True(t, gate.called, "policy gate must have been invoked")
+	require.NotNil(t, gate.snapshot,
+		"policy gate must evaluate the real runtime_config, not nil, AT CALL TIME - a policy "+
+			"restricting builder images, packages, build constraints or runtime env must not be "+
+			"bypassable by echoing an unchanged config back")
+	assert.Equal(t, echoedConfig, gate.snapshot)
+}
+
+// TestUpdateWorkloadFromRequest_PreservesRedactedOIDCSecret verifies that an
+// OIDC-configured request reconstructed from a redacted API response retains
+// the persisted write-only client secret when its credential binding is
+// unchanged, without mutating the request.
+//
+//nolint:paralleltest // SaveState/LoadState use process-wide XDG state settings; keep sequential.
+func TestUpdateWorkloadFromRequest_PreservesRedactedOIDCSecret(t *testing.T) {
+	t.Cleanup(xdg.Reload)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	xdg.Reload()
+
+	const (
+		workloadName = "test-workload"
+		testImage    = "test-image"
+		clientSecret = "test-secret"
+	)
+	persisted := runner.NewRunConfig()
+	persisted.Name = workloadName
+	persisted.BaseName = workloadName
+	persisted.ContainerName = workloadName
+	persisted.Image = testImage
+	persisted.OIDCConfig = &auth.TokenValidatorConfig{
+		Issuer:           "https://issuer.example.com",
+		IntrospectionURL: "https://issuer.example.com/introspect",
+		ClientID:         "test-client",
+		ClientSecret:     clientSecret,
+	}
+	require.NoError(t, persisted.SaveState(context.Background()))
+
+	request := runConfigToCreateRequest(persisted)
+	require.NotNil(t, request)
+	assert.Empty(t, request.OIDC.ClientSecret)
+
+	ctrl := gomock.NewController(t)
+	mockGroupManager := groupsmocks.NewMockManager(ctrl)
+	mockGroupManager.EXPECT().Exists(gomock.Any(), "default").Return(true, nil)
+	mockWorkloadManager := workloadsmocks.NewMockManager(ctrl)
+	mockWorkloadManager.EXPECT().UpdateWorkload(gomock.Any(), workloadName, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, runConfig *runner.RunConfig) (workloads.CompletionFunc, error) {
+			require.NotNil(t, runConfig.OIDCConfig)
+			assert.Equal(t, clientSecret, runConfig.OIDCConfig.ClientSecret)
+			for _, middlewareConfig := range runConfig.MiddlewareConfigs {
+				if middlewareConfig.Type != auth.MiddlewareType {
+					continue
+				}
+				var params auth.MiddlewareParams
+				require.NoError(t, json.Unmarshal(middlewareConfig.Parameters, &params))
+				require.NotNil(t, params.OIDCConfig)
+				assert.Equal(t, clientSecret, params.OIDCConfig.ClientSecret)
+				return nil, nil
+			}
+			t.Fatal("authentication middleware configuration not found")
+			return nil, nil
+		})
+
+	service := &WorkloadService{
+		workloadManager: mockWorkloadManager,
+		groupManager:    mockGroupManager,
+		imageRetriever: func(
+			_ context.Context, _ string, _ string, _ string, _ string, _ *templates.RuntimeConfig,
+		) (string, regtypes.ServerMetadata, error) {
+			return testImage, &regtypes.ImageMetadata{Image: testImage}, nil
+		},
+		imagePuller:       func(_ context.Context, _ string) error { return nil },
+		configProvider:    config.NewDefaultProvider(),
+		imageVerification: retriever.VerifyImageWarn,
+	}
+
+	_, err := service.UpdateWorkloadFromRequest(context.Background(), workloadName, request, 0)
+	require.NoError(t, err)
+	assert.Empty(t, request.OIDC.ClientSecret, "UpdateWorkloadFromRequest must not mutate the caller request")
+}
+
+func TestBuildFullRunConfig_DoesNotPreserveOIDCSecretForChangedCredentialBinding(t *testing.T) {
+	t.Parallel()
+
+	const (
+		testImage    = "test-image"
+		clientSecret = "test-secret"
+	)
+	persisted := runner.NewRunConfig()
+	persisted.OIDCConfig = &auth.TokenValidatorConfig{
+		Issuer:           "https://issuer.example.com",
+		IntrospectionURL: "https://issuer.example.com/introspect",
+		ClientID:         "test-client",
+		ClientSecret:     clientSecret,
+	}
+
+	tests := []struct {
+		name string
+		oidc oidcOptions
+	}{
+		{
+			name: "changed issuer",
+			oidc: oidcOptions{
+				Issuer:           "https://other-issuer.example.com",
+				IntrospectionURL: persisted.OIDCConfig.IntrospectionURL,
+				ClientID:         persisted.OIDCConfig.ClientID,
+			},
+		},
+		{
+			name: "changed introspection endpoint",
+			oidc: oidcOptions{
+				Issuer:           persisted.OIDCConfig.Issuer,
+				IntrospectionURL: "https://issuer.example.com/other-introspect",
+				ClientID:         persisted.OIDCConfig.ClientID,
+			},
+		},
+		{
+			name: "changed client ID",
+			oidc: oidcOptions{
+				Issuer:           persisted.OIDCConfig.Issuer,
+				IntrospectionURL: persisted.OIDCConfig.IntrospectionURL,
+				ClientID:         "other-client",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctrl := gomock.NewController(t)
+			mockGroupManager := groupsmocks.NewMockManager(ctrl)
+			mockGroupManager.EXPECT().Exists(gomock.Any(), "default").Return(true, nil)
+			service := &WorkloadService{
+				groupManager: mockGroupManager,
+				imageRetriever: func(
+					_ context.Context, _ string, _ string, _ string, _ string, _ *templates.RuntimeConfig,
+				) (string, regtypes.ServerMetadata, error) {
+					return testImage, &regtypes.ImageMetadata{Image: testImage}, nil
+				},
+				imagePuller:       func(_ context.Context, _ string) error { return nil },
+				configProvider:    config.NewDefaultProvider(),
+				imageVerification: retriever.VerifyImageWarn,
+			}
+			request := &createRequest{updateRequest: updateRequest{Image: testImage, OIDC: tt.oidc}}
+
+			runConfig, err := service.BuildFullRunConfig(context.Background(), request, 0, persisted)
+			require.NoError(t, err)
+			require.NotNil(t, runConfig.OIDCConfig)
+			assert.Empty(t, runConfig.OIDCConfig.ClientSecret)
+			assert.Empty(t, request.OIDC.ClientSecret, "BuildFullRunConfig must not mutate the caller request")
+		})
+	}
+}
+
+// TestUpdateWorkloadFromRequest_CorruptStateSurfacesError guards the
+// not-found-vs-failure distinction in UpdateWorkloadFromRequest's echo check:
+// a corrupt or unreadable state file must surface as an error, not be
+// silently treated the same as "no persisted state" - which would let the
+// protocol-scheme guard produce a misleading 400 that hides the real cause.
+//
+//nolint:paralleltest // Uses process-wide XDG state settings; keep sequential.
+func TestUpdateWorkloadFromRequest_CorruptStateSurfacesError(t *testing.T) {
+	t.Cleanup(xdg.Reload)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	xdg.Reload()
+
+	const workloadName = "test-workload"
+	const testImage = "toolhivelocal/uvx-arxiv-mcp-server:20260101000000"
+
+	// Write a corrupt state file directly, bypassing SaveState, so LoadState
+	// fails with something other than "not found".
+	dir := filepath.Join(xdg.StateHome, state.DefaultAppName, state.RunConfigsDir)
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, workloadName+state.FileExtension), []byte("{not valid json"), 0o600))
+
+	service := &WorkloadService{configProvider: config.NewDefaultProvider()}
+	req := &createRequest{
+		updateRequest: updateRequest{
+			Image:         testImage,
+			RuntimeConfig: &templates.RuntimeConfig{BuilderImage: "python:3.14-slim"},
+		},
+	}
+
+	_, err := service.UpdateWorkloadFromRequest(context.Background(), workloadName, req, 0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to load persisted state for workload")
+	assert.NotContains(t, err.Error(), "runtime_config is only supported for protocol-scheme images",
+		"a corrupt state file must not be mistaken for 'no persisted state' and fall through "+
+			"to the unrelated protocol-scheme rejection")
+}
+
+func TestApplyImageDefaults(t *testing.T) {
+	t.Parallel()
+
+	permProfile := &permissions.Profile{}
+
+	baseMetadata := func() *regtypes.ImageMetadata {
+		return &regtypes.ImageMetadata{
+			Image:       "ghcr.io/stacklok/fetch:latest",
+			TargetPort:  8080,
+			Args:        []string{"--listen", "0.0.0.0"},
+			Permissions: permProfile,
+			EnvVars: []*regtypes.EnvVar{
+				{Name: "LOG_LEVEL", Default: "info"},
+				{Name: "REGION", Default: "us-east-1"},
+				{Name: "API_KEY"}, // no default — should not be inserted
+			},
+		}
+	}
+
+	tests := []struct {
+		name        string
+		req         *createRequest
+		wantImage   string
+		wantTarget  int
+		wantArgs    []string
+		wantPermSet bool
+		wantEnvVars map[string]string
+	}{
+		{
+			name:        "empty request fills all defaults",
+			req:         &createRequest{},
+			wantImage:   "ghcr.io/stacklok/fetch:latest",
+			wantTarget:  8080,
+			wantArgs:    []string{"--listen", "0.0.0.0"},
+			wantPermSet: true,
+			wantEnvVars: map[string]string{
+				"LOG_LEVEL": "info",
+				"REGION":    "us-east-1",
+			},
+		},
+		{
+			name: "user image takes precedence over registry image",
+			req: &createRequest{
+				updateRequest: updateRequest{Image: "my-registry/custom:v1"},
+			},
+			wantImage:   "my-registry/custom:v1",
+			wantTarget:  8080,
+			wantArgs:    []string{"--listen", "0.0.0.0"},
+			wantPermSet: true,
+			wantEnvVars: map[string]string{
+				"LOG_LEVEL": "info",
+				"REGION":    "us-east-1",
+			},
+		},
+		{
+			name: "user target port takes precedence",
+			req: &createRequest{
+				updateRequest: updateRequest{TargetPort: 9090},
+			},
+			wantImage:   "ghcr.io/stacklok/fetch:latest",
+			wantTarget:  9090,
+			wantArgs:    []string{"--listen", "0.0.0.0"},
+			wantPermSet: true,
+			wantEnvVars: map[string]string{
+				"LOG_LEVEL": "info",
+				"REGION":    "us-east-1",
+			},
+		},
+		{
+			name: "user cmd arguments take precedence",
+			req: &createRequest{
+				updateRequest: updateRequest{CmdArguments: []string{"--debug"}},
+			},
+			wantImage:   "ghcr.io/stacklok/fetch:latest",
+			wantTarget:  8080,
+			wantArgs:    []string{"--debug"},
+			wantPermSet: true,
+			wantEnvVars: map[string]string{
+				"LOG_LEVEL": "info",
+				"REGION":    "us-east-1",
+			},
+		},
+		{
+			name: "user env var override preserved, other defaults filled",
+			req: &createRequest{
+				updateRequest: updateRequest{
+					EnvVars: map[string]string{"LOG_LEVEL": "debug"},
+				},
+			},
+			wantImage:   "ghcr.io/stacklok/fetch:latest",
+			wantTarget:  8080,
+			wantArgs:    []string{"--listen", "0.0.0.0"},
+			wantPermSet: true,
+			wantEnvVars: map[string]string{
+				"LOG_LEVEL": "debug",
+				"REGION":    "us-east-1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			applyImageDefaults(tt.req, baseMetadata())
+
+			assert.Equal(t, tt.wantImage, tt.req.Image)
+			assert.Equal(t, tt.wantTarget, tt.req.TargetPort)
+			assert.Equal(t, tt.wantArgs, tt.req.CmdArguments)
+			if tt.wantPermSet {
+				assert.NotNil(t, tt.req.PermissionProfile)
+			}
+			assert.Equal(t, tt.wantEnvVars, tt.req.EnvVars)
+		})
+	}
+}
+
+func TestApplyImageDefaults_UserPermissionProfilePreserved(t *testing.T) {
+	t.Parallel()
+
+	userProfile := &permissions.Profile{Name: "user-provided"}
+	registryProfile := &permissions.Profile{Name: "registry-default"}
+
+	req := &createRequest{
+		updateRequest: updateRequest{PermissionProfile: userProfile},
+	}
+	md := &regtypes.ImageMetadata{Permissions: registryProfile}
+
+	applyImageDefaults(req, md)
+
+	assert.Same(t, userProfile, req.PermissionProfile,
+		"user-provided permission profile must not be replaced by the registry default")
+}
+
+func TestApplyRemoteDefaults(t *testing.T) {
+	t.Parallel()
+
+	baseMetadata := func() *regtypes.RemoteServerMetadata {
+		return &regtypes.RemoteServerMetadata{
+			URL: "https://mcp.example.com/mcp",
+			Headers: []*regtypes.Header{
+				{Name: "X-API-Key"},
+			},
+		}
+	}
+
+	tests := []struct {
+		name        string
+		req         *createRequest
+		wantURL     string
+		wantHeaders int
+	}{
+		{
+			name:        "empty request fills URL and Headers",
+			req:         &createRequest{},
+			wantURL:     "https://mcp.example.com/mcp",
+			wantHeaders: 1,
+		},
+		{
+			name: "user URL takes precedence",
+			req: &createRequest{
+				updateRequest: updateRequest{URL: "https://override.example.com/mcp"},
+			},
+			wantURL:     "https://override.example.com/mcp",
+			wantHeaders: 1,
+		},
+		{
+			name: "user headers take precedence over registry headers",
+			req: &createRequest{
+				updateRequest: updateRequest{
+					Headers: []*regtypes.Header{{Name: "Authorization"}},
+				},
+			},
+			wantURL:     "https://mcp.example.com/mcp",
+			wantHeaders: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			applyRemoteDefaults(tt.req, baseMetadata())
+
+			assert.Equal(t, tt.wantURL, tt.req.URL)
+			assert.Len(t, tt.req.Headers, tt.wantHeaders)
+		})
+	}
+}
+
+func TestBuildRemoteAuthConfigFromMetadata(t *testing.T) {
+	t.Parallel()
+
+	baseMetadata := func() *regtypes.RemoteServerMetadata {
+		return &regtypes.RemoteServerMetadata{
+			URL:       "https://mcp.example.com/mcp",
+			ProxyPort: 4444,
+			Headers:   []*regtypes.Header{{Name: "X-API-Key"}},
+			EnvVars:   []*regtypes.EnvVar{{Name: "REGION", Default: "us-east-1"}},
+			OAuthConfig: &regtypes.OAuthConfig{
+				Issuer:       "https://issuer.example.com",
+				AuthorizeURL: "https://issuer.example.com/authorize",
+				TokenURL:     "https://issuer.example.com/token",
+				Scopes:       []string{"openid", "profile"},
+				UsePKCE:      true,
+				CallbackPort: 1234,
+				OAuthParams:  map[string]string{"prompt": "consent"},
+				Resource:     "https://resource.example.com",
+			},
+		}
+	}
+
+	t.Run("returns nil when metadata has no OAuthConfig", func(t *testing.T) {
+		t.Parallel()
+
+		md := baseMetadata()
+		md.OAuthConfig = nil
+
+		cfg := buildRemoteAuthConfigFromMetadata(&createRequest{}, md)
+
+		assert.Nil(t, cfg)
+	})
+
+	t.Run("populates all OAuth fields from metadata", func(t *testing.T) {
+		t.Parallel()
+
+		req := &createRequest{
+			updateRequest: updateRequest{
+				OAuthConfig: remoteOAuthConfig{ClientID: "user-client-id"},
+			},
+		}
+
+		cfg := buildRemoteAuthConfigFromMetadata(req, baseMetadata())
+
+		require.NotNil(t, cfg)
+		assert.Equal(t, "user-client-id", cfg.ClientID)
+		assert.Equal(t, []string{"openid", "profile"}, cfg.Scopes)
+		assert.Equal(t, 1234, cfg.CallbackPort)
+		assert.Equal(t, "https://issuer.example.com", cfg.Issuer)
+		assert.Equal(t, "https://issuer.example.com/authorize", cfg.AuthorizeURL)
+		assert.Equal(t, "https://issuer.example.com/token", cfg.TokenURL)
+		assert.True(t, cfg.UsePKCE)
+		assert.Equal(t, map[string]string{"prompt": "consent"}, cfg.OAuthParams)
+		assert.Len(t, cfg.Headers, 1)
+		assert.Len(t, cfg.EnvVars, 1)
+	})
+
+	t.Run("resource precedence: user value wins over metadata and URL", func(t *testing.T) {
+		t.Parallel()
+
+		req := &createRequest{
+			updateRequest: updateRequest{
+				OAuthConfig: remoteOAuthConfig{Resource: "https://user.example.com"},
+			},
+		}
+
+		cfg := buildRemoteAuthConfigFromMetadata(req, baseMetadata())
+
+		require.NotNil(t, cfg)
+		assert.Equal(t, "https://user.example.com", cfg.Resource)
+	})
+
+	t.Run("resource precedence: metadata wins over URL when user unset", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := buildRemoteAuthConfigFromMetadata(&createRequest{}, baseMetadata())
+
+		require.NotNil(t, cfg)
+		assert.Equal(t, "https://resource.example.com", cfg.Resource)
+	})
+
+	t.Run("resource empty when both user and metadata unset", func(t *testing.T) {
+		t.Parallel()
+
+		md := baseMetadata()
+		md.OAuthConfig.Resource = ""
+
+		cfg := buildRemoteAuthConfigFromMetadata(&createRequest{}, md)
+
+		require.NotNil(t, cfg)
+		assert.Empty(t, cfg.Resource, "resource should not be auto-derived from URL")
+	})
+
+	t.Run("user ClientSecret is applied in CLI string format", func(t *testing.T) {
+		t.Parallel()
+
+		secret := &secrets.SecretParameter{Name: "oauth-secret", Target: "CLIENT_SECRET"}
+		req := &createRequest{
+			updateRequest: updateRequest{
+				OAuthConfig: remoteOAuthConfig{ClientSecret: secret},
+			},
+		}
+
+		cfg := buildRemoteAuthConfigFromMetadata(req, baseMetadata())
+
+		require.NotNil(t, cfg)
+		assert.Equal(t, "oauth-secret,target=CLIENT_SECRET", cfg.ClientSecret)
+	})
+
+	t.Run("user BearerToken is applied in CLI string format", func(t *testing.T) {
+		t.Parallel()
+
+		token := &secrets.SecretParameter{Name: "bearer", Target: "TOKEN"}
+		req := &createRequest{
+			updateRequest: updateRequest{
+				OAuthConfig: remoteOAuthConfig{BearerToken: token},
+			},
+		}
+
+		cfg := buildRemoteAuthConfigFromMetadata(req, baseMetadata())
+
+		require.NotNil(t, cfg)
+		assert.Equal(t, "bearer,target=TOKEN", cfg.BearerToken)
+	})
+}
+
+func TestApplyRegistryDefaults(t *testing.T) {
+	t.Parallel()
+
+	t.Run("fills transport and name from metadata", func(t *testing.T) {
+		t.Parallel()
+
+		req := &createRequest{}
+		md := &regtypes.ImageMetadata{
+			BaseServerMetadata: regtypes.BaseServerMetadata{
+				Name:      "io.github.stacklok/fetch",
+				Transport: "stdio",
+			},
+			Image: "ghcr.io/stacklok/fetch:latest",
+		}
+
+		applyRegistryDefaults(req, md)
+
+		assert.Equal(t, "stdio", req.Transport)
+		assert.Equal(t, "io.github.stacklok/fetch", req.Name)
+		assert.Equal(t, "ghcr.io/stacklok/fetch:latest", req.Image)
+	})
+
+	t.Run("user transport and name take precedence", func(t *testing.T) {
+		t.Parallel()
+
+		req := &createRequest{
+			Name: "my-workload",
+			updateRequest: updateRequest{
+				Transport: "streamable-http",
+			},
+		}
+		md := &regtypes.ImageMetadata{
+			BaseServerMetadata: regtypes.BaseServerMetadata{
+				Name:      "io.github.stacklok/fetch",
+				Transport: "stdio",
+			},
+		}
+
+		applyRegistryDefaults(req, md)
+
+		assert.Equal(t, "streamable-http", req.Transport)
+		assert.Equal(t, "my-workload", req.Name)
+	})
+
+	t.Run("dispatches to remote defaults for RemoteServerMetadata", func(t *testing.T) {
+		t.Parallel()
+
+		req := &createRequest{}
+		md := &regtypes.RemoteServerMetadata{
+			BaseServerMetadata: regtypes.BaseServerMetadata{
+				Name:      "remote-server",
+				Transport: "streamable-http",
+			},
+			URL: "https://remote.example.com/mcp",
+		}
+
+		applyRegistryDefaults(req, md)
+
+		assert.Equal(t, "streamable-http", req.Transport)
+		assert.Equal(t, "remote-server", req.Name)
+		assert.Equal(t, "https://remote.example.com/mcp", req.URL)
+	})
+
+	t.Run("dispatches to image defaults for ImageMetadata", func(t *testing.T) {
+		t.Parallel()
+
+		req := &createRequest{}
+		md := &regtypes.ImageMetadata{
+			BaseServerMetadata: regtypes.BaseServerMetadata{
+				Transport: "stdio",
+			},
+			Image:      "ghcr.io/stacklok/fetch:latest",
+			TargetPort: 8080,
+		}
+
+		applyRegistryDefaults(req, md)
+
+		assert.Equal(t, "ghcr.io/stacklok/fetch:latest", req.Image)
+		assert.Equal(t, 8080, req.TargetPort)
+	})
+}
+
+func TestWorkloadService_ResolveRegistryServer_UnknownRegistry(t *testing.T) {
+	t.Parallel()
+
+	service := &WorkloadService{configProvider: config.NewDefaultProvider()}
+
+	req := &createRequest{
+		Registry: "nonexistent",
+		Server:   "some-server",
+	}
+
+	metadata, err := service.resolveRegistryServer(req)
+
+	require.Error(t, err)
+	assert.Nil(t, metadata)
+	assert.Equal(t, http.StatusBadRequest, httperr.Code(err))
+	assert.Contains(t, err.Error(), `unknown registry "nonexistent"`)
+}

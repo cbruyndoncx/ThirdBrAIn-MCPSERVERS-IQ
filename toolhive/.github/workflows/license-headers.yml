@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+name: License Headers
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check-license-headers:
+    name: Check License Headers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: 'stable'
+          cache: false
+
+      - name: Install addlicense
+        run: go install github.com/google/addlicense@latest
+
+      - name: Check license headers
+        run: |
+          # Check all Go files for SPDX license headers
+          # Using -check flag to only verify, not modify files
+          addlicense -check \
+            -f .github/license-header.txt \
+            -ignore '**/mocks/**' \
+            -ignore '**/testdata/**' \
+            -ignore 'vendor/**' \
+            -ignore '**/*.pb.go' \
+            -ignore '**/zz_generated*.go' \
+            $(find . -name '*.go' -type f)

@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/stacklok/toolhive.git
+	branch = main
+	commit = e532cf07d45fa99f3e4e63819396a3e9c9fd763f
+	parent = 4c5d858ab6bd79fa19f0d25ccab5bcc1a2beb0f4
+	method = merge
+	cmdver = 0.4.9
