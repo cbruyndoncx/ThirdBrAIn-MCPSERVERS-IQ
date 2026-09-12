@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/louiewoof2026/skool-mcp.git
+	branch = master
+	commit = a1bf7a8e1581ec8dcb9d29aef57fc83cfde7aaeb
+	parent = ceff95a10fa503b410c9ef9f549a754dc2ff72cb
+	method = merge
+	cmdver = 0.4.9
