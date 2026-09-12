@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/docker/docker-model-runner-and-mcp-with-promptfoo.git
+	branch = main
+	commit = 283c6356b55207f4f21efd0cef35e63d68efa22d
+	parent = 7bb12081a936bfd39d0009630edd9888d80eb0e6
+	method = merge
+	cmdver = 0.4.9
