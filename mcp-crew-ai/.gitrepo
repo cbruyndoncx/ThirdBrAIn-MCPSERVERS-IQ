@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/adam-paterson/mcp-crew-ai.git
+	branch = main
+	commit = 9c7068887a5d9d267483ddcb0539dac5b44d2c5b
+	parent = 25bdc215028f666a5bd03bc5ff60da4fcd2a3e86
+	method = merge
+	cmdver = 0.4.9
