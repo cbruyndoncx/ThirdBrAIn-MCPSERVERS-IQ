@@ -1,0 +1,9 @@
+name: "Perplexity guMCP Server"
+icon: "assets/icon.png"
+description: "Search the web and chat with Perplexity AI"
+documentation_path: "README.md"
+tools:
+  - name: "search"
+    description: "Search the web using Perplexity's API"
+  - name: "chat"
+    description: "Send a message to Perplexity model without forcing web search"

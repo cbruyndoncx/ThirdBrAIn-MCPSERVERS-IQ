@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/andrewtdiz/guMCP.git
+	branch = main
+	commit = d76cabaa8711eadbf33061395d71aa2f4b8f2243
+	parent = 33cf6070fe9643e024502e39d42b091b7a39c5b9
+	method = merge
+	cmdver = 0.4.9
