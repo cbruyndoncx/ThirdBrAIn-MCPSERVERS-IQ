@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/dfrysinger/ai-job-hunt-toolkit.git
+	branch = main
+	commit = 1e92349d61948d980553fe37a8d4cfbdd7e310dc
+	parent = e70959c8d74b138093d64af1ae78110597392636
+	method = merge
+	cmdver = 0.4.9

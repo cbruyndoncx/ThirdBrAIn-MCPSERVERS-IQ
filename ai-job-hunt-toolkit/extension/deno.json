@@ -1,0 +1,12 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.47.10",
+    "nodemailer": "npm:nodemailer@6",
+    "playwright": "npm:playwright",
+    "@std/dotenv": "jsr:@std/dotenv"
+  },
+  "nodeModulesDir": "auto",
+  "compilerOptions": {
+    "strict": true
+  }
+}
