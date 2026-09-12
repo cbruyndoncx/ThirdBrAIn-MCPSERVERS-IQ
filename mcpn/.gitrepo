@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/dx-zero/mcpn.git
+	branch = main
+	commit = 3aedba338596abf146c34465f46eb762009afce0
+	parent = 7abb5dc80415e4c891dc7f11f0ddb1a43964e857
+	method = merge
+	cmdver = 0.4.9
