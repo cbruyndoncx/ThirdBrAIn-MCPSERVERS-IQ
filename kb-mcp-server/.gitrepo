@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/Geeksfino/kb-mcp-server.git
+	branch = main
+	commit = e5daf0b49ee12663d2f41d12da0b6e171285b7b5
+	parent = ca2ffb6203ae19cc6b1c2d3fdbb761464ca23432
+	method = merge
+	cmdver = 0.4.9
