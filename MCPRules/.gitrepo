@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/bartwisch/MCPRules.git
+	branch = main
+	commit = d41cf14cda5db91b7cd204ad2f8c6260865374d9
+	parent = 56d6d4fb8bf8be15bf0865c00aac516eada444bc
+	method = merge
+	cmdver = 0.4.9
