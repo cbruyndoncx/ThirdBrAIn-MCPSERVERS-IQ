@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/AbhijitKumarJ/MCP-Learnings.git
+	branch = main
+	commit = 48702ed06dbc3f3391806e842c023d73e0d80be3
+	parent = 66469e9bdf900848b30df87da1b82b9df758b019
+	method = merge
+	cmdver = 0.4.9
