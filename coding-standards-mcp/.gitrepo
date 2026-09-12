@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/ggerve/coding-standards-mcp.git
+	branch = main
+	commit = c21ab2754684329eab4feb72427dc9acfe61e52f
+	parent = 86e86bf23413aa47e9db81cc4f8154982d938949
+	method = merge
+	cmdver = 0.4.9
