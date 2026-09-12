@@ -1,0 +1,65 @@
+name: Publish npm package
+
+on:
+  push:
+    paths:
+      - "server/**"
+      - ".github/workflows/server-npm-publish.yml"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: ./server
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run prepare
+
+  publish-npm:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org/
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Clean install dependencies
+        run: npm ci
+
+      - name: Check if version exists
+        id: version-check
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "Running: npm view . versions"
+          VERSIONS_OUTPUT=$(npm view . versions)
+          echo "Command output: $VERSIONS_OUTPUT"
+          
+          if echo "$VERSIONS_OUTPUT" | grep -q "'$PKG_VERSION'"; then
+            echo "Version $PKG_VERSION already exists in npm registry"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Version $PKG_VERSION does not exist in npm registry"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish to npm
+        if: steps.version-check.outputs.exists != 'true'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{secrets.NPM_PUBLISH_TOKEN}}

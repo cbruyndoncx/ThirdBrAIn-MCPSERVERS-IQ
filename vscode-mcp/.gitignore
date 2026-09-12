@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+**/dist/
+**/build/
+**/out/
+
+# VS Code
+.vscode-test/
+*.vsix
+
+# Logs
+*.log
+*-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code
+server/*.tgz
+coverage

@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/block/vscode-mcp.git
+	branch = main
+	commit = 0fe81eb8f6e8b3fdd5bb93c5b2066fc5bedccf8d
+	parent = bbdabb9afe321943c58fa867871c45935e56b264
+	method = merge
+	cmdver = 0.4.9
