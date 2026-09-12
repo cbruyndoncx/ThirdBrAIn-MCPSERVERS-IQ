@@ -1,0 +1,192 @@
+import os
+
+import gkeepapi
+import requests
+from dotenv import load_dotenv
+
+KEEP_MCP_LABEL = "keep-mcp"
+
+_keep_client = None
+
+def get_client():
+    """
+    Get or initialize the Google Keep client.
+    This ensures we only authenticate once and reuse the client.
+    
+    Returns:
+        gkeepapi.Keep: Authenticated Keep client
+    """
+    global _keep_client
+    
+    if _keep_client is not None:
+        return _keep_client
+    
+    # Load environment variables
+    load_dotenv()
+    
+    # Get credentials from environment variables
+    email = os.getenv('GOOGLE_EMAIL')
+    master_token = os.getenv('GOOGLE_MASTER_TOKEN')
+    
+    if not email or not master_token:
+        raise ValueError("Missing Google Keep credentials. Please set GOOGLE_EMAIL and GOOGLE_MASTER_TOKEN environment variables.")
+    
+    # Initialize the Keep API
+    keep = gkeepapi.Keep()
+    
+    # Authenticate
+    try:
+        keep.authenticate(email, master_token)
+    except requests.exceptions.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Google Keep API returned a non-JSON response during authentication. "
+            "This usually means the unofficial Keep API (notes/v1) is inaccessible "
+            "from this environment (HTTP 403/4xx). "
+            "Check that your GOOGLE_MASTER_TOKEN is valid and that the Keep API "
+            "is reachable from this network."
+        ) from exc
+    except gkeepapi.exception.LoginException as exc:
+        raise RuntimeError(
+            f"Google Keep login failed: {exc}. "
+            "Verify that GOOGLE_EMAIL and GOOGLE_MASTER_TOKEN are correct."
+        ) from exc
+    
+    # Store the client for reuse
+    _keep_client = keep
+    
+    return keep
+
+def serialize_label(label):
+    return {'id': label.id, 'name': label.name}
+
+
+def serialize_list_item(item):
+    return {
+        'id': item.id,
+        'text': item.text,
+        'checked': item.checked,
+        'parent_item_id': item.parent_item.id if item.parent_item else None,
+    }
+
+
+def serialize_note(note):
+    """
+    Serialize a Google Keep note into a dictionary.
+    
+    Args:
+        note: A Google Keep note object
+        
+    Returns:
+        dict: A dictionary containing the note's id, title, text, pinned status, color and labels
+    """
+    timestamps = getattr(note, 'timestamps', None)
+    created = getattr(timestamps, 'created', None)
+    updated = getattr(timestamps, 'updated', None)
+
+    payload = {
+        'id': note.id,
+        'title': note.title,
+        'text': note.text,
+        'type': note.type.value,
+        'pinned': note.pinned,
+        'archived': note.archived,
+        'trashed': note.trashed,
+        'color': note.color.value if note.color else None,
+        'created': created.isoformat() if created else None,
+        'updated': updated.isoformat() if updated else None,
+        'labels': [serialize_label(label) for label in note.labels.all()],
+        'collaborators': list(note.collaborators.all()),
+    }
+
+    if hasattr(note, 'items'):
+        payload['items'] = [serialize_list_item(item) for item in note.items]
+
+    payload['media'] = [
+        {
+            'blob_id': blob.id,
+            'type': blob.blob.type.value if blob.blob and blob.blob.type else None,
+        }
+        for blob in note.blobs
+    ]
+
+    return payload
+
+_MEDIA_EXTENSIONS = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'audio/3gpp': '.3gp',
+    'audio/amr': '.amr',
+    'audio/mpeg': '.mp3',
+}
+
+
+def media_extension(content_type):
+    """
+    Map a media response Content-Type to a file extension.
+
+    Args:
+        content_type: The Content-Type header value (may carry parameters)
+
+    Returns:
+        str: A dotted extension, '.bin' when the type is unknown or missing
+    """
+    if not content_type:
+        return '.bin'
+    return _MEDIA_EXTENSIONS.get(content_type.split(';')[0].strip().lower(), '.bin')
+
+
+def fetch_blob_bytes(keep, blob):
+    """
+    Download a media blob through the authenticated Keep session.
+
+    The links returned by getMediaLink() require Google authentication and
+    answer 403 to plain HTTP clients, so the download rides the same session
+    and credentials the server is already authenticated with.
+
+    Args:
+        keep: Authenticated gkeepapi.Keep client
+        blob: A note media blob node
+
+    Returns:
+        tuple: (bytes, content_type) of the downloaded media
+    """
+    url = keep.getMediaLink(blob)
+    media_api = keep._media_api
+    response = media_api._send(url=url, method='GET')
+    if response.status_code in (400, 401, 403):
+        # Some media endpoints reject the OAuth header; retry bare on the same session.
+        response = media_api._session.get(url)
+    response.raise_for_status()
+    return response.content, response.headers.get('Content-Type')
+
+
+def is_unsafe_mode() -> bool:
+    return os.getenv('UNSAFE_MODE', '').lower() == 'true'
+
+
+def can_modify_note(note):
+    """
+    Check if a note can be modified based on label and environment settings.
+
+    Args:
+        note: A Google Keep note object
+
+    Returns:
+        bool: True if the note can be modified, False otherwise
+    """
+    return is_unsafe_mode() or has_keep_mcp_label(note)
+
+
+def has_keep_mcp_label(note):
+    """
+    Check if a note has the keep-mcp label.
+
+    Args:
+        note: A Google Keep note object
+
+    Returns:
+        bool: True if the note has the keep-mcp label, False otherwise
+    """
+    return any(label.name == KEEP_MCP_LABEL for label in note.labels.all())

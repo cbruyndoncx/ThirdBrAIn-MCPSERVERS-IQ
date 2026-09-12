@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "keep-mcp-pipx": {
+      "command": "pipx",
+      "args": [
+        "run",
+        "--no-cache",
+        "--spec",
+        ".",
+        "mcp"
+      ],
+      "env": {
+        "GOOGLE_EMAIL": "Your Google Email",
+        "GOOGLE_MASTER_TOKEN": "Your Google Master Token - see README.md",
+        "UNSAFE_MODE": "false"
+      }
+    }
+  }
+}
