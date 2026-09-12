@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/nickloveinvesting/gamma-mcpserver.git
+	branch = main
+	commit = 1b43ccdd7c4dcc97c4ed7e13b76a833ffa8fa4fa
+	parent = 611dc3d70c1b67a46d51f6c4e5b7c8f174be35a7
+	method = merge
+	cmdver = 0.4.9
