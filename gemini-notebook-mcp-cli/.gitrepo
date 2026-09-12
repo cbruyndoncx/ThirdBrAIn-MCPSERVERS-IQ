@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/jacob-bd/gemini-notebook-mcp-cli.git
+	branch = main
+	commit = 03f7812c243f4d6ff732e2a485e6b9d35540f660
+	parent = 8c808a1a66aca94c1e34eda587a673836e247878
+	method = merge
+	cmdver = 0.4.9
