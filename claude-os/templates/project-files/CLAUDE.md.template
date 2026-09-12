@@ -1,0 +1,128 @@
+# {{PROJECT_NAME}} - {{PROJECT_DESCRIPTION}}
+
+## Project Overview
+
+{{PROJECT_NAME}} is {{PROJECT_DESCRIPTION}}
+
+**Tech Stack**: {{TECH_STACK}}
+**Database**: {{DATABASE}}
+**Development Environment**: {{DEV_ENVIRONMENT}}
+
+## Project-Specific Information
+
+{{PROJECT_SPECIFIC_CONTENT}}
+
+## Development Guidelines
+
+{{DEVELOPMENT_GUIDELINES}}
+
+## Common Development Tasks
+
+{{COMMON_TASKS}}
+
+## Key Business Rules
+
+{{BUSINESS_RULES}}
+
+## Coding Standards
+
+See `.claude/CODING_STANDARDS.md` for detailed coding standards.
+
+## Architecture
+
+See `.claude/ARCHITECTURE.md` for system architecture overview.
+
+## Development Practices
+
+See `.claude/DEVELOPMENT_PRACTICES.md` for development workflow and practices.
+
+---
+
+## Claude OS - My Memory System
+
+Claude OS is my memory across sessions. It stores decisions, patterns, solutions, and context so I never start cold.
+
+**Location**: `{{CLAUDE_OS_DIR}}`
+
+The MCP server is called "code-forge" internally for backwards compatibility, but it's Claude OS.
+
+### Session Tips
+
+- **Starting work**: Search `{{PROJECT_NAME}}-project_memories` for the task you're about to work on
+- **Ending work**: Use `/claude-os-remember` to save key decisions, patterns, or blockers
+- **Use `/claude-os-session start [task]`** to load context automatically
+- **Use `/claude-os-session end`** to summarize and save before closing
+
+### Knowledge Bases
+
+1. **{{PROJECT_NAME}}-project_memories** - Decisions, patterns, solutions, insights
+2. **{{PROJECT_NAME}}-project_index** - Automated codebase index
+3. **{{PROJECT_NAME}}-project_profile** - Architecture, standards, practices
+4. **{{PROJECT_NAME}}-knowledge_docs** - Documentation and guides
+
+**How to search:**
+```
+mcp__code-forge__search_knowledge_base
+  kb_name: "{{PROJECT_NAME}}-project_memories"
+  query: "your search terms"
+```
+
+**Search across all KBs at once:**
+```
+mcp__code-forge__search_all_knowledge_bases
+  query: "your search terms"
+  kb_filter: "{{PROJECT_NAME}}-"
+```
+
+### Slash Commands
+
+| Command | Purpose |
+|---------|---------|
+| `/claude-os-session start [task]` | Start session with context loading |
+| `/claude-os-session end` | End session with save prompts |
+| `/claude-os-search [query]` | Search memories |
+| `/claude-os-remember [content]` | Quick save to memories |
+| `/claude-os-save [title] [KB] [category]` | Full-featured save |
+| `/claude-os-list [KB]` | List KBs or documents |
+| `/claude-os-lifecycle [action] [KB]` | Health, dedup, consolidate, archive |
+
+### Available Skills
+
+1. **`initialize-project`** - Analyze project and generate coding standards
+2. **`memory`** - Save and recall information (supports "remember this:", "save to memory", etc.)
+
+{{AGENT_OS_SECTION}}
+
+### MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `mcp__code-forge__search_knowledge_base` | Search a single KB |
+| `mcp__code-forge__search_all_knowledge_bases` | Search across all KBs |
+| `mcp__code-forge__list_knowledge_bases` | List all KBs |
+| `mcp__code-forge__list_documents` | List documents in KB |
+| `mcp__code-forge__get_kb_stats` | KB statistics |
+| `mcp__code-forge__upload_document` | Save a document/memory |
+| `mcp__code-forge__kb_lifecycle_health` | KB health report |
+| `mcp__code-forge__kb_lifecycle_dedup` | Scan/merge duplicates |
+| `mcp__code-forge__kb_lifecycle_consolidate` | LLM-powered merging |
+| `mcp__code-forge__kb_lifecycle_archive` | Archive/restore documents |
+
+---
+
+## Guidelines
+
+- Search memories before making architectural decisions
+- Don't skip tests
+- Don't end a session without saving key learnings
+- Don't bypass established patterns without discussing first
+
+## IMPORTANT: Project Context
+
+This file (CLAUDE.md) is automatically loaded at the start of every Claude Code session. Keep it updated with:
+- Important project context
+- Current architecture decisions
+- Team conventions
+- Common gotchas
+
+**Update this file as the project evolves!**

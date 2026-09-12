@@ -1,0 +1,748 @@
+import { useState, useRef, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { motion, AnimatePresence } from 'framer-motion';
+import { FileText, BarChart3, Clock, Database, Upload, CheckCircle, XCircle, Info, Copy, Link, Trash2, FolderOpen, Settings } from 'lucide-react';
+import { getKBStats, listDocuments, uploadDocument, deleteDocument, type KBStats } from '../lib/api';
+import DirectoryPicker from './DirectoryPicker';
+import axios from 'axios';
+
+interface KBManagementProps {
+  kbName: string;
+  kbSlug?: string;
+  kbType?: string;
+  projectId?: number;
+}
+
+export default function KBManagement({ kbName, kbSlug, kbType, projectId }: KBManagementProps) {
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
+  const [uploadMessage, setUploadMessage] = useState('');
+  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
+  const [isBatchUpload, setIsBatchUpload] = useState(false);
+  const [copiedMCP, setCopiedMCP] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ filename: string } | null>(null);
+  const [showDirectoryPicker, setShowDirectoryPicker] = useState(false);
+  const [selectedFolder, setSelectedFolder] = useState<string>('');
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
+
+  // Determine if this MCP type allows manual uploads
+  const isCliManaged = kbType === 'project_index' || kbType === 'project_memories';
+  const allowsManualUpload = kbType === 'knowledge_docs' || kbType === 'project_profile';
+
+  // Fetch folder configuration for this MCP
+  const { data: folderConfig } = useQuery({
+    queryKey: ['project-folder', projectId, kbType],
+    queryFn: async () => {
+      if (!projectId || !kbType) return null;
+      try {
+        const response = await axios.get(`/api/projects/${projectId}/folders`);
+        return response.data.folders[kbType] || null;
+      } catch (error) {
+        console.error('[KBManagement] Failed to fetch folder config:', error);
+        return null;
+      }
+    },
+    enabled: !!projectId && !!kbType && allowsManualUpload,
+  });
+
+  // Update local state when folder config is loaded
+  useEffect(() => {
+    if (folderConfig) {
+      setSelectedFolder(folderConfig.folder_path || '');
+      setAutoSyncEnabled(folderConfig.auto_sync || false);
+    }
+  }, [folderConfig]);
+
+  // Save folder configuration mutation
+  const saveFolderMutation = useMutation({
+    mutationFn: async ({ folder_path, auto_sync }: { folder_path: string; auto_sync: boolean }) => {
+      if (!projectId || !kbType) throw new Error('Missing project ID or MCP type');
+      setUploadStatus('uploading');
+      setUploadMessage('⏳ Saving folder configuration and syncing files...');
+      const response = await axios.post(`/api/projects/${projectId}/folders`, {
+        mcp_type: kbType,
+        folder_path,
+        auto_sync,
+      });
+      return response.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['project-folder', projectId, kbType] });
+      queryClient.invalidateQueries({ queryKey: ['kb-stats', kbName] });
+      queryClient.invalidateQueries({ queryKey: ['kb-documents', kbName] });
+
+      setUploadStatus('success');
+      if (data.sync_results) {
+        if (data.sync_results.error) {
+          setUploadMessage(`⚠️ Folder saved but sync failed: ${data.sync_results.error}`);
+        } else {
+          setUploadMessage(
+            `✅ Folder saved! Synced ${data.sync_results.successful}/${data.sync_results.total_files} files successfully`
+          );
+        }
+      } else {
+        setUploadMessage('✅ Folder configuration saved');
+      }
+      setTimeout(() => setUploadStatus('idle'), 5000);
+    },
+    onError: (error: any) => {
+      setUploadStatus('error');
+      setUploadMessage(`❌ Failed to save: ${error.response?.data?.detail || error.message}`);
+      setTimeout(() => setUploadStatus('idle'), 5000);
+    },
+  });
+
+  // Generate KB-specific MCP endpoint using slug (fallback to name if no slug)
+  const slug = kbSlug || kbName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  const mcpEndpoint = `http://localhost:8051/mcp/kb/${slug}`;
+  const mcpCommand = `claude mcp add ${slug} ${mcpEndpoint}`;
+
+  const copyMCPEndpoint = () => {
+    navigator.clipboard.writeText(mcpEndpoint);
+    setCopiedMCP(true);
+    setTimeout(() => setCopiedMCP(false), 2000);
+  };
+
+  // Fetch KB stats
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ['kb-stats', kbName],
+    queryFn: () => getKBStats(kbName),
+    enabled: !!kbName,
+  });
+
+  // Fetch documents
+  const { data: documents = [], isLoading: docsLoading } = useQuery({
+    queryKey: ['kb-documents', kbName],
+    queryFn: () => listDocuments(kbName),
+    enabled: !!kbName,
+  });
+
+  // Upload mutation - only handle individual file callbacks when NOT in batch mode
+  const uploadMutation = useMutation({
+    mutationFn: (file: File) => uploadDocument(kbName, file),
+    onSuccess: (data) => {
+      // Only handle success UI for single file uploads
+      if (!isBatchUpload) {
+        setUploadStatus('success');
+        setUploadMessage(`✅ Uploaded ${data.filename} (${data.chunks} chunks)`);
+        queryClient.invalidateQueries({ queryKey: ['kb-stats', kbName] });
+        queryClient.invalidateQueries({ queryKey: ['kb-documents', kbName] });
+        setTimeout(() => {
+          setUploadStatus('idle');
+          setSelectedFiles([]);
+        }, 3000);
+      }
+      // For batch uploads, just invalidate queries silently
+      else {
+        queryClient.invalidateQueries({ queryKey: ['kb-stats', kbName] });
+        queryClient.invalidateQueries({ queryKey: ['kb-documents', kbName] });
+      }
+    },
+    onError: (error: any) => {
+      setUploadStatus('error');
+      setUploadMessage(`❌ Upload failed: ${error.response?.data?.detail || error.message}`);
+      setTimeout(() => setUploadStatus('idle'), 5000);
+    },
+  });
+
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: (filename: string) => deleteDocument(kbName, filename),
+    onSuccess: (data) => {
+      setUploadStatus('success');
+      setUploadMessage(`✅ Deleted ${data.filename}`);
+      setDeleteConfirm(null);
+      queryClient.invalidateQueries({ queryKey: ['kb-stats', kbName] });
+      queryClient.invalidateQueries({ queryKey: ['kb-documents', kbName] });
+      setTimeout(() => setUploadStatus('idle'), 3000);
+    },
+    onError: (error: any) => {
+      setUploadStatus('error');
+      setUploadMessage(`❌ Delete failed: ${error.response?.data?.detail || error.message}`);
+      setTimeout(() => setUploadStatus('idle'), 5000);
+    },
+  });
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setSelectedFiles(Array.from(e.target.files));
+    }
+  };
+
+  const handleUpload = async () => {
+    if (selectedFiles.length === 0) return;
+
+    // Enable batch mode to prevent individual file callbacks from interfering
+    setIsBatchUpload(true);
+    setUploadStatus('uploading');
+    setUploadProgress({ current: 0, total: selectedFiles.length });
+
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i];
+      setUploadProgress({ current: i + 1, total: selectedFiles.length });
+      setUploadMessage(`📤 Uploading ${file.name} (${i + 1}/${selectedFiles.length})...`);
+
+      try {
+        await uploadMutation.mutateAsync(file);
+      } catch (error) {
+        // Error is handled by mutation's onError
+        console.error(`Failed to upload ${file.name}:`, error);
+      }
+    }
+
+    // Batch upload complete - show final success message
+    setIsBatchUpload(false);
+    setUploadStatus('success');
+    setUploadMessage(`✅ Successfully uploaded ${selectedFiles.length} file(s)!`);
+    setTimeout(() => {
+      setUploadStatus('idle');
+      setSelectedFiles([]);
+      setUploadProgress({ current: 0, total: 0 });
+    }, 3000);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files) {
+      setSelectedFiles(Array.from(e.dataTransfer.files));
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="card"
+        >
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-electric-teal/20 rounded-lg">
+              <FileText className="w-8 h-8 text-electric-teal" />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-white">
+                {statsLoading ? '...' : stats?.total_documents || 0}
+              </div>
+              <div className="text-sm text-light-grey">Documents</div>
+            </div>
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="card"
+        >
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-cool-blue/20 rounded-lg">
+              <Database className="w-8 h-8 text-cool-blue" />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-white">
+                {statsLoading ? '...' : stats?.total_chunks || 0}
+              </div>
+              <div className="text-sm text-light-grey">Chunks</div>
+            </div>
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="card"
+        >
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-blaze-orange/20 rounded-lg">
+              <Clock className="w-8 h-8 text-blaze-orange" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-white">Last Updated</div>
+              <div className="text-xs text-light-grey">
+                {statsLoading
+                  ? '...'
+                  : stats?.last_updated
+                  ? new Date(stats.last_updated).toLocaleDateString()
+                  : 'Never'}
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      </div>
+
+      {/* MCP Integration Section */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+        className="card"
+      >
+        <h2 className="text-xl font-bold text-electric-teal mb-4 flex items-center gap-2">
+          <Link className="w-5 h-5" />
+          MCP Integration
+        </h2>
+
+        <div className="space-y-4">
+          <p className="text-light-grey text-sm">
+            Connect this knowledge base to Claude Desktop using its dedicated MCP endpoint:
+          </p>
+
+          <div className="p-4 bg-electric-teal/10 rounded-lg border border-electric-teal/30">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-white">MCP Endpoint:</span>
+              <button
+                onClick={copyMCPEndpoint}
+                className="text-xs px-3 py-1 rounded bg-electric-teal/20 hover:bg-electric-teal/30 transition-colors flex items-center gap-1"
+              >
+                {copiedMCP ? (
+                  <>
+                    <CheckCircle className="w-3 h-3" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    Copy
+                  </>
+                )}
+              </button>
+            </div>
+            <code className="text-electric-teal text-sm break-all">{mcpEndpoint}</code>
+          </div>
+
+          <div className="p-4 bg-blaze-orange/10 rounded-lg border border-blaze-orange/30">
+            <p className="text-xs font-semibold text-white mb-2">Add to Claude Desktop:</p>
+            <div className="bg-deep-night rounded p-3 border border-electric-teal/30">
+              <code className="text-electric-teal text-xs break-all">{mcpCommand}</code>
+            </div>
+            <p className="text-xs text-light-grey mt-2">
+              Run this command in your terminal, then restart Claude Desktop.
+            </p>
+          </div>
+
+          <div className="p-3 bg-cool-blue/10 rounded-lg border border-cool-blue/30">
+            <p className="text-xs text-light-grey">
+              <strong className="text-white">💡 Note:</strong> This endpoint only exposes tools for the <strong className="text-electric-teal">{kbName}</strong> knowledge base.
+              You can add multiple KB-specific endpoints to Claude Desktop to keep them organized.
+            </p>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Document Upload Section */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4 }}
+        className="card"
+      >
+        <h2 className="text-xl font-bold text-electric-teal mb-4 flex items-center gap-2">
+          <Upload className="w-5 h-5" />
+          {isCliManaged ? 'Documents (CLI Managed)' : 'Upload Documents'}
+        </h2>
+
+        {/* CLI Managed Notice */}
+        {isCliManaged && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 p-4 bg-blaze-orange/20 border border-blaze-orange/50 rounded-lg"
+          >
+            <div className="flex gap-3">
+              <Info className="w-5 h-5 text-blaze-orange flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-light-grey">
+                <p className="font-semibold text-white mb-2">🤖 CLI Managed MCP</p>
+                <p className="mb-2">
+                  This MCP is automatically managed by the Claude OS CLI. Documents are added/updated automatically based on your project activity.
+                </p>
+                <p className="text-xs text-light-grey/70">
+                  <strong className="text-white">{kbType === 'project_index' ? 'Project Index:' : 'Project Memories:'}</strong>
+                  {' '}
+                  {kbType === 'project_index'
+                    ? 'Automatically indexes your codebase structure, files, and symbols.'
+                    : 'Stores conversation history, decisions, and context from CLI interactions.'}
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Agent OS Help Text */}
+        {kbType === 'AGENT_OS' && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 p-4 bg-cool-blue/20 border border-cool-blue/50 rounded-lg"
+          >
+            <div className="flex gap-3">
+              <Info className="w-5 h-5 text-cool-blue flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-light-grey">
+                <p className="font-semibold text-white mb-2">🤖 Agent OS Knowledge Base</p>
+                <p className="mb-3">For best results, upload these file types in order:</p>
+                <div className="space-y-2 text-xs">
+                  <div className="flex gap-2">
+                    <span className="text-electric-teal font-bold">1️⃣ CRITICAL</span>
+                    <span>product/mission.md, product/tech-stack.md, standards/global/*</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-electric-teal font-bold">2️⃣ DOMAIN</span>
+                    <span>standards/backend/* or standards/frontend/* (based on your needs)</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-electric-teal font-bold">3️⃣ EXAMPLES</span>
+                    <span>specs/* files for real implementation examples</span>
+                  </div>
+                </div>
+                <p className="mt-3 text-light-grey/70 italic">
+                  See UPLOAD_CHECKLIST.md in your repo for the complete prioritized file list
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Directory Sync Section - only for knowledge_docs and project_profile */}
+        {allowsManualUpload && (
+          <>
+            <div className="mb-6 space-y-4">
+              {/* Folder Selection */}
+              <div className="bg-cool-blue/10 border border-cool-blue/30 rounded-lg p-4">
+                <label className="block text-sm font-semibold text-electric-teal mb-3 flex items-center gap-2">
+                  <FolderOpen className="w-4 h-4" />
+                  Sync Folder (Optional)
+                </label>
+                <p className="text-xs text-light-grey mb-3">
+                  Select a folder to automatically sync files into this knowledge base
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={selectedFolder}
+                    readOnly
+                    placeholder="Click 'Browse' to select a folder"
+                    className="input flex-1 bg-cool-blue/10 cursor-not-allowed"
+                  />
+                  <button
+                    onClick={() => setShowDirectoryPicker(true)}
+                    className="btn-secondary px-4 whitespace-nowrap hover:bg-electric-teal/30 transition-colors"
+                  >
+                    Browse
+                  </button>
+                  {selectedFolder && (
+                    <button
+                      onClick={() => saveFolderMutation.mutate({ folder_path: selectedFolder, auto_sync: autoSyncEnabled })}
+                      disabled={saveFolderMutation.isPending}
+                      className="btn-primary px-4 whitespace-nowrap flex items-center gap-2"
+                    >
+                      {saveFolderMutation.isPending ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          Syncing...
+                        </>
+                      ) : (
+                        'Save & Sync'
+                      )}
+                    </button>
+                  )}
+                </div>
+                {selectedFolder && (
+                  <p className="text-xs text-electric-teal mt-2">✓ Folder set: {selectedFolder}</p>
+                )}
+              </div>
+
+              {/* Auto-Sync Toggle */}
+              {selectedFolder && (
+                <div className="bg-blaze-orange/10 border border-blaze-orange/30 rounded-lg p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Settings className="w-4 h-4 text-blaze-orange" />
+                      <label className="text-sm font-semibold text-white">
+                        Auto-Sync
+                      </label>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const newValue = !autoSyncEnabled;
+                        setAutoSyncEnabled(newValue);
+                        saveFolderMutation.mutate({ folder_path: selectedFolder, auto_sync: newValue });
+                      }}
+                      disabled={saveFolderMutation.isPending}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        autoSyncEnabled ? 'bg-electric-teal' : 'bg-cool-blue/30'
+                      } ${saveFolderMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          autoSyncEnabled ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <p className="text-xs text-light-grey mt-2">
+                    {autoSyncEnabled
+                      ? '✓ Files in this folder will be automatically indexed when they change'
+                      : 'Enable to automatically index files when they change'}
+                  </p>
+                </div>
+              )}
+
+              {/* Divider */}
+              <div className="flex items-center gap-4">
+                <div className="flex-1 h-px bg-cool-blue/30"></div>
+                <span className="text-xs text-light-grey">OR</span>
+                <div className="flex-1 h-px bg-cool-blue/30"></div>
+              </div>
+            </div>
+
+            {/* Manual File Upload */}
+            <div
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed border-electric-teal/30 rounded-lg p-12 text-center hover:border-electric-teal/60 transition-colors cursor-pointer"
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                onChange={handleFileSelect}
+                className="hidden"
+                accept=".txt,.md,.pdf,.py,.js,.ts,.tsx,.jsx,.json,.yaml,.yml,.html,.css,.cpp,.c,.h,.java,.go,.rs,.rb,.php,.sh,.sql"
+              />
+
+              {selectedFiles.length === 0 ? (
+                <>
+                  <FileText className="w-12 h-12 text-electric-teal/50 mx-auto mb-4" />
+                  <p className="text-light-grey mb-2">Drag & drop files here, or click to browse</p>
+                  <p className="text-sm text-light-grey/60">Supports: .txt, .md, .pdf, .py, .js, .ts, and more</p>
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-12 h-12 text-electric-teal mx-auto mb-4" />
+                  <p className="text-white mb-2">{selectedFiles.length} file(s) selected</p>
+                  <div className="text-sm text-light-grey space-y-1">
+                    {selectedFiles.map((file, idx) => (
+                      <div key={idx}>{file.name}</div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {selectedFiles.length > 0 && (
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={handleUpload}
+                  disabled={uploadStatus === 'uploading'}
+                  className="btn-primary flex-1"
+                >
+                  {uploadStatus === 'uploading' ? 'Uploading...' : 'Upload Files'}
+                </button>
+                <button
+                  onClick={() => setSelectedFiles([])}
+                  className="btn-secondary"
+                >
+              Clear
+            </button>
+          </div>
+        )}
+          </>
+        )}
+
+        {uploadStatus !== 'idle' && allowsManualUpload && (
+          <div className={`mt-4 p-4 rounded-lg ${
+            uploadStatus === 'success' ? 'bg-electric-teal/20 border border-electric-teal/50' :
+            uploadStatus === 'error' ? 'bg-blaze-orange/20 border border-blaze-orange/50' :
+            'bg-cool-blue/20 border border-cool-blue/50'
+          }`}>
+            <p className="text-sm mb-2">{uploadMessage || 'Processing...'}</p>
+
+            {uploadStatus === 'uploading' && uploadProgress.total > 0 && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs text-light-grey">
+                  <span>Progress: {uploadProgress.current} / {uploadProgress.total}</span>
+                  <span>{Math.round((uploadProgress.current / uploadProgress.total) * 100)}%</span>
+                </div>
+                <div className="w-full bg-deep-night/50 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="h-full bg-electric-teal transition-all duration-300 ease-out"
+                    style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+                  />
+                </div>
+                <p className="text-xs text-light-grey/70 italic">
+                  ⏳ Generating embeddings and storing in database... This may take a while for large files.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </motion.div>
+
+      {/* Documents List */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.5 }}
+        className="card"
+      >
+        <h2 className="text-xl font-bold text-electric-teal mb-4 flex items-center gap-2">
+          <Database className="w-5 h-5" />
+          Documents ({documents.length})
+        </h2>
+
+        {docsLoading ? (
+          <div className="text-center py-8 text-light-grey">Loading documents...</div>
+        ) : documents.length === 0 ? (
+          <div className="text-center py-8 text-light-grey">
+            No documents yet. Upload some to get started!
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-4 max-h-96 overflow-y-auto pr-2">
+            {documents.map((doc: any, idx: number) => {
+              // Icon map based on file type
+              const iconMap: Record<string, string> = {
+                '.py': '🐍', '.js': '📜', '.jsx': '⚛️',
+                '.ts': '📘', '.tsx': '⚛️', '.md': '📄',
+                '.pdf': '📕', '.json': '📋', '.yaml': '⚙️',
+                '.yml': '⚙️', '.txt': '📝', '.go': '🔷',
+                '.rs': '🦀', '.java': '☕', '.cpp': '⚙️',
+                '.c': '⚙️', '.h': '📋'
+              };
+              const icon = iconMap[doc.file_type?.toLowerCase()] || '📄';
+
+              return (
+                <motion.div
+                  key={idx}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: idx * 0.05 }}
+                  className="p-5 bg-gradient-to-br from-cool-blue/10 to-electric-teal/5 border-2 border-electric-teal/30 rounded-xl hover:border-electric-teal/60 hover:shadow-xl hover:shadow-electric-teal/20 hover:-translate-y-1 transition-all duration-300 relative group"
+                >
+                  {/* Delete Button - only for manual upload types */}
+                  {allowsManualUpload && (
+                    <button
+                      onClick={() => setDeleteConfirm({ filename: doc.filename })}
+                      disabled={deleteMutation.isPending}
+                      className="absolute top-3 right-3 p-2 bg-blaze-orange/20 hover:bg-blaze-orange/40 text-blaze-orange rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 disabled:opacity-50"
+                      title="Delete document"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+
+                  <div className="text-center">
+                    {/* Large emoji icon */}
+                    <div className="text-4xl mb-3">{icon}</div>
+
+                    {/* Filename */}
+                    <h3 className="font-bold text-white mb-3 truncate" title={doc.filename}>
+                      {doc.filename || `Document ${idx + 1}`}
+                    </h3>
+
+                    {/* Tags */}
+                    {doc.tags && doc.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 justify-center mb-3">
+                        {doc.tags.map((tag: string, tagIdx: number) => (
+                          <span
+                            key={tagIdx}
+                            className="px-2 py-1 bg-electric-teal/20 text-electric-teal border border-electric-teal/40 text-xs font-bold rounded-md"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Date and chunk count */}
+                    <div className="text-xs text-light-grey/70 space-y-1">
+                      {doc.formatted_date && (
+                        <div>{doc.formatted_date}</div>
+                      )}
+                      <div className="font-bold text-electric-teal text-sm">
+                        {doc.chunk_count || 0} chunks
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
+      </motion.div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+          onClick={() => setDeleteConfirm(null)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-deep-night border-2 border-blaze-orange/50 rounded-xl p-6 max-w-sm mx-4"
+          >
+            <div className="flex items-center gap-4 mb-4">
+              <div className="p-3 bg-blaze-orange/20 rounded-lg">
+                <XCircle className="w-8 h-8 text-blaze-orange" />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-lg">Delete Document?</h3>
+                <p className="text-sm text-light-grey">This action cannot be undone</p>
+              </div>
+            </div>
+
+            <div className="mb-6 p-4 bg-blaze-orange/10 rounded-lg border border-blaze-orange/30">
+              <p className="text-sm text-light-grey">
+                <strong className="text-white">File:</strong> {deleteConfirm.filename}
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                disabled={deleteMutation.isPending}
+                className="btn-secondary flex-1"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteMutation.mutate(deleteConfirm.filename)}
+                disabled={deleteMutation.isPending}
+                className="flex-1 px-4 py-2 bg-blaze-orange hover:bg-blaze-orange/80 text-white font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* Directory Picker Modal */}
+      <AnimatePresence>
+        {showDirectoryPicker && (
+          <DirectoryPicker
+            initialPath={selectedFolder}
+            onSelect={(path) => {
+              setSelectedFolder(path);
+              setShowDirectoryPicker(false);
+            }}
+            onClose={() => setShowDirectoryPicker(false)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

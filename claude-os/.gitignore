@@ -1,0 +1,111 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+!frontend/src/lib/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+venv_*/
+env/
+ENV/
+.venv
+
+# Node.js / React / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm
+.yarn
+frontend-dev.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment Variables
+.env
+*.backup.*
+
+# Data Directories
+data/chroma/
+data/uploads/
+data/ollama/
+data/postgres/
+*.db
+*.sqlite
+# Exception: Schema file should be tracked
+!app/db/schema.sqlite
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
+logs/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Temporary Files
+tmp/
+temp/
+*.tmp
+
+# Backups (contain sensitive data)
+backups/
+
+# OS
+Thumbs.db
+
+claude-os-state.json
+claude-os-config.json
+claude-os-triggers.json
+
+# Test artifacts
+htmlcov/
+.coverage
+.pytest_cache/
+frontend/e2e/screenshots/
+frontend/playwright-report/
+frontend/test-results/
+
+# Internal docs (not for public repo)
+internal_docs/
+
+# Export files (contain project-specific data)
+exports/
+
+# Marketing materials (not for distribution)
+brochure.html
+presentation.html
+
+# Private directory (not for public repo)
+our_stuff/
+.coverage

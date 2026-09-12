@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/brobertsaz/claude-os.git
+	branch = main
+	commit = ee7b62bc5bf36541018a1c14592bcac2b59022f9
+	parent = 30fdf7df54ddc80769370d2230c1dc1135d548f2
+	method = merge
+	cmdver = 0.4.9
