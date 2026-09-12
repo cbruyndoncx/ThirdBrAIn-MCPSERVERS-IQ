@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/pbohannon/notion-api-mcp.git
+	branch = main
+	commit = a47ddb092163b2ac0bcb1afcfce4e899342f8f79
+	parent = 11590a24b96bb576c1888c06e2ce95a937ff93c4
+	method = merge
+	cmdver = 0.4.9
