@@ -1,0 +1,114 @@
+{
+  "setupGuide": {
+    "title": "设置指南",
+    "moreInfo": {
+      "prefix": "需要更详细的步骤？请查看完整文档：",
+      "linkLabel": "docs.plugged.in/setup-guide"
+    },
+    "proxyBenefits": {
+      "title": "Plugged.in MCP 的优势",
+      "description": "Plugged.in MCP 作为所有 MCP 服务器的统一代理，带来以下好处：",
+      "benefits": [
+        "单一配置点 —— 用一个中心配置管理所有 MCP 服务器",
+        "自动更新 —— 自动获取最新功能和安全更新",
+        "简化认证 —— 所有 MCP 服务器共用一把 API 密钥",
+        "增强安全性 —— 内置安全功能与最佳实践",
+        "跨平台兼容 —— 在不同操作系统上无缝运行"
+      ]
+    },
+    "installation": {
+      "title": "安装方式",
+      "apiKeysNotice": "提示：可在 API 密钥页面管理所有密钥",
+      "apiKeyCard": {
+        "title": "你的 Plugged.in API 密钥",
+        "description": "当配置需要 PLUGGEDIN_API_KEY 时使用此值。需要新的密钥？请前往",
+        "copySuccess": "API 密钥已复制到剪贴板",
+        "copyLabel": "复制 Plugged.in API 密钥"
+      },
+      "shared": {
+        "copyLabel": "复制到剪贴板"
+      },
+      "claudeDesktop": {
+        "title": "Claude Desktop 设置",
+        "intro": "Claude Desktop 读取 JSON 配置文件。将以下片段加入文件后重启应用。",
+        "step1": {
+          "title": "打开设置",
+          "description": "打开 Claude Desktop，并进入 Settings > MCP Servers。"
+        },
+        "step2": {
+          "title": "找到配置文件",
+          "description": "编辑设备上的配置文件。"
+        },
+        "step3": {
+          "title": "添加 Plugged.in MCP 配置",
+          "description": "将以下片段粘贴到 \"mcpServers\" 对象中，API 密钥已自动填充。"
+        },
+        "step4": {
+          "title": "重启应用",
+          "description": "重启 Claude Desktop 以加载新的 MCP 配置。"
+        },
+        "step5": {
+          "title": "验证设置",
+          "description": "返回 Settings > MCP Servers，确认 PluggedinMCP 显示且 API 密钥有效。"
+        },
+        "copySuccess": "Claude Desktop 配置已复制"
+      },
+      "claudeCode": {
+        "title": "Claude Code 设置",
+        "step1": {
+          "title": "步骤 1：打开设置",
+          "description": "打开 Claude Code，使用命令面板（Cmd/Ctrl+Shift+P）搜索 \"MCP Settings\"。"
+        },
+        "step2": {
+          "title": "步骤 2：进入 MCP 配置",
+          "description": "在设置对话框中打开 MCP Servers 部分以管理本地配置。"
+        },
+        "step3": {
+          "title": "步骤 3：添加 Plugged.in MCP 服务器",
+          "description": "在安装了 Claude Code 的终端运行下方命令，会使用你的 API 密钥注册代理。"
+        },
+        "step4": {
+          "title": "步骤 4：应用配置",
+          "description": "在 Claude Code 中刷新 MCP Servers 列表以加载新条目。"
+        },
+        "step5": {
+          "title": "步骤 5：测试连接",
+          "description": "运行 `claude mcp list` 或重新打开 Claude Code，确认 Plugged.in 服务器可用。"
+        },
+        "copySuccess": "Claude Code 命令已复制",
+        "noteTitle": "在哪里运行该命令？",
+        "noteDescription": "请在安装 Claude Code 的环境中运行，可用下列命令验证安装"
+      },
+      "manualConfig": {
+        "title": "配置文件路径",
+        "description": "Claude Desktop 的配置文件位置：",
+        "paths": {
+          "macos": "macOS",
+          "windows": "Windows"
+        }
+      },
+      "cursorConfig": {
+        "title": "Cursor 设置",
+        "description": "Cursor 支持在 Integrations 面板中注册 MCP 服务器。",
+        "steps": [
+          "打开 Cursor，选择 Integrations > MCP。",
+          "点击 \"Edit mcp.json\" 打开 MCP 配置文件。",
+          "添加或合并 PluggedinMCP 条目。",
+          "使用下面的命令在本地或终端中运行代理："
+        ],
+        "copySuccess": "Cursor 命令已复制"
+      }
+    },
+    "lmStudio": {
+      "title": "LM Studio 设置",
+      "description": "LM Studio 会从 `mcp.json` 读取 MCP 服务器，配置与 Claude Desktop 示例相同。",
+      "steps": [
+        "在 LM Studio 中打开 Integrations > MCP，并选择 \"Edit mcp.json\"。",
+        "将下面的片段粘贴到 `mcpServers` 对象中（如不存在则创建）。",
+        "保存文件以重新加载 MCP 服务器。"
+      ],
+      "copySuccess": "LM Studio 配置已复制",
+      "saveNote": "保存文件后，LM Studio 会自动重新加载 MCP 服务器。"
+    }
+  }
+}

@@ -1,0 +1,1013 @@
+{
+  "navigation": {
+    "enterApp": "App openen",
+    "features": "Functies",
+    "community": "Community",
+    "collections": "Collecties",
+    "playground": "Playground",
+    "documentation": "Documentatie",
+    "blog": "Blog",
+    "getStarted": "Verbind",
+    "mcpProxy": "MCP Proxy",
+    "mcpServers": "MCP Servers"
+  },
+  "hero": {
+    "badge": "'s Werelds Eerste AI-CMS",
+    "headline": "Waar Kennis, Tools, Geheugen en Agenten Samenkomen",
+    "subheadline": "Eén uniform platform om al je AI-interacties te organiseren. Model-agnostische infrastructuur die je AI echt van jou maakt—persistent over Claude, ChatGPT, Cursor en elk platform dat je gebruikt.",
+    "tagline": "Eén Platform. Al Je AI. Voor Altijd.",
+    "cta": {
+      "primary": "Verbind",
+      "secondary": "Bekijk Hoe Het Werkt"
+    },
+    "pillars": {
+      "knowledge": "Kennis",
+      "tools": "Tools",
+      "memory": "Geheugen",
+      "agents": "Agenten"
+    },
+    "title": "Het AI-kruispunt",
+    "subtitle": "Verbind, creëer en breid uw AI-mogelijkheden uit met een uniform platform. Bouw en beheer plug-ins die uw AI-workflows verbeteren.",
+    "analogy": "\"Uw AI-ecosysteem, uniform en sociaal\"",
+    "openSource": "Trots Open Source",
+    "features": {
+      "security": "Enterprise Security",
+      "fast": "Lightning Fast",
+      "scale": "Global Scale"
+    }
+  },
+  "features": {
+    "title": "Functies",
+    "subtitle": "Alles wat u nodig heeft om uw MCP-servers te beheren",
+    "sectionTitle": "Een compleet AI-ecosysteemplatform",
+    "sectionSubtitle": "Van data-eigendom tot community-samenwerking - alles wat u nodig heeft in één platform.",
+    "universalAiHub": {
+      "title": "Universele AI Hub",
+      "description": "Verbind Claude, GPT, Llama en elk AI-model via één interface. Test dezelfde prompt over modellen heen direct."
+    },
+    "dataSovereignty": {
+      "title": "Data Soevereiniteit",
+      "description": "Elke prompt, configuratie en inzicht blijft onder uw controle. Exporteer uw data op elk moment in open formaten."
+    },
+    "aiAssetManagement": {
+      "title": "AI Asset Management",
+      "description": "Uw prompts, configuraties en context worden herbruikbare assets. Bouw een bibliotheek van wat werkt voor uw specifieke behoeften."
+    },
+    "crossModelMemory": {
+      "title": "Cross-Model Geheugen",
+      "description": "Binnenkort: Bouw kennis die werkt over alle AI-tools, niet opgesloten in één platform."
+    },
+    "claudeCodePlugin": {
+      "title": "Claude Code Plugin",
+      "description": "Native MCP-plugin voor Claude Code. Al je tools, kennisbank, geheugen en meldingen direct beschikbaar in je codeerworkflow — geen configuratie nodig."
+    },
+    "mcpRegistry": {
+      "title": "MCP Registry",
+      "description": "Toegang tot 500+ integraties via de open MCP-standaard. Installatie met één klik met community-beoordelingen en recensies."
+    },
+    "endToEndEncryption": {
+      "title": "End-to-End Encryptie",
+      "description": "Militaire-grade bescherming voor uw AI intellectueel eigendom. Uw configuraties en data blijven veilig in rust en tijdens transport."
+    },
+    "trendingAnalytics": {
+      "title": "Trending Analytics",
+      "description": "Ontdek populaire servers met real-time analytics. Leer van de community terwijl u uw data privé houdt."
+    },
+    "oauthAutoRotation": {
+      "title": "OAuth 2.1 Auto-Rotatie",
+      "description": "Automatische tokenvernieuwing 15 minuten voor vervaldatum. OAuth 2.1-conform met tokenrotatie. Geen service-onderbrekingen, geen handmatig werk."
+    },
+    "mcpProxy": {
+      "title": "Unified MCP Proxy",
+      "description": "Enkel endpoint voor alle MCP-servers. Ingebouwde AI-playground, meldingssysteem en documentuitwisseling. Ondersteunt STDIO, SSE en Streamable HTTP-transporten."
+    },
+    "officialSdks": {
+      "title": "JavaScript, Python & Go SDK's",
+      "description": "Volledig uitgeruste SDK's voor JavaScript/TypeScript, Python en Go. Documentbeheer, RAG-queries en API-toegang met consistente interfaces over talen heen."
+    },
+    "advancedSearch": {
+      "title": "Intelligente ontdekkingsengine",
+      "description": "Vind de perfecte MCP-server via GitHub, Smithery en npm. Filter op mogelijkheden, beoordelingen en community-aanbevelingen."
+    },
+    "mcpPlayground": {
+      "title": "Universele AI Playground",
+      "description": "Test MCP-servers met elk model - Claude, GPT, Llama en meer. Virtueel scrollen voor grote gesprekken en ondersteuning voor aangepaste instructies."
+    },
+    "ragIntegration": {
+      "title": "AI-kennisplatform (RAG)",
+      "description": "Upload documenten, creëer kennisbases en bevraag ze via elke MCP-client. Veilig, projectgebaseerde isolatie met enterprise-grade beveiliging."
+    },
+    "notifications": {
+      "title": "Real-time activiteitsmonitoring",
+      "description": "Volg alle MCP-operaties met gedetailleerde logs, uitvoeringsanalyses en aangepaste meldingen met optionele e-maillevering."
+    },
+    "security": {
+      "title": "Enterprise beveiliging & privacy",
+      "description": "Multi-layer authenticatie, Firejail sandboxing, uitgebreide audittrails en self-hosting opties voor volledige controle."
+    },
+    "internationalization": {
+      "title": "Wereldwijd platform",
+      "description": "Beschikbaar in 6 talen met automatische browserdetectie. Community-gedreven vertalingen voor wereldwijde toegankelijkheid."
+    },
+    "pluginManagement": {
+      "title": "Plugin beheer",
+      "description": "Blader, configureer en beheer MCP-servers en plug-ins",
+      "content": "Verbind verschillende AI-tools en -services via een uniforme interface. Configureer en beheer uw plug-ins vanuit een centraal dashboard.",
+      "action": "Blader door plug-ins"
+    },
+    "aiPlayground": {
+      "title": "AI Playground",
+      "description": "Test en experimenteer met uw AI-tools in een interactieve omgeving",
+      "content": "Ervaar uw plug-ins in actie. De playground stelt u in staat verschillende configuraties te testen en realtime resultaten te zien.",
+      "action": "Playground openen"
+    },
+    "customDevelopment": {
+      "title": "Aangepaste ontwikkeling",
+      "description": "Creëer en pas uw eigen MCP-servers en tools aan",
+      "benefit1": "Ontdek innovatieve servers van collega-ontwikkelaars.",
+      "benefit2": "Krijg feedback en beoordelingen over uw gedeelde servers.",
+      "benefit3": "Werk samen en bouw voort op community-creaties.",
+      "benefit4": "Blijf op de hoogte van de nieuwste MCP-trends.",
+      "visualPlaceholder": "Visualisatie van server delen/beoordelingen",
+      "content": "Bouw aangepaste mogelijkheden met onze Python-editor en geïntegreerde ontwikkelomgeving. Breid uw AI uit met gespecialiseerde functionaliteiten.",
+      "action": "Aangepaste tools maken"
+    },
+    "langchainAbstraction": {
+      "title": "Test elk model: Langchain abstractie",
+      "description": "Plugged.in gebruikt de Langchain abstractielaag zodat u uw MCP-servers kunt testen met Claude, GPT, Llama en meer—allemaal vanuit één interface. Vergelijk modellen direct, maak uw workflow toekomstbestendig en ervaar echt model-agnostische AI."
+    }
+  },
+  "community": {
+    "title": "Word lid van de wereldwijde MCP Community",
+    "subtitle": "Verbind met duizenden ontwikkelaars die de toekomst van AI bouwen",
+    "description": "Deel uw MCP-servers, volg ontwikkelaars, ontvang real-time meldingen en werk samen binnen ons sociale platform. Bouw uw reputatie op met beoordelingen, recensies en community-bijdragen.",
+    "action": "Word lid van de community",
+    "stats": {
+      "developers": "1K+ Ontwikkelaars",
+      "servers": "500+ MCP Servers",
+      "collections": "Binnenkort",
+      "languages": "6 Talen"
+    },
+    "socialFeatures": {
+      "title": "Sociale platformfuncties",
+      "profiles": "Openbare ontwikkelaarsprofielen met activiteitenfeeds",
+      "following": "Volg ontwikkelaars en krijg updates over hun werk",
+      "notifications": "Real-time meldingen voor volgers, shares en updates",
+      "reputation": "Bouw uw reputatie op door community-betrokkenheid"
+    },
+    "benefit1": "Ontdek innovatieve servers van collega-ontwikkelaars.",
+    "benefit2": "Krijg feedback en beoordelingen over uw gedeelde servers.",
+    "benefit3": "Werk samen en bouw voort op community-creaties.",
+    "benefit4": "Blijf op de hoogte van de nieuwste MCP-trends.",
+    "visualPlaceholder": "Visualisatie van server delen/beoordelingen"
+  },
+  "search": {
+    "title": "Intelligente ontdekkingsengine",
+    "subtitle": "Vind de perfecte MCP-server via GitHub, Smithery en npm",
+    "description": "Onze geavanceerde ontdekkingsengine doorzoekt meerdere bronnen en gebruikt community-signalen om de beste tools voor uw behoeften naar boven te halen.",
+    "action": "Ontdek tools",
+    "sources": {
+      "title": "Zoek in alle bronnen",
+      "github": "GitHub repositories met MCP-servers",
+      "smithery": "Smithery marketplace integraties",
+      "npm": "NPM packages met MCP-ondersteuning",
+      "community": "Community-gedeelde servers"
+    },
+    "imagePlaceholder": "Afbeelding: Zoekresultaten met community-servers (CardGrid Mockup)",
+    "feature1Title": "AI-aangedreven zoeken",
+    "feature1Desc": "Natuurlijke taalzoekfunctie die begrijpt wat u zoekt, niet alleen sleutelwoorden.",
+    "feature2Title": "Community-signalen",
+    "feature2Desc": "Filter op beoordelingen, installaties, recente updates en ontwikkelaarsreputatie.",
+    "feature3Title": "Mogelijkheden matching",
+    "feature3Desc": "Vind servers op de exacte mogelijkheden die u nodig heeft - tools, bronnen of prompts.",
+    "feature4Title": "Direct voorvertonen",
+    "feature4Desc": "Test servers direct vanuit zoekresultaten zonder installatie."
+  },
+  "playground": {
+    "title": "Universele AI testplayground",
+    "subtitle": "Test elke MCP-server met elk AI-model - Claude, GPT, Llama en meer.",
+    "feature1Title": "Multi-model ondersteuning",
+    "feature1Desc": "Test met Claude, GPT-4, Llama, Gemini en tientallen meer via onze Langchain integratie.",
+    "feature2Title": "Geavanceerde RAG integratie",
+    "feature2Desc": "Upload documenten, creëer kennisbases en bevraag ze direct met elk model.",
+    "feature3Title": "Virtueel scrollen & prestaties",
+    "feature3Desc": "Behandel massale gesprekken met virtueel scrollen en geoptimaliseerde prestaties.",
+    "feature4Title": "Aangepaste instructies",
+    "feature4Desc": "Stel modelspecifieke instructies en systeemprompts in voor precieze controle.",
+    "feature5Title": "Real-time monitoring",
+    "feature5Desc": "Volg alle operaties met gedetailleerde logs, uitvoeringsanalyses en prestatiemetrics.",
+    "visualPlaceholder": "Visuele weergave van de playground-omgeving",
+    "imagePlaceholder": "Afbeelding: Playground/Debugging Mockup",
+    "langchainCallout": "<0>Test met elk model:</0> Dankzij onze <1>Langchain-abstractie</1> kunt u uw MCP-servers testen met Claude, GPT, Llama en meer—allemaal vanuit één playground. Vergelijk modellen direct en ervaar echt model-agnostische AI."
+  },
+  "collections": {
+    "title": "Slimme collecties & versiebeheer",
+    "subtitle": "Binnenkort: Organiseer, versioneer en deel uw MCP-servercollecties",
+    "description": "Binnenkort kunt u collecties met versiebeheer creëren, installaties volgen, samenwerken met teams en verschillende configuraties onderhouden voor dev, staging en productie.",
+    "action": "Meer informatie",
+    "versionControl": {
+      "title": "Versiebeheer voor collecties",
+      "feature1": "Creëer snapshots van uw collecties op elk moment",
+      "feature2": "Rol terug naar vorige versies wanneer nodig",
+      "feature3": "Volg wijzigingen en zie wat er verschilt tussen versies",
+      "feature4": "Deel specifieke versies met uw team"
+    },
+    "sharing": {
+      "title": "Publiek & privé delen",
+      "public": "Deel collecties publiek met de community",
+      "private": "Privé delen met teamleden",
+      "stats": "Volg installaties en gebruiksstatistieken",
+      "ratings": "Krijg feedback en beoordelingen van gebruikers"
+    },
+    "collectionsTitle": "Gestroomlijnde collecties",
+    "collectionsDesc": "Groepeer gerelateerde MCP-servers in logische collecties voor specifieke clients, applicaties of omgevingen.",
+    "workspacesTitle": "Multi-werkruimte beheer",
+    "workspacesDesc": "Isoleer projecten met toegewijde werkruimtes. Schakel direct tussen ontwikkeling-, staging- en productieconfiguraties.",
+    "hierarchyPlaceholder": "Visuele weergave van collectiehiërarchie",
+    "imagePlaceholder": "Afbeelding: Collectie/Werkruimte Mockup"
+  },
+  "sharing": {
+    "title": "Community delen",
+    "subtitle": "Deel met anderen",
+    "description": "Deel uw MCP-servers en tools met de community.",
+    "action": "Begin met delen"
+  },
+  "opensource": {
+    "title": "Met Trots Open Source",
+    "subtitle": "Gebouwd door de gemeenschap, voor de gemeenschap. Draag bij en vorm de toekomst van MCP.",
+    "badge": "Open Source",
+    "viewOnGithub": "Bekijk op GitHub",
+    "followOrg": "Volg VeriTeknik",
+    "contribute": "Sluit je aan bij onze open-source gemeenschap en help ons de toekomst van AI-integratie te bouwen",
+    "repos": {
+      "app": {
+        "description": "De hoofdapplicatie - Next.js webplatform voor MCP-beheer"
+      },
+      "proxy": {
+        "description": "Universele proxyserver voor Model Context Protocol"
+      }
+    }
+  },
+  "security": {
+    "title": "Enterprise-grade beveiliging",
+    "subtitle": "Uw AI-infrastructuur, beschermd op elke laag",
+    "description": "Gebouwd met security-first architectuur met multi-layer authenticatie, gesandboxte uitvoering en uitgebreide audittrails.",
+    "features": {
+      "authentication": {
+        "title": "Multi-layer authenticatie",
+        "desc": "OAuth providers, API-sleutels en sessiebeheer met JWT-tokens"
+      },
+      "sandboxing": {
+        "title": "Firejail sandboxing",
+        "desc": "Automatische beveiligingssandboxing voor alle STDIO MCP-servers op Linux"
+      },
+      "isolation": {
+        "title": "Project isolatie",
+        "desc": "Volledige data-isolatie tussen projecten met op rollen gebaseerde toegangscontrole"
+      },
+      "audit": {
+        "title": "Uitgebreide audittrails",
+        "desc": "Volg alle operaties, API-calls en gebruikersacties voor compliance"
+      },
+      "encryption": {
+        "title": "Data-encryptie",
+        "desc": "End-to-end encryptie voor gevoelige data en API-communicatie"
+      },
+      "selfhost": {
+        "title": "Self-hosting optie",
+        "desc": "Deploy op uw infrastructuur voor volledige controle en compliance"
+      }
+    },
+    "compliance": "SOC2 Type II compliant infrastructuur met regelmatige beveiligingsaudits",
+    "action": "Bekijk beveiligingsdetails"
+  },
+  "developers": {
+    "title": "Gebouwd voor ontwikkelaars",
+    "subtitle": "Krachtige tools en API's om uw AI-mogelijkheden uit te breiden",
+    "description": "Open-source platform met uitgebreide API's, SDK's en ontwikkeltools.",
+    "features": {
+      "opensource": {
+        "title": "100% Open Source",
+        "desc": "MIT gelicenseerd met transparante ontwikkeling op GitHub"
+      },
+      "apis": {
+        "title": "RESTful API's",
+        "desc": "Volledige API-dekking voor alle platformfuncties"
+      },
+      "sdks": {
+        "title": "TypeScript SDK",
+        "desc": "Type-safe SDK met volledige IntelliSense ondersteuning"
+      },
+      "extensibility": {
+        "title": "Plugin architectuur",
+        "desc": "Breid het platform uit met aangepaste MCP-servers en integraties"
+      },
+      "documentation": {
+        "title": "Uitgebreide documentatie",
+        "desc": "Gedetailleerde documentatie met voorbeelden en tutorials"
+      },
+      "community": {
+        "title": "Actieve community",
+        "desc": "Reddit, X, GitHub discussies en community-ondersteuning"
+      }
+    },
+    "codeExample": {
+      "title": "Snelle integratie voorbeeld",
+      "description": "Verbind met Plugged.in in seconden:"
+    },
+    "action": "Bekijk documentatie"
+  },
+  "pricing": {
+    "badge": "100% Gratis Voor Altijd",
+    "title": "Volledig Gratis - Geen Verborgen Kosten",
+    "subtitle": "We geloven in het democratiseren van AI data-eigendom. Elke functie, voor iedereen, voor altijd.",
+    "free": {
+      "title": "Alles Inbegrepen",
+      "description": "Geen limieten, geen lagen, geen verrassingen",
+      "cta": "Nu Beginnen",
+      "note": "Geen creditcard vereist • Altijd gratis voor persoonlijk gebruik",
+      "everything_included": "Alles inbegrepen:"
+    },
+    "features": {
+      "unlimited_ai_model_connections": "Onbeperkte AI model verbindingen",
+      "full_data_ownership_and_export": "Volledige data-eigendom en export",
+      "mcp_server_integrations": "500+ MCP server integraties",
+      "unlimited_workspaces_and_projects": "Onbeperkte werkruimtes en projecten",
+      "community_sharing_and_collaboration": "Community delen en samenwerking",
+      "end_to_end_encryption": "End-to-end encryptie",
+      "rag_document_storage": "RAG document opslag",
+      "real_time_notifications": "Real-time notificaties",
+      "oauth_authentication": "OAuth authenticatie",
+      "api_access": "API toegang"
+    },
+    "whyFree": {
+      "title": "Waarom is plugged.in gratis?",
+      "description": "We bouwen de toekomst van AI data-eigendom. Onze missie is ervoor te zorgen dat iedereen controle heeft over hun AI-gegenereerde data. Door het platform gratis te houden, creëren we het grootste ecosysteem waar ontwikkelaars kunnen delen, leren en samen bouwen."
+    },
+    "pro": {
+      "title": "Pro",
+      "price": "€19",
+      "period": "/maand",
+      "description": "Voor professionele ontwikkelaars en teams",
+      "features": [
+        "Alles in Gratis",
+        "Onbeperkte RAG kennisbases",
+        "Privé collecties",
+        "Prioriteitsondersteuning",
+        "Geavanceerde analytics",
+        "Teamsamenwerking"
+      ],
+      "cta": "Start Pro proefperiode"
+    },
+    "enterprise": {
+      "title": "Enterprise",
+      "price": "Op maat",
+      "period": "",
+      "description": "Voor organisaties met geavanceerde behoeften",
+      "features": [
+        "Alles in Pro",
+        "Self-hosting optie",
+        "SSO/SAML authenticatie",
+        "SLA garanties",
+        "Toegewijde ondersteuning",
+        "Aangepaste integraties"
+      ],
+      "cta": "Contact sales"
+    }
+  },
+  "gettingStarted": {
+    "title": "Aan de slag is eenvoudig",
+    "subtitle": "Van nul naar AI-powered in minder dan 5 minuten",
+    "description": "Volg onze quickstart gids om uw eerste MCP-server te verbinden en te beginnen met bouwen.",
+    "steps": {
+      "step1": {
+        "title": "1. Account aanmaken",
+        "desc": "Meld u aan met e-mail of OAuth provider"
+      },
+      "step2": {
+        "title": "2. API-sleutel verkrijgen",
+        "desc": "Genereer uw API-sleutel vanuit het dashboard"
+      },
+      "step3": {
+        "title": "3. MCP Proxy installeren",
+        "desc": "Voer uit: npx @pluggedin/pluggedin-mcp-proxy@latest"
+      },
+      "step4": {
+        "title": "4. Client verbinden",
+        "desc": "Voeg Claude Code plugin, Cursor of een andere MCP-client toe"
+      }
+    },
+    "resources": {
+      "title": "Leermiddelen",
+      "quickstart": "5-minuten quickstart gids",
+      "tutorials": "Stap-voor-stap tutorials",
+      "videos": "Video walkthroughs",
+      "examples": "Voorbeeldprojecten en templates"
+    },
+    "action": "Bekijk setupgids"
+  },
+  "cta": {
+    "title": "Klaar om deel te nemen aan de AI-revolutie?",
+    "subtitle": "Begin met bouwen op het meest uitgebreide MCP-platform. Gratis voor altijd voor individuen.",
+    "description": "Word lid van duizenden ontwikkelaars die de toekomst van AI bouwen met Plugged.in.",
+    "primary": "Gratis beginnen",
+    "secondary": "Bekijk documentatie",
+    "primaryAction": "Gratis account aanmaken",
+    "secondaryAction": "Verken documentatie",
+    "features": {
+      "title": "Alles wat u nodig heeft",
+      "feature1": "✓ Onbeperkte MCP-servers",
+      "feature2": "✓ Alle AI-modellen ondersteund",
+      "feature3": "✓ RAG kennisbases",
+      "feature4": "✓ Sociale functies",
+      "feature5": "✓ 6-talige ondersteuning",
+      "feature6": "✓ Enterprise beveiliging"
+    },
+    "step1": {
+      "title": "Aanmelden",
+      "description": "Maak binnen enkele seconden uw gratis account aan. Geen creditcard vereist."
+    },
+    "step2": {
+      "title": "Verbinden & ontdekken",
+      "description": "Voeg MCP-servers toe, volg ontwikkelaars, word lid van de community."
+    },
+    "step3": {
+      "title": "Bouwen & delen",
+      "description": "Creëer collecties, upload kennis, deel met de wereld."
+    },
+    "security": {
+      "title": "Enterprise-grade beveiliging",
+      "description": "Uw data is beschermd met multi-layer authenticatie, Firejail sandboxing en uitgebreide audittrails. Self-host voor volledige controle."
+    }
+  },
+  "aiModels": {
+    "badge": "Aangedreven door Langchain",
+    "title": "Één platform, elk model",
+    "subtitle": "Alle modellen hebben toegang tot dezelfde kennisbank, gebruiken dezelfde tools en delen hetzelfde geheugen.",
+    "moreModels": "Plus tientallen andere modellen via onze Langchain-integratie",
+    "viewAll": "Bekijk alle modellen",
+    "feature1": {
+      "title": "Gedeelde kennisbank",
+      "description": "Elk model kan uw documenten doorzoeken en toegang krijgen tot uw aangepaste context."
+    },
+    "feature2": {
+      "title": "Universele tool toegang",
+      "description": "Alle modellen kunnen dezelfde MCP-tools gebruiken om acties uit te voeren."
+    },
+    "feature3": {
+      "title": "Persistent geheugen (binnenkort)",
+      "description": "Alle modellen delen binnenkort hetzelfde geheugen over gesprekken heen."
+    },
+    "feature4": {
+      "title": "One-click schakelen",
+      "description": "Schakel direct tussen modellen zonder uw context te verliezen."
+    },
+    "supportedModels": {
+      "claude": "Claude",
+      "gpt4": "GPT-4",
+      "llama": "Llama",
+      "gemini": "Gemini"
+    }
+  },
+  "whyPluggedin": {
+    "title": "Waarom plugged.in?",
+    "subtitle": "Uw AI heeft meer nodig dan alleen conversatie",
+    "problem": {
+      "title": "De ontbrekende stukken",
+      "description": "Uw AI is krachtig, maar mist drie essentiële mogelijkheden: kennis uit uw specifieke documenten, geheugen van eerdere interacties en tools om echte acties uit te voeren. Zonder deze begint elk gesprek vanaf nul."
+    },
+    "solution": {
+      "title": "Maak uw AI compleet",
+      "description": "plugged.in biedt de drieëenheid die uw AI nodig heeft:",
+      "benefit1": "📚 Kennis: Upload documenten en laat AI toegang krijgen tot uw specifieke context",
+      "benefit2": "🧠 Geheugen: Binnenkort - blijvende context over alle gesprekken",
+      "benefit3": "🔧 Tools: Verbind elke MCP-server om AI real-world mogelijkheden te geven",
+      "benefit4": "🔄 Universeel: Werkt met Claude, GPT-4, Gemini en alle belangrijke modellen"
+    },
+    "bridge": {
+      "title": "Gebouwd op open standaarden",
+      "description": "We maken gebruik van Model Context Protocol (MCP) als technische basis - niet omdat het trendy is, maar omdat het de open standaard is die echt data-eigendom mogelijk maakt. MCP zorgt ervoor dat uw data niet opgesloten zit in propriëtaire platforms maar uw draagbare bezit wordt."
+    },
+    "visual": {
+      "hub": "plugged.in Hub",
+      "aiSupport": "Claude, GPT-4, Gemini...",
+      "feature": {
+        "knowledge": "📚 Kennis",
+        "memory": "🧠 Geheugen",
+        "tools": "🔧 Tools"
+      },
+      "knowledge": {
+        "title": "Kennis",
+        "description": "Documenten en context"
+      },
+      "memory": {
+        "title": "Geheugen",
+        "description": "Klembordopslag"
+      },
+      "tools": {
+        "title": "Tools",
+        "description": "MCP-servers"
+      }
+    }
+  },
+  "trust": {
+    "title": "Enterprise Vertrouwen & Beveiliging",
+    "subtitle": "Duizenden organisaties vertrouwen op Plugged.in voor hun kritieke AI-infrastructuur",
+    "certifications": {
+      "soc2": {
+        "label": "SOC 2 Type II",
+        "description": "Compatibel"
+      },
+      "pciDss": {
+        "label": "PCI-DSS",
+        "description": "Conform"
+      },
+      "gdpr": {
+        "label": "GDPR",
+        "description": "Conform"
+      },
+      "hipaa": {
+        "label": "HIPAA",
+        "description": "Gereed"
+      }
+    },
+    "growth": {
+      "title": "Van 0 naar 14.000+ API-oproepen in slechts 30 dagen",
+      "subtitle": "Sluit je aan bij 620+ ontwikkelaars die de toekomst bouwen met het snelst groeiende AI-integratieplatform",
+      "stats": {
+        "documents": "87+ AI-documenten",
+        "servers": "460 Actieve servers",
+        "projects": "650+ Projecten aangemaakt"
+      }
+    }
+  },
+  "metrics": {
+    "growth": {
+      "value": "718",
+      "suffix": "%",
+      "label": "Maandelijkse groei"
+    },
+    "tools": {
+      "value": "7,268",
+      "suffix": "+",
+      "label": "Geverifieerde tools"
+    },
+    "servers": {
+      "value": "1,500",
+      "suffix": "+",
+      "label": "MCP-servers"
+    },
+    "apiCalls": {
+      "value": "14K",
+      "suffix": "+",
+      "label": "Maandelijkse API-oproepen"
+    },
+    "projects": {
+      "value": "650",
+      "suffix": "+",
+      "label": "Actieve projecten"
+    },
+    "users": {
+      "value": "620",
+      "suffix": "+",
+      "label": "Actieve ontwikkelaars"
+    },
+    "activeServers": {
+      "value": "460",
+      "suffix": "+",
+      "label": "Actieve servers"
+    },
+    "response": {
+      "value": "100",
+      "prefix": "<",
+      "suffix": "ms",
+      "label": "Responstijd"
+    },
+    "uptime": {
+      "value": "99.9",
+      "suffix": "%",
+      "label": "Uptime SLA"
+    },
+    "documents": {
+      "value": "87",
+      "suffix": "+",
+      "label": "AI-documenten"
+    }
+  },
+  "problemStatement": {
+    "title": "AI-fragmentatie kost u tijd, geld en intelligentie",
+    "subtitle": "De belofte van AI-productiviteit is reëel. Maar de realiteit? Uw AI-mogelijkheden zijn verspreid over platforms, tools resetten na elke sessie, en niets communiceert met elkaar.",
+    "problems": {
+      "scattered": {
+        "title": "Kennis overal verspreid",
+        "description": "Uw documenten bevinden zich in Google Drive, Notion, Confluence en lokale bestanden. Elk AI-platform vereist dat u alles opnieuw uploadt of heeft er helemaal geen toegang toe."
+      },
+      "reconfiguring": {
+        "title": "Eindeloze toolconfiguratie",
+        "description": "Uren besteed aan het opzetten van GitHub-integratie in Claude? Nu opnieuw doen voor ChatGPT. En opnieuw voor Cursor. En opnieuw voor elke nieuwe AI-tool die u probeert."
+      },
+      "noMemory": {
+        "title": "Geen geheugen tussen sessies",
+        "description": "Elk gesprek begint vanaf nul. De context die u gisteren hebt opgebouwd? Weg. De voorkeuren die u vorige week hebt ingesteld? Vergeten. U legt uzelf constant opnieuw uit."
+      },
+      "agentFailures": {
+        "title": "Agents die stilletjes verdwijnen",
+        "description": "Een autonome agent ingezet? Hoop dat het niet crasht. U weet het pas uren later. Geen lifecycle management, geen monitoring, geen controle."
+      },
+      "productionGap": {
+        "title": "Proof-of-Concept hel",
+        "description": "88% van AI-projecten haalt nooit productie. Waarom? Omdat API's aan elkaar knopen, state beheren en beveiliging garanderen een fulltime baan wordt."
+      }
+    },
+    "quote": "We hebben weken besteed aan het individueel configureren van MCP-servers voor elk teamlid. Plugged.in gaf ons alles op één plek—nu bespaart ons team 15 uur per week en onthoudt onze AI daadwerkelijk onze codebase.",
+    "quoteAuthor": "Engineering Lead, Series B SaaS Bedrijf"
+  },
+  "fourPillars": {
+    "badge": "Het complete platform",
+    "title": "Vier pijlers. Oneindige mogelijkheden.",
+    "subtitle": "Het enige uniforme platform dat MCP-orkestratie, ingebedde vectorzoekopdrachten, persistente geheugensystemen en autonome agent lifecycle management combineert.",
+    "knowledge": {
+      "title": "De geheugenbank van uw AI",
+      "description": "Upload documenten één keer, toegang overal. Onze ingebedde vector-engine transformeert uw institutionele kennis in persistente, doorzoekbare context waar elke AI gebruik van kan maken — geen externe services nodig.",
+      "features": {
+        "1": "AI-gegenereerde documenten met volledige modelattributie en versiegeschiedenis",
+        "2": "Sub-seconde semantisch zoeken aangedreven door in-process HNSW vector-indexering",
+        "3": "Multi-format ondersteuning: PDF, Markdown, JSON, HTML met automatische chunking en embedding"
+      },
+      "highlightLabel": "Echte impact",
+      "highlight": "Code review geheugen dat persistent is over AI-platforms. Uw debugging-sessies worden institutionele kennis die zich in de loop van de tijd opbouwt."
+    },
+    "tools": {
+      "title": "1.500+ tools, één interface",
+      "description": "Stop met het steeds opnieuw configureren van dezelfde MCP-servers voor elk AI-platform. Eén keer verbinden, overal gebruiken. Native Claude Code plugin plus universele MCP-proxy voor elke andere client.",
+      "features": {
+        "1": "Native Claude Code plugin: alle tools, kennisbank, geheugen en meldingen in je IDE",
+        "2": "30-55% token-efficiëntieverbetering vs. typische MCP-proxies",
+        "3": "Universele compatibiliteit: Claude Code, Cursor, Cline, ChatGPT, LM Studio en meer"
+      },
+      "highlightLabel": "De efficiëntiewinst",
+      "highlight": "Voeg plugged.in in seconden toe aan Claude Code. Eén plugin vervangt honderden individuele MCP-configuraties — één keer bijwerken, overal toepassen."
+    },
+    "memory": {
+      "title": "Intelligent geheugensysteem",
+      "description": "Door menselijke cognitie geïnspireerd geheugensysteem met concentrische ringen, intelligent vergeten en collectieve wijsheid. Van klembordopslag tot langetermijnherinneringen die natuurlijk vervagen en anoniem opkomende gemeenschapspatronen.",
+      "features": {
+        "1": "Concentrische geheugenringen: Verse observaties, procedures, praktijk, langetermijn en schokken",
+        "2": "Collectieve Best Practices: Privacy-beschermende patronen geaggregeerd uit de gemeenschap",
+        "3": "Klembord, sessies, Z-rapporten en progressief ophalen met 10x token-efficiëntie"
+      },
+      "highlightLabel": "NIEUW in v3.1.0",
+      "highlight": "Collectieve Best Practices (CBP) systeem nu live. Uw agenten leren van geanonimiseerde gemeenschapspatronen — foutherstel, workflows en best practices — zonder privégegevens bloot te stellen."
+    },
+    "agents": {
+      "title": "Autonome agents met militaire governance",
+      "description": "'s Werelds eerste uitgebreide agent lifecycle management protocol. Deploy, monitor en controleer autonome agents met de betrouwbaarheid die ondernemingen eisen.",
+      "features": {
+        "1": "Sub-50ms control plane latency met DNS-gebaseerde agent-adressering",
+        "2": "Uitgebreid lifecycle management: NEW → PROVISIONED → ACTIVE → DRAINING → TERMINATED",
+        "3": "99.9% uptime onder chaos testing met automatisch foutherstel"
+      },
+      "highlightLabel": "Academische innovatie",
+      "highlight": "PAP protocol academisch paper klaar voor arXiv-indiening. Het oplossen van de 28% kloof tussen menselijke en AI-prestaties op realistische taken door protocol-niveau betrouwbaarheid."
+    },
+    "cta": {
+      "text": "Klaar om uw AI-infrastructuur te verenigen?",
+      "button": "Start vandaag gratis"
+    }
+  },
+  "videoTutorials": {
+    "title": "Zie het in actie",
+    "subtitle": "Bekijk stap-voor-stap tutorials om binnen enkele minuten aan de slag te gaan met plugged.in. Van basisinstellingen tot geavanceerde functies.",
+    "quickSetup": {
+      "title": "Snelle setup",
+      "duration": "3 min",
+      "description": "Verbind MCP-servers met Claude Desktop, VS Code, Cursor en andere AI-tools in minder dan 3 minuten.",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw"
+    },
+    "ragArchive": {
+      "title": "RAG & documentarchief",
+      "duration": "5 min",
+      "description": "Leer hoe u bestanden opslaat in uw kennisbank en ze opvraagt met AI-aangedreven semantisch zoeken over alle platforms.",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw?start=141"
+    },
+    "notifications": {
+      "title": "Taakmeldingen",
+      "duration": "4 min",
+      "description": "Stel geautomatiseerde meldingen en taaktracking in om op de hoogte te blijven van uw AI-workflows en agentactiviteiten.",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw?start=250"
+    },
+    "oauthServers": {
+      "title": "OAuth-integratie",
+      "duration": "6 min",
+      "description": "Verbind services zoals Notion, Linear en GitHub met OAuth. Authenticeer één keer—tokens worden automatisch vernieuwd voordat ze verlopen. Geen handmatig tokenbeheer nodig.",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw?start=276"
+    },
+    "moreVideos": "Meer tutorials beschikbaar in onze",
+    "docsLink": "documentatie"
+  },
+  "roadmap": {
+    "badge": "Product Roadmap",
+    "title": "De Plugged.in Roadmap",
+    "subtitle": "Van een uniform AI-controlevlak naar autonoom agenten in de echte wereld",
+    "stage1": {
+      "date": "Maart 2025",
+      "title": "Het Begin: Uniform AI-Controlevlak",
+      "description": "Plugged.in gelanceerd. Eerste fundament: Kennis, Tools en Geheugen onder één controlevlak. Model Context Protocol-ondersteuning begint."
+    },
+    "stage2": {
+      "date": "Maart 2026",
+      "title": "Plugged.in v3.0.0 — Ingebedde RAG Vector Engine",
+      "description": "RAG vanaf de grond opnieuw opgebouwd met de ingebedde zvec vector engine. Geen externe afhankelijkheden — documentchunking, embedding en HNSW-zoekopdrachten draaien allemaal in-process. Kennis wordt een ingebouwde functionaliteit, geen externe service."
+    },
+    "stage3": {
+      "title": "Plugged.in v3.1.0 — Collectieve Best Practices",
+      "description": "Agenten leren nu van de gemeenschap. Het CBP-systeem promoveert hoogwaardige herinneringen naar geanonimiseerde collectieve patronen met k-anonimiteit bescherming, HMAC-gebaseerde privacy en contextuele injectie. Inclusief AI-provider abstractie met Gemini-ondersteuning en gedeelde vectorinfrastructuur."
+    },
+    "stage4": {
+      "date": "Eind Oktober 2025",
+      "title": "PAP — Plugged.in Agent Protocol (Mijlpaal)",
+      "description": "PAP vrijgegeven als de controle + telemetrie ruggengraat. Autonome agenten hebben nu: levenscyclusbeheer, beleidsmotor, veilige kanalen, kill-switch, eventstroom en cross-model orkestratie. PAP transformeert Plugged.in van een controlelaag naar een autonoom agentplatform."
+    },
+    "stage5": {
+      "date": "Q2 2026",
+      "title": "Sensoren → Agenten → Cognitieve Predictieve Automatisering",
+      "description": "Plugged.in breidt uit naar de fysieke wereld. Raspberry Pi & lichtgewicht sensorknooppunten streamen: druk, vibratie, warmte, akoestiek, spanning & stroom. Cloud-agenten leren, passen zich aan, voorspellen en handelen. Resultaat: 'Agenten die werken.' Maakt een wereldwijde agent-ondersteunde workforce mogelijk."
+    },
+    "outcome": {
+      "title": "Cognitieve Predictieve Automatisering",
+      "line1": "Autonome agenten die echte-wereld data analyseren, leren van patronen en handelen voordat fouten optreden.",
+      "line2": "Dit is waar digitale intelligentie fysieke systemen ontmoet."
+    },
+    "workforce": {
+      "title": "Agent-Ondersteunde Workforce",
+      "line1": "Duizenden technici die sensoren installeren en configureren.",
+      "line2": "Technologie die mensen schaalt, niet vervangt."
+    },
+    "cta": {
+      "primary": "Verkrijg API-sleutel",
+      "secondary": "Bekijk GitHub"
+    },
+    "status": {
+      "completed": "Voltooid",
+      "inProgress": "Bezig",
+      "planned": "Gepland",
+      "future": "Toekomst"
+    }
+  },
+  "popularServers": {
+    "badge": "Meest Populair",
+    "title": "Top MCP Servers",
+    "subtitle": "Ontdek de meest geïnstalleerde en hoogst gewaardeerde MCP servers van onze community",
+    "viewDetails": "Details Bekijken",
+    "exploreAll": "Explore All {{count}}+ Servers"
+  },
+  "jungian": {
+    "title": "Intelligentie die met je meegroeit",
+    "subtitle": "Geïnspireerd door Carl Jungs collectief onbewuste — je AI onthoudt niet alleen, het leert, consolideert en evolueert.",
+    "archetypes": {
+      "shadow": "Schaduw",
+      "shadowDesc": "Waarschuwt voor wat je NIET moet doen — anti-patronen, beveiligingsrisico's, bekende valkuilen",
+      "sage": "Wijze",
+      "sageDesc": "Begeleidt de juiste aanpak — best practices, bewezen oplossingen, expertwijsheid",
+      "hero": "Held",
+      "heroDesc": "Toont wat je moet doen — workflows, toolsequenties, actieplannen",
+      "trickster": "Bedrieger",
+      "tricksterDesc": "Biedt creatieve oplossingen — workarounds, randgevallen, onconventionele fixes"
+    }
+  },
+  "terminal": {
+    "title": "Nul configuratie. Alles automatisch.",
+    "subtitle": "Vijf lifecycle hooks beheren je hele geheugensessie van begin tot eind — geen handmatige tussenkomst nodig.",
+    "learnMore": "Hoe Synchroniciteitsdetectie Werkt"
+  },
+  "heroPlugin": {
+    "badge": "AI-geheugen dat van iedereen leert",
+    "headline": "Je AI onthoudt jou. Wij onthouden iedereen.",
+    "subtitle": "Collectief geheugen gedistilleerd uit duizenden ontwikkelaars. De fout die je op het punt staat te maken? Iemand heeft het al gedaan. Plugged.in weet het.",
+    "tagline": "Individueel geheugen is beperkt. Collectief geheugen is een superkracht.",
+    "copy": "Installeercommando kopiëren",
+    "copied": "Gekopieerd!",
+    "setupHint": "Log in via je browser om je workspace te koppelen",
+    "starOnGithub": "Ster op GitHub",
+    "howItWorks": "Hoe het werkt",
+    "stats": "Open source. Voor altijd gratis. Community-aangedreven.",
+    "contrast": {
+      "title": "Waarom niet gewoon het geheugen van je model gebruiken?",
+      "model": {
+        "col1": "Alleen jouw sessie",
+        "col2": "Vergeet wanneer context vol raakt",
+        "col3": "Je herhaalt dezelfde fout"
+      },
+      "pluggedin": {
+        "col1": "Ervaring van duizenden ontwikkelaars",
+        "col2": "Patronen zijn permanent",
+        "col3": "Waarschuwt je: doe dit niet"
+      },
+      "labels": {
+        "model": "Modelgeheugen",
+        "pluggedin": "Plugged.in"
+      }
+    },
+    "proxySetupHint": "Universele MCP-proxy voor Cursor, Cline, ChatGPT, LM Studio en meer",
+    "compat": "Twee installatiepaden · Native plugin voor Claude Code · Universele MCP-proxy voor elke andere client",
+    "tabs": {
+      "plugin": "Claude Code Plugin",
+      "proxy": "MCP Proxy (andere clients)",
+      "pluginCaption": "Claude Code · 30 seconden · zonder configuratie",
+      "proxyCaption": "Cursor · Cline · ChatGPT · LM Studio · elke MCP-client",
+      "tablistLabel": "Installatiemethode"
+    }
+  },
+  "oneLiner": {
+    "statement": "AI onthoudt. Leert. Evolueert.",
+    "subtitle": "Drie intelligentielagen transformeren elke AI-interactie van een blanco pagina naar een continuüm van context, wijsheid en inzicht.",
+    "personal": {
+      "title": "Persoonlijk Geheugen",
+      "desc": "Elke sessie bouwt voort op de vorige. Je AI behoudt context, voorkeuren en werkpatronen over gesprekken en platformen — niets begint vanaf nul."
+    },
+    "collective": {
+      "title": "Collectieve Intelligentie",
+      "desc": "Geanonimiseerde best practices van de community komen automatisch naar boven. Wanneer meerdere gebruikers onafhankelijk hetzelfde inzicht ontdekken, wordt het gedeelde wijsheid."
+    },
+    "archetypal": {
+      "title": "Archetypische Begeleiding",
+      "desc": "Geïnspireerd door de Jungiaanse psychologie ontwikkelt je AI een genuanceerd beoordelingsvermogen dat weet wat te doen, wat te vermijden en wanneer iets onconventioneels te proberen."
+    }
+  },
+  "scenarios": {
+    "title": "Is dit je overkomen?",
+    "subtitle": "Elke ontwikkelaar heeft dit meegemaakt. Het verschil is of je alleen leert of van iedereen.",
+    "bug": {
+      "title": "3 uur, 1 bug",
+      "before": "Recursieve query infinite loop. 14 Stack Overflow-tabbladen. ChatGPT 3 keer gevraagd, elke keer een ander antwoord. Opgelost — 3 uur later.",
+      "after": "\"Dit patroon 47 keer gezien. 89% veroorzaakt door ontbrekende base case.\" — 5 minuten.",
+      "label": "Debug-tijd"
+    },
+    "production": {
+      "title": "2 uur 's nachts in productie",
+      "before": ".env.staging-waarden naar .env.production gepusht. Alerts gingen af. Rollback, postmortem, schaamte.",
+      "after": "\"Deze config is 12 keer foutief naar productie gedeployed. Weet je het zeker?\" — Vóór deploy.",
+      "label": "Deploy-veiligheid"
+    },
+    "framework": {
+      "title": "Nieuw framework, oude fouten",
+      "before": "Nieuw framework leren. Docs gelezen, tutorials gedaan. Maar onverwachte edge cases in productie.",
+      "after": "\"Top 3 fouten met dit framework: connection pooling, cache invalidation, missing error boundaries.\" — Voordat je begint.",
+      "label": "Onboarding"
+    },
+    "beforeLabel": "Zonder Plugged.in",
+    "afterLabel": "Met Plugged.in"
+  },
+  "howItWorks": {
+    "title": "Je AI weet al wat anderen hebben geleerd",
+    "subtitle": "Geen setup. Geen configuratie. Patronen stromen automatisch naar je AI.",
+    "dontDoThis": {
+      "title": "Doe dit niet",
+      "desc": "Terugkerende fouten, anti-patronen, bekende valkuilen uit de community. Je AI waarschuwt je — omdat anderen er al in zijn getrapt."
+    },
+    "tryThis": {
+      "title": "Probeer dit in plaats daarvan",
+      "desc": "Bewezen oplossingen, best practices, door de community gevalideerde benaderingen. Niet de mening van één persoon — de ervaring van honderden ontwikkelaars."
+    },
+    "creative": {
+      "title": "Niemand heeft dit geprobeerd, maar...",
+      "desc": "Onconventionele maar werkende oplossingen. Creatieve benaderingen uit de community — verder dan standaardantwoorden."
+    },
+    "flow": {
+      "step1": "Je codeert",
+      "step2": "Patroon gedetecteerd",
+      "step3": "Gematcht met community",
+      "step4": "Je AI vertelt het je"
+    }
+  },
+  "ctaPlugin": {
+    "headline": "De community heeft al geleerd. Leer jij nog steeds alleen?",
+    "copy": "Installeercommando kopiëren",
+    "copied": "Gekopieerd!",
+    "setupHint": "Installeer in 30 seconden. Word deel van het collectieve geheugen.",
+    "starOnGithub": "Ster op GitHub",
+    "readDocs": "Documentatie",
+    "platform": "Open platform",
+    "footer": "Voor altijd gratis. Open source. Je patronen blijven privé."
+  },
+  "dream": {
+    "title": "Droomverwerking: Geheugenconsolidatie",
+    "subtitle": "Net als het menselijk brein tijdens slaap, transformeert je AI verspreide fragmenten tot gezaghebbende kennis — en vermindert token-overhead dramatisch.",
+    "before": "15 gefragmenteerde herinneringen",
+    "after": "1 uitgebreide gids",
+    "processingLabel": "Droomverwerking",
+    "consolidated": "Geconsolideerd",
+    "tokensBefore": "7.500 tokens",
+    "tokensAfter": "600 tokens",
+    "tokenReduction": "tokenreductie",
+    "decay": "Herinneringen vervallen natuurlijk door fases, waarbij alleen het belangrijke bewaard blijft:",
+    "full": "Volledig",
+    "compressed": "Gecomprimeerd",
+    "summary": "Samenvatting",
+    "essence": "Essentie",
+    "learnMore": "Hoe Droomverwerking Werkt"
+  },
+  "individuation": {
+    "title": "Individuatiescore",
+    "cardLabel": "Individuatiescore",
+    "subtitle": "Volg de groeireis van je AI van blanco canvas naar volledig geïndividueerde intelligentie met meetbare dimensies.",
+    "bars": {
+      "memoryDepth": "Geheugendiepte",
+      "learningVelocity": "Leersnelheid",
+      "collectiveContribution": "Collectieve Bijdrage",
+      "selfAwareness": "Zelfbewustzijn"
+    },
+    "maxScore": "/100",
+    "tip": "Tip: Draag bij aan collectieve best practices en schakel reflectie in om je individuatiescore te versnellen.",
+    "levels": {
+      "nascent": "Ontluikend",
+      "developing": "Ontwikkelend",
+      "established": "Gevestigd",
+      "mature": "Volwassen",
+      "individuated": "Geïndividueerd"
+    },
+    "teamEffect": "Nieuwe teamleden erven collectieve wijsheid vanaf dag één.",
+    "learnMore": "Hoe Individuatiescoring Werkt"
+  },
+  "platformCapabilities": {
+    "title": "Één platform. Elk model. Nul fragmentatie.",
+    "subtitle": "Plugged.in verenigt 2.700+ MCP-servers, persistent geheugen, documenten en kennisbanken in één modelonafhankelijke infrastructuur — je data blijft bij jou, niet bij het model.",
+    "tagline": "Eén plugin. Elk model. Jouw data. Geen lock-in.",
+    "cards": {
+      "mcpHub": {
+        "title": "2.700+ MCP-servers",
+        "desc": "Universele MCP-proxy die duizenden toolservers aggregeert. Eenmaal verbinden — gebruiken vanuit Claude Code, Cursor, ChatGPT of elke MCP-client. STDIO, SSE en Streamable HTTP allemaal ondersteund."
+      },
+      "memory": {
+        "title": "Persistent Geheugen",
+        "desc": "Individueel + collectief geheugen. Je AI leert van je sessies — en van patronen die duizenden ontwikkelaars ontdekken. Privacy beschermd via HMAC-SHA256 + k-anonimiteit."
+      },
+      "knowledge": {
+        "title": "Kennisbank (RAG)",
+        "desc": "Upload documenten, bouw kennisbanken met ingebedde vectorzoekopdrachten. In-process HNSW-indexering — geen externe service nodig. Bedrijfskennis altijd toegankelijk."
+      },
+      "modelAgnostic": {
+        "title": "Modelonafhankelijk",
+        "desc": "Werkt met elk AI-model en platform. Claude, ChatGPT, Cursor, Cline, LM Studio — wissel vrij van model, je tools, geheugen en kennis gaan met je mee."
+      },
+      "dataOwnership": {
+        "title": "Zakelijke beveiliging",
+        "desc": "AES-256-GCM-versleuteling, OAuth 2.1/PKCE, firejail-sandboxing. Zes beveiligingsronden. SOC 2-klare architectuur."
+      },
+      "openSource": {
+        "title": "Open Source & Zelf Hosten",
+        "desc": "MIT-gelicentieerd, volledig open source. Deploy op je eigen infrastructuur voor volledige controle. Geen vendorlock-in — je AI-setup is voor altijd van jou."
+      }
+    }
+  },
+  "privacy": {
+    "title": "Niemand ziet je code",
+    "subtitle": "Patronen worden gedeeld. Code nooit.",
+    "identity": {
+      "title": "Je identiteit is gewist",
+      "desc": "Je ervaringen zijn eenrichtings-versleuteld. Niet herleidbaar naar jou. Onomkeerbaar."
+    },
+    "kanonymity": {
+      "title": "Alleen ben je onzichtbaar",
+      "desc": "Een patroon wordt pas gedeeld als minstens 3 verschillende ontwikkelaars het ontdekken. De fout van één persoon wordt nooit blootgesteld."
+    },
+    "temporal": {
+      "title": "Tijd is vervaagd",
+      "desc": "Wanneer je iets deed is ook geanonimiseerd. Niet \"dinsdag om 14:32\" maar \"deze maand\"."
+    },
+    "tagline": "Privacy is wiskunde, geen beloftes. HMAC-SHA256 + k-anonymity (k>=3).",
+    "openSource": "Volledig open source. Verifieer alles."
+  },
+  "mcpProxy": {
+    "badge": "Universele MCP Proxy",
+    "title": "Eén endpoint. Elke MCP-server. Elke AI-client.",
+    "subtitle": "Geen Claude Code-gebruiker? De universele MCP-proxy van Plugged.in maakt van elke AI-client — Cursor, Cline, ChatGPT, LM Studio, Continue, Windsurf — een verenigde poort naar duizenden MCP-servers, je kennisbasis en persistent geheugen.",
+    "installLabel": "MCP Proxy Installatie",
+    "copy": "Kopiëren",
+    "copied": "Gekopieerd!",
+    "compat": "Werkt met Cursor · Cline · ChatGPT Desktop · LM Studio · Continue · Windsurf · elke MCP-compatibele client",
+    "features": {
+      "servers": {
+        "title": "2.700+ MCP-servers",
+        "desc": "GitHub, Slack, Notion, Linear, Postgres, Stripe, AWS, Google Drive — en duizenden andere. Ontdek, installeer en beheer vanuit één register."
+      },
+      "transports": {
+        "title": "Elke transport",
+        "desc": "STDIO, Server-Sent Events (SSE) en Streamable HTTP-transports — allemaal verenigd achter één proxy-endpoint met OAuth 2.1-tokenrotatie."
+      },
+      "clients": {
+        "title": "Elke AI-client",
+        "desc": "Configureer één keer in Plugged.in. Gebruik dezelfde toolset, kennis en geheugen in Cursor, Cline, ChatGPT, LM Studio en elke MCP-compatibele client."
+      },
+      "orchestration": {
+        "title": "Ingebouwde orkestratie",
+        "desc": "AI-playground voor testen, realtime activiteitsmonitoring, aangepaste instructies, documentuitwisseling en notificaties — inbegrepen, niet bijgevoegd."
+      }
+    },
+    "cta": {
+      "browse": "Bekijk het register",
+      "setupGuide": "Setupgids",
+      "getApiKey": "Gratis API-sleutel"
+    }
+  }
+}

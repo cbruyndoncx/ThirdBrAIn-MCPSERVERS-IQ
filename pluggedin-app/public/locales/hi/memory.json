@@ -1,0 +1,312 @@
+{
+  "title": "मेमोरी",
+  "description": "अपने AI एजेंट्स के लिए क्लिपबोर्ड डेटा, दीर्घकालिक मेमोरी, प्रक्रियाएं और ताजा संदर्भ प्रबंधित करें।",
+  "refresh": "रीफ्रेश",
+  "comingSoon": "जल्द आ रहा है",
+  "stats": {
+    "clipboard": "क्लिपबोर्ड",
+    "entries": "प्रविष्टियां",
+    "storage": "स्टोरेज",
+    "used": "उपयोग किया गया",
+    "expiring": "समाप्त हो रहा",
+    "today": "आज",
+    "types": "प्रकार",
+    "contentTypes": "सामग्री प्रकार",
+    "sessions": "सत्र",
+    "active": "सक्रिय",
+    "memories": "स्मृतियां",
+    "inRings": "रिंग में",
+    "fresh": "ताज़ा",
+    "unclassified": "अवर्गीकृत",
+    "patterns": "पैटर्न",
+    "collective": "सामूहिक"
+  },
+  "tabs": {
+    "clipboard": "क्लिपबोर्ड",
+    "longterm": "दीर्घकालिक",
+    "procedures": "प्रक्रियाएं",
+    "fresh": "ताजा",
+    "collective": "सामूहिक"
+  },
+  "clipboard": {
+    "empty": {
+      "title": "कोई क्लिपबोर्ड प्रविष्टि नहीं",
+      "description": "प्रविष्टियां जोड़ने के लिए pluggedin_clipboard_set या pluggedin_clipboard_push जैसे MCP टूल्स का उपयोग करें।"
+    },
+    "createEntry": "प्रविष्टि बनाएं",
+    "named": "नामित प्रविष्टियां",
+    "indexed": "अनुक्रमित प्रविष्टियां",
+    "clearAll": "सभी साफ करें",
+    "viewMode": {
+      "table": "टेबल",
+      "grid": "ग्रिड"
+    },
+    "table": {
+      "name": "नाम",
+      "index": "इंडेक्स",
+      "type": "प्रकार",
+      "value": "मान",
+      "size": "आकार",
+      "expires": "समाप्ति",
+      "actions": "क्रियाएं"
+    },
+    "actions": {
+      "preview": "पूर्वावलोकन",
+      "copy": "कॉपी",
+      "edit": "संपादित करें",
+      "delete": "हटाएं"
+    },
+    "form": {
+      "createTitle": "क्लिपबोर्ड प्रविष्टि बनाएं",
+      "editTitle": "क्लिपबोर्ड प्रविष्टि संपादित करें",
+      "createDescription": "अपनी क्लिपबोर्ड मेमोरी में एक नई प्रविष्टि जोड़ें।",
+      "editDescription": "क्लिपबोर्ड प्रविष्टि विवरण अपडेट करें।",
+      "name": "नाम",
+      "namePlaceholder": "उदा., api_key, user_preferences",
+      "nameHelp": "इस प्रविष्टि के लिए विशिष्ट पहचानकर्ता",
+      "value": "मान",
+      "valuePlaceholder": "सामग्री दर्ज करें...",
+      "contentType": "सामग्री प्रकार",
+      "encoding": "एन्कोडिंग",
+      "visibility": "दृश्यता",
+      "visibilityPrivate": "निजी (केवल आप)",
+      "visibilityWorkspace": "कार्यस्थान (टीम सदस्य)",
+      "visibilityPublic": "सार्वजनिक (सभी)",
+      "ttl": "समाप्ति समय",
+      "minutes": "मिनट",
+      "hour": "घंटा",
+      "hours": "घंटे",
+      "days": "दिन",
+      "cancel": "रद्द करें",
+      "create": "प्रविष्टि बनाएं",
+      "update": "प्रविष्टि अपडेट करें",
+      "saving": "सहेजा जा रहा है...",
+      "uploadFile": "फ़ाइल अपलोड करें",
+      "dropzoneText": "यहां फ़ाइल ड्रॉप करें या ब्राउज़ करने के लिए क्लिक करें",
+      "dropzoneHint": "इमेज, PDF, JSON, टेक्स्ट फ़ाइलें (अधिकतम {{maxSize}})",
+      "fileTooLarge": "फ़ाइल बहुत बड़ी है। अधिकतम आकार {{maxSize}} है",
+      "fileUploaded": "फ़ाइल अपलोड हुई ({{size}})",
+      "fileReadError": "फ़ाइल पढ़ने में विफल",
+      "or": "या टेक्स्ट दर्ज करें"
+    },
+    "deleteDialog": {
+      "title": "क्लिपबोर्ड प्रविष्टि हटाएं",
+      "description": "क्या आप वाकई \"{{identifier}}\" को हटाना चाहते हैं? यह क्रिया पूर्ववत नहीं की जा सकती।",
+      "delete": "हटाएं",
+      "deleting": "हटा रहा है...",
+      "cancel": "रद्द करें"
+    },
+    "clearAllDialog": {
+      "title": "सभी क्लिपबोर्ड प्रविष्टियां साफ करें",
+      "description": "क्या आप वाकई सभी {{count}} क्लिपबोर्ड प्रविष्टियां हटाना चाहते हैं? यह क्रिया पूर्ववत नहीं की जा सकती।",
+      "clear": "सभी साफ करें",
+      "clearing": "साफ कर रहा है...",
+      "cancel": "रद्द करें"
+    },
+    "preview": {
+      "unsafeImageType": "छवि पूर्वावलोकन नहीं हो सकता: सुरक्षा कारणों से असमर्थित सामग्री प्रकार।",
+      "contentType": "सामग्री प्रकार",
+      "details": "विवरण",
+      "source": "स्रोत",
+      "sourceUi": "UI",
+      "sourceSdk": "SDK",
+      "sourceMcp": "MCP",
+      "visibility": "दृश्यता",
+      "encoding": "एन्कोडिंग",
+      "createdAt": "बनाया गया",
+      "updatedAt": "अपडेट किया गया",
+      "expiresAt": "समाप्ति",
+      "createdBy": "द्वारा निर्मित",
+      "tool": "उपकरण",
+      "model": "मॉडल",
+      "noExpiration": "कभी नहीं"
+    },
+    "toast": {
+      "copied": "क्लिपबोर्ड पर कॉपी किया गया",
+      "copyFailed": "क्लिपबोर्ड पर कॉपी करने में विफल",
+      "cannotCopyBinary": "बाइनरी सामग्री सिस्टम क्लिपबोर्ड पर कॉपी नहीं की जा सकती",
+      "deleted": "प्रविष्टि सफलतापूर्वक हटाई गई",
+      "deleteFailed": "प्रविष्टि हटाने में विफल",
+      "clearedAll": "सभी प्रविष्टियां साफ कर दी गईं",
+      "clearAllFailed": "सभी प्रविष्टियां साफ करने में विफल",
+      "created": "प्रविष्टि सफलतापूर्वक बनाई गई",
+      "updated": "प्रविष्टि सफलतापूर्वक अपडेट की गई",
+      "saveFailed": "प्रविष्टि सहेजने में विफल"
+    }
+  },
+  "longterm": {
+    "title": "दीर्घकालिक मेमोरी",
+    "description": "सत्रों और बातचीत में जीवित रहने वाली स्थायी मेमोरी।",
+    "searchPlaceholder": "अर्थपूर्ण रूप से स्मृतियां खोजें...",
+    "search": "खोजें",
+    "empty": {
+      "title": "अभी तक कोई स्मृति नहीं",
+      "description": "स्मृतियां सत्रों के दौरान वर्गीकृत अवलोकनों से बनाई जाती हैं।"
+    },
+    "table": {
+      "ring": "रिंग",
+      "content": "सामग्री",
+      "decay": "क्षय",
+      "relevance": "प्रासंगिकता",
+      "hits": "हिट्स",
+      "actions": "क्रियाएं"
+    },
+    "detail": {
+      "title": "स्मृति विवरण",
+      "fullContent": "पूर्ण सामग्री",
+      "summary": "सारांश",
+      "essence": "सार",
+      "relevance": "प्रासंगिकता",
+      "successScore": "सफलता स्कोर",
+      "reinforcements": "सुदृढ़ीकरण",
+      "tokens": "टोकन",
+      "accessCount": "पहुंच गणना",
+      "created": "बनाया गया",
+      "lastAccessed": "अंतिम पहुंच",
+      "tags": "टैग"
+    },
+    "deleteDialog": {
+      "title": "स्मृति हटाएं",
+      "description": "क्या आप वाकई यह स्मृति हटाना चाहते हैं? यह क्रिया पूर्ववत नहीं की जा सकती।",
+      "delete": "हटाएं",
+      "cancel": "रद्द करें"
+    }
+  },
+  "procedures": {
+    "title": "प्रक्रियाएं",
+    "description": "पिछली बातचीत से सीखे गए पुन: प्रयोज्य वर्कफ्लो और प्रक्रियाएं।",
+    "searchPlaceholder": "प्रक्रियाएं खोजें...",
+    "search": "खोजें",
+    "empty": {
+      "title": "अभी तक कोई प्रक्रिया नहीं",
+      "description": "प्रक्रियाएं आपके सत्रों में दोहराए गए सफल पैटर्न से सीखी जाती हैं।"
+    },
+    "detail": {
+      "title": "प्रक्रिया विवरण",
+      "fullContent": "पूर्ण सामग्री",
+      "summary": "सारांश",
+      "relevance": "प्रासंगिकता",
+      "reinforcements": "सुदृढ़ीकरण",
+      "accessCount": "पहुंच गणना",
+      "tokens": "टोकन",
+      "created": "बनाया गया"
+    },
+    "deleteDialog": {
+      "title": "प्रक्रिया हटाएं",
+      "description": "क्या आप वाकई यह प्रक्रिया हटाना चाहते हैं? यह क्रिया पूर्ववत नहीं की जा सकती।",
+      "delete": "हटाएं",
+      "cancel": "रद्द करें"
+    }
+  },
+  "fresh": {
+    "title": "ताजा संदर्भ",
+    "description": "वर्तमान बातचीत से हाल का संदर्भ और कार्यशील मेमोरी।",
+    "observations": "अवलोकन",
+    "status": {
+      "active": "सक्रिय",
+      "completed": "पूर्ण",
+      "abandoned": "परित्यक्त"
+    },
+    "zReport": "Z-रिपोर्ट",
+    "zReportSummary": "सत्र सारांश (Z-रिपोर्ट)",
+    "noSummary": "कोई सारांश उपलब्ध नहीं",
+    "observationDetails": "अवलोकन विवरण",
+    "noObservations": "कोई अवलोकन लोड नहीं हुआ",
+    "pending": "लंबित",
+    "tokens": "टोकन",
+    "createdAt": "बनाया गया",
+    "empty": {
+      "title": "अभी तक कोई सत्र नहीं",
+      "description": "सत्र तब बनाए जाते हैं जब एजेंट pluggedin_memory_session_start का उपयोग करते हैं।"
+    },
+    "table": {
+      "type": "प्रकार",
+      "content": "सामग्री",
+      "outcome": "परिणाम",
+      "classified": "वर्गीकृत",
+      "actions": "क्रियाएं"
+    },
+    "filter": {
+      "all": "सभी सत्र"
+    },
+    "prune": "पुराने हटाएं",
+    "pruneConfirm": "24 घंटे से अधिक पुराने छोड़े गए सत्र हटाएं? यह पूर्ववत नहीं किया जा सकता।",
+    "pagination": {
+      "prev": "पिछला",
+      "next": "अगला",
+      "page": "पृष्ठ {{page}}"
+    }
+  },
+  "collective": {
+    "title": "सामूहिक सर्वोत्तम प्रथाएं",
+    "description": "समुदाय से गोपनीयता-संरक्षित पैटर्न।",
+    "searchPlaceholder": "सामूहिक पैटर्न खोजें...",
+    "search": "खोजें",
+    "noResults": "कोई पैटर्न नहीं मिला",
+    "noResultsDescription": "कोई अलग खोज प्रश्न आज़माएं।",
+    "empty": {
+      "title": "सामूहिक बुद्धिमत्ता",
+      "description": "सर्वोत्तम प्रथाओं, त्रुटि समाधानों और सामान्य समस्याओं के लिए समुदाय पैटर्न खोजें।"
+    },
+    "stats": {
+      "totalPatterns": "दृश्य पैटर्न",
+      "verified": "लंबित",
+      "contributors": "योगदानकर्ता",
+      "contributions": "योगदान"
+    },
+    "table": {
+      "type": "प्रकार",
+      "pattern": "पैटर्न",
+      "confidence": "विश्वास",
+      "seen": "देखा गया",
+      "rating": "रेटिंग",
+      "actions": "कार्रवाई"
+    },
+    "feedback": {
+      "helpful": "सहायक के रूप में चिह्नित करें",
+      "inaccurate": "गलत के रूप में चिह्नित करें"
+    }
+  },
+  "jungian": {
+    "title": "जुंगियन बुद्धिमत्ता",
+    "individuation": {
+      "title": "व्यक्तिकरण स्कोर",
+      "level": "परिपक्वता स्तर",
+      "trend": "साप्ताहिक रुझान",
+      "memoryDepth": "स्मृति गहराई",
+      "learningVelocity": "सीखने की गति",
+      "collectiveContribution": "सामूहिक योगदान",
+      "selfAwareness": "आत्म-जागरूकता",
+      "nascent": "उदीयमान",
+      "developing": "विकासशील",
+      "established": "स्थापित",
+      "mature": "परिपक्व",
+      "individuated": "व्यक्तिकृत",
+      "accelerating": "तेज हो रहा है",
+      "stable": "स्थिर",
+      "decelerating": "धीमा हो रहा है"
+    },
+    "archetypes": {
+      "shadow": "छाया",
+      "sage": "ऋषि",
+      "hero": "नायक",
+      "trickster": "चालबाज",
+      "shadowDesc": "क्या नहीं करना चाहिए",
+      "sageDesc": "सही दृष्टिकोण",
+      "heroDesc": "यह करें",
+      "tricksterDesc": "रचनात्मक समाधान"
+    },
+    "dreams": {
+      "title": "स्वप्न प्रसंस्करण",
+      "consolidated": "समेकित",
+      "tokenSavings": "टोकन बचत",
+      "clusters": "पाए गए क्लस्टर"
+    },
+    "synchronicity": {
+      "title": "समकालिकता पैटर्न",
+      "coOccurrence": "सह-घटना",
+      "failureCorrelation": "विफलता सहसंबंध",
+      "emergentWorkflow": "उभरता कार्यप्रवाह"
+    }
+  }
+}

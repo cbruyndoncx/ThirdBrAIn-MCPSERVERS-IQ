@@ -1,0 +1,235 @@
+'use server';
+
+import { and, desc, eq, sql } from 'drizzle-orm';
+
+import { db } from '@/db';
+import { releaseNotes } from '@/db/schema';
+import { generateHistoricalReleaseNotes, getProcessedReleaseNotes, type RepositoryName } from '@/lib/github/release-fetcher';
+import type { ReleaseNote, ReleaseNoteContentDb } from '@/types/release';
+
+const REPOSITORIES: Array<RepositoryName> = [
+  'pluggedin-app',
+  'pluggedin-mcp',
+  'registry-proxy',
+  'pluggedinkit-python',
+  'pluggedinkit-go',
+  'pluggedinkit-js',
+  'pluggedin-docs',
+];
+
+/**
+ * Fetches the latest release notes from GitHub for all specified repositories,
+ * updates the database, and invalidates the cache.
+ * Intended to be called by a webhook or scheduled job.
+ */
+export async function updateReleaseNotesFromGitHub(): Promise<{ success: boolean; message: string; updatedRepos: string[]; error?: string }> {
+  const updatedRepos: string[] = [];
+  let overallSuccess = true;
+  let errorMessage = '';
+
+  for (const repo of REPOSITORIES) {
+    try {
+      const notesFromGitHub = await getProcessedReleaseNotes(repo);
+
+      if (notesFromGitHub.length > 0) {
+        // Get existing versions for this repo
+        const existingVersions = await db.select({ 
+          version: releaseNotes.version,
+          repository: releaseNotes.repository 
+        })
+        .from(releaseNotes)
+        .where(eq(releaseNotes.repository, repo));
+
+        const existingVersionMap = new Map(
+          existingVersions.map(v => [`${v.repository}-${v.version}`, true])
+        );
+
+        // Filter out duplicates and prepare data for insert
+        const dataToInsert = notesFromGitHub
+          .filter(note => !existingVersionMap.has(`${note.repository}-${note.version}`))
+          .map(note => ({
+            repository: note.repository,
+            version: note.version,
+            releaseDate: new Date(note.releaseDate),
+            content: note.content as any,
+            commitSha: note.commitSha,
+          }));
+
+        if (dataToInsert.length > 0) {
+          await db.insert(releaseNotes).values(dataToInsert);
+          updatedRepos.push(repo);
+        } else {
+        }
+      }
+    } catch (error: any) {
+      console.error(`Error updating release notes for ${repo}:`, error);
+      overallSuccess = false;
+      errorMessage += `Failed to update ${repo}: ${error.message}\n`;
+    }
+  }
+
+  if (overallSuccess) {
+    return { success: true, message: `Release notes updated successfully for: ${updatedRepos.join(', ')}`, updatedRepos };
+  } else {
+    return { success: false, message: 'Some errors occurred during release note update.', updatedRepos, error: errorMessage.trim() };
+  }
+}
+
+/**
+ * Fetches release notes from the database with caching.
+ * @param repositoryFilter - Optional filter for specific repository or 'all'.
+ * @param page - Page number for pagination.
+ * @param limit - Number of items per page.
+ * @returns A promise resolving to an object with notes array and total count.
+ */
+export async function getReleaseNotes(
+  repositoryFilter: RepositoryName | 'all' = 'all',
+  page = 1,
+  limit = 10
+): Promise<{ notes: ReleaseNote[]; total: number }> {
+  try {
+    const offset = (page - 1) * limit;
+
+    // Build query conditions
+    const conditions = repositoryFilter !== 'all'
+      ? [eq(releaseNotes.repository, repositoryFilter)]
+      : [];
+
+    // Fetch notes with pagination
+    const notes = await db.select()
+                          .from(releaseNotes)
+                          .where(and(...conditions))
+                          .orderBy(desc(releaseNotes.releaseDate))
+                          .limit(limit)
+                          .offset(offset);
+
+    // Get total count for pagination
+    const countResult = await db.select({ count: sql<number>`count(*)` })
+                                 .from(releaseNotes)
+                                 .where(and(...conditions));
+
+    const total = Number(countResult[0]?.count || 0);
+
+    // Convert Date objects to ISO strings and assert repository type
+    const formattedNotes = notes.map(note => ({
+      ...note,
+      repository: note.repository as RepositoryName,
+      releaseDate: note.releaseDate.toISOString(),
+      content: note.content as ReleaseNoteContentDb,
+      createdAt: note.createdAt.toISOString(),
+      updatedAt: note.updatedAt.toISOString(),
+    }));
+
+    return { notes: formattedNotes, total };
+  } catch (error) {
+    console.error('Error fetching release notes:', error);
+    throw error;
+  }
+}
+
+/**
+ * Populates the database with historical release notes.
+ * Placeholder - requires implementation in release-fetcher.ts first.
+ */
+export async function populateHistoricalReleaseNotes(): Promise<{ success: boolean; message: string; error?: string }> {
+  console.warn('Populating historical release notes is not fully implemented.');
+  let overallSuccess = true;
+  let errorMessage = '';
+
+  for (const repo of REPOSITORIES) {
+    try {
+      const historicalNotes = await generateHistoricalReleaseNotes(repo);
+      if (historicalNotes.length > 0) {
+        // Similar upsert/insert logic as in updateReleaseNotesFromGitHub
+        // Be careful not to overwrite newer notes if run multiple times.
+        // Maybe check if version exists before inserting?
+        const existingVersions = await db.select({ version: releaseNotes.version })
+                                         .from(releaseNotes)
+                                         .where(eq(releaseNotes.repository, repo));
+        const existingVersionSet = new Set(existingVersions.map(v => v.version));
+
+        const notesToInsert = historicalNotes
+          .filter(note => !existingVersionSet.has(note.version))
+          .map(note => ({
+            repository: note.repository,
+            version: note.version,
+            releaseDate: new Date(note.releaseDate),
+            content: note.content as any,
+            commitSha: note.commitSha,
+          }));
+
+        if (notesToInsert.length > 0) {
+          await db.insert(releaseNotes).values(notesToInsert);
+        } else {
+        }
+      }
+    } catch (error: any) {
+      console.error(`Error populating historical notes for ${repo}:`, error);
+      overallSuccess = false;
+      errorMessage += `Failed for ${repo}: ${error.message}\n`;
+    }
+  }
+
+  if (overallSuccess) {
+    return { success: true, message: 'Historical release notes population attempted.' };
+  } else {
+    return { success: false, message: 'Errors occurred during historical population.', error: errorMessage.trim() };
+  }
+}
+
+/**
+ * Searches release notes based on a query string.
+ * Searches within the 'content' JSONB field.
+ * @param query - The search term.
+ * @param repositoryFilter - Optional repository filter.
+ * @param page - Page number for pagination.
+ * @param limit - Number of items per page.
+ * @returns A promise resolving to an object with notes array and total count.
+ */
+export async function searchReleaseNotes(
+  query: string,
+  repositoryFilter: RepositoryName | 'all' = 'all',
+  page = 1,
+  limit = 10
+): Promise<{ notes: ReleaseNote[]; total: number }> {
+   if (!query) return { notes: [], total: 0 };
+
+   const offset = (page - 1) * limit;
+
+   // Basic search using ILIKE on string representations of content.
+   // For more advanced JSONB search, specific operators are needed (e.g., @>, ?).
+   // This is a simplified version.
+   const searchTerm = `%${query}%`;
+
+   // Build query conditions
+   const conditions = [sql`CAST(content AS TEXT) ILIKE ${searchTerm}`];
+   if (repositoryFilter !== 'all') {
+     conditions.push(eq(releaseNotes.repository, repositoryFilter));
+   }
+
+   // Fetch notes with pagination
+   const notes = await db.select()
+                         .from(releaseNotes)
+                         .where(and(...conditions))
+                         .orderBy(desc(releaseNotes.releaseDate))
+                         .limit(limit)
+                         .offset(offset);
+
+   // Get total count for pagination
+   const countResult = await db.select({ count: sql<number>`count(*)` })
+                                .from(releaseNotes)
+                                .where(and(...conditions));
+
+   const total = Number(countResult[0]?.count || 0);
+
+   const formattedNotes = notes.map(note => ({
+     ...note,
+     repository: note.repository as RepositoryName,
+     releaseDate: note.releaseDate.toISOString(),
+     content: note.content as ReleaseNoteContentDb,
+     createdAt: note.createdAt.toISOString(),
+     updatedAt: note.updatedAt.toISOString(),
+   }));
+
+   return { notes: formattedNotes, total };
+}

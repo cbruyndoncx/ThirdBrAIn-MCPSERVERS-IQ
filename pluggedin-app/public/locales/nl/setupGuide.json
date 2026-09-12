@@ -1,0 +1,114 @@
+{
+  "setupGuide": {
+    "title": "Installatiehandleiding",
+    "moreInfo": {
+      "prefix": "Meer uitleg nodig? Bekijk de volledige documentatie op",
+      "linkLabel": "docs.plugged.in/setup-guide"
+    },
+    "proxyBenefits": {
+      "title": "Voordelen van Plugged.in MCP",
+      "description": "Plugged.in MCP fungeert als een uniforme proxy voor al je MCP-servers en biedt diverse voordelen:",
+      "benefits": [
+        "Eén configuratiepunt - Beheer al je MCP-servers vanuit één centrale configuratie",
+        "Automatische updates - Ontvang automatisch de nieuwste functies en beveiligingsupdates",
+        "Eenvoudige authenticatie - Gebruik één API-sleutel voor al je MCP-servers",
+        "Verbeterde beveiliging - Ingebouwde beveiligingsfuncties en best practices",
+        "Platformonafhankelijk - Werkt naadloos op verschillende besturingssystemen"
+      ]
+    },
+    "installation": {
+      "title": "Installatiemethoden",
+      "apiKeysNotice": "Let op: je beheert je API-sleutels op de API-sleutelpagina",
+      "apiKeyCard": {
+        "title": "Je Plugged.in API-sleutel",
+        "description": "Gebruik deze waarde telkens wanneer een configuratie om PLUGGEDIN_API_KEY vraagt. Een nieuwe sleutel nodig? Beheer ze via de",
+        "copySuccess": "API-sleutel gekopieerd naar klembord",
+        "copyLabel": "Plugged.in API-sleutel kopiëren"
+      },
+      "shared": {
+        "copyLabel": "Kopieer naar klembord"
+      },
+      "claudeDesktop": {
+        "title": "Claude Desktop instellen",
+        "intro": "Claude Desktop leest een JSON-configuratiebestand. Voeg de snippet hieronder toe en start de app opnieuw op.",
+        "step1": {
+          "title": "Open de instellingen",
+          "description": "Open Claude Desktop en ga naar Settings > MCP Servers."
+        },
+        "step2": {
+          "title": "Zoek het configuratiebestand",
+          "description": "Bewerk het configuratiebestand op je computer."
+        },
+        "step3": {
+          "title": "Voeg Plugged.in MCP toe",
+          "description": "Plak de snippet hieronder in het \"mcpServers\"-object. Je API-sleutel is alvast ingevuld."
+        },
+        "step4": {
+          "title": "Herstart de applicatie",
+          "description": "Herstart Claude Desktop zodat de nieuwe MCP-configuratie wordt geladen."
+        },
+        "step5": {
+          "title": "Controleer de installatie",
+          "description": "Ga terug naar Settings > MCP Servers en controleer of PluggedinMCP zichtbaar is en een geldige sleutel toont."
+        },
+        "copySuccess": "Claude Desktop-configuratie gekopieerd"
+      },
+      "claudeCode": {
+        "title": "Claude Code instellen",
+        "step1": {
+          "title": "Stap 1: Open de instellingen",
+          "description": "Open Claude Code en zoek met de Command Palette (Cmd/Ctrl+Shift+P) naar \"MCP Settings\"."
+        },
+        "step2": {
+          "title": "Stap 2: Ga naar de MCP-configuratie",
+          "description": "Open in het instellingenvenster de sectie MCP Servers om lokale configuraties te beheren."
+        },
+        "step3": {
+          "title": "Stap 3: Voeg de Plugged.in MCP-server toe",
+          "description": "Voer onderstaande opdracht uit in de terminal waarin Claude Code is geïnstalleerd. De proxy wordt geregistreerd met je API-sleutel."
+        },
+        "step4": {
+          "title": "Stap 4: Pas de configuratie toe",
+          "description": "Vernieuw de lijst met MCP-servers in Claude Code zodat de nieuwe vermelding verschijnt."
+        },
+        "step5": {
+          "title": "Stap 5: Test de verbinding",
+          "description": "Voer `claude mcp list` uit of open Claude Code om te controleren of de Plugged.in-server beschikbaar is."
+        },
+        "copySuccess": "Claude Code-opdracht gekopieerd",
+        "noteTitle": "Waar voer je deze opdracht uit?",
+        "noteDescription": "Voer de opdracht uit in dezelfde omgeving als waar Claude Code is geïnstalleerd. Je kunt de installatie controleren met"
+      },
+      "manualConfig": {
+        "title": "Paden naar het configuratiebestand",
+        "description": "Voor Claude Desktop vind je het configuratiebestand hier:",
+        "paths": {
+          "macos": "macOS",
+          "windows": "Windows"
+        }
+      },
+      "cursorConfig": {
+        "title": "Cursor configureren",
+        "description": "In Cursor voeg je MCP-servers toe via het Integrations-paneel.",
+        "steps": [
+          "Open Cursor en kies Integrations > MCP.",
+          "Selecteer \"Edit mcp.json\" om je MCP-configuratie te openen.",
+          "Voeg de PluggedinMCP-invoer toe of merge deze met je bestaande configuratie.",
+          "Gebruik de onderstaande opdracht om de proxy lokaal of in een terminal te starten:"
+        ],
+        "copySuccess": "Cursor-opdracht gekopieerd"
+      }
+    },
+    "lmStudio": {
+      "title": "LM Studio instellen",
+      "description": "LM Studio leest MCP-servers uit `mcp.json`. De configuratie is gelijk aan het Claude Desktop-voorbeeld.",
+      "steps": [
+        "Open in LM Studio Integrations > MCP en kies \"Edit mcp.json\".",
+        "Plak de onderstaande snippet in het `mcpServers`-object (maak het aan als het ontbreekt).",
+        "Sla het bestand op om de MCP-servers opnieuw te laden."
+      ],
+      "copySuccess": "LM Studio-configuratie gekopieerd",
+      "saveNote": "Zodra je het bestand opslaat, herlaadt LM Studio automatisch de MCP-servers."
+    }
+  }
+}

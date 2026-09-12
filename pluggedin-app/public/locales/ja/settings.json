@@ -1,0 +1,147 @@
+{
+  "settings": {
+    "title": "設定",
+    "profile": {
+      "title": "プロフィール",
+      "description": "プロフィール情報を管理します",
+      "avatar": "アバターをアップロード",
+      "avatarRecommendation": "推奨：正方形の画像、最大1MB",
+      "name": "名前",
+      "namePlaceholder": "名前を入力してください",
+      "language": "言語",
+      "updateButton": "プロフィールを更新",
+      "success": "プロフィールが正常に更新されました",
+      "error": "プロフィールの更新に失敗しました"
+    },
+    "password": {
+      "title": "パスワード",
+      "description": "パスワードを変更します",
+      "descriptionWithRemove": "パスワードを変更または削除します",
+      "descriptionNoPassword": "メール/パスワードログイン用のパスワードを設定します",
+      "current": {
+        "label": "現在のパスワード",
+        "placeholder": "現在のパスワードを入力してください"
+      },
+      "new": {
+        "label": "新しいパスワード",
+        "placeholder": "新しいパスワードを入力してください"
+      },
+      "confirm": {
+        "label": "新しいパスワードを確認",
+        "placeholder": "新しいパスワードを確認してください"
+      },
+      "updateButton": "パスワードを変更",
+      "removeButton": "パスワードを削除",
+      "setButton": "パスワードを設定",
+      "noPasswordSet": "現在OAuthでサインインしています。パスワードを設定すると、メール/パスワードでもログインできるようになります。",
+      "success": "パスワードが正常に更新されました",
+      "error": "パスワードの更新に失敗しました",
+      "removeDialog": {
+        "title": "パスワードを削除しますか？",
+        "description": "接続されたOAuthアカウントを使用してのみサインインできます。この操作は元に戻せません。",
+        "confirmLabel": "確認のためメールアドレスを入力してください",
+        "confirmPlaceholder": "メールアドレスを入力してください",
+        "warning": "パスワードを削除する前に、少なくとも1つのOAuthアカウントが接続されていることを確認してください。",
+        "cancel": "キャンセル",
+        "confirm": "パスワードを削除"
+      },
+      "errors": {
+        "onlyLoginMethod": "パスワードを削除できません。これは唯一のログイン方法です。まずOAuthアカウントを接続してください。",
+        "confirmEmailMismatch": "メールアドレスの確認が一致しません。",
+        "removalFailed": "パスワードの削除に失敗しました。",
+        "setFailed": "パスワードの設定に失敗しました。",
+        "alreadyExists": "パスワードは既に存在します。パスワード変更オプションを使用してください。"
+      },
+      "successMessages": {
+        "removed": "パスワードが正常に削除されました。OAuthでのみサインインできます。",
+        "set": "パスワードが正常に設定されました。メール/パスワードでサインインできます。"
+      }
+    },
+    "loginMethods": {
+      "title": "ログイン方法",
+      "description": "アカウントへのサインイン方法を管理します",
+      "emailPassword": "メールとパスワード",
+      "active": "アクティブ",
+      "inactive": "非アクティブ",
+      "notConfigured": "未設定",
+      "connected": "接続済み",
+      "notConnected": "未接続",
+      "disconnect": "切断",
+      "connect": "接続",
+      "providers": {
+        "google": "Google",
+        "github": "GitHub",
+        "twitter": "Twitter"
+      }
+    },
+    "account": {
+      "title": "アカウントを削除",
+      "description": "アカウントと関連するすべてのデータを完全に削除します",
+      "deleteButton": "アカウントを削除",
+      "confirmTitle": "よろしいですか？",
+      "confirmDescription": "この操作は元に戻せません。これにより、アカウントが完全に削除され、関連するすべてのデータがサーバーから削除されます。",
+      "confirmButton": "はい、アカウントを削除します",
+      "deletingButton": "削除中...",
+      "success": "アカウントが正常に削除されました",
+      "error": "アカウントの削除に失敗しました"
+    },
+    "validation": {
+      "invalidJsonArray": "無効なJSON形式、またはメッセージの配列ではありません。"
+    },
+    "connectedAccounts": {
+      "title": "接続済みアカウント",
+      "description": "接続済みのソーシャルアカウントを管理します",
+      "github": {
+        "connected": "GitHubに接続済み",
+        "connect": "GitHubアカウントを接続"
+      },
+      "google": {
+        "connected": "Googleに接続済み",
+        "connect": "Googleアカウントを接続"
+      },
+      "twitter": {
+        "connected": "Twitterに接続済み",
+        "connect": "Twitterアカウントを接続"
+      },
+      "connected": "接続済み",
+      "removed": "{{provider}}アカウントが正常に切断されました",
+      "error": "アカウントの切断に失敗しました"
+    },
+    "project": {
+      "title": "現在のハブ",
+      "description": "現在のハブ設定を管理します",
+      "loading": "プロジェクトを読み込み中...",
+      "namePlaceholder": "プロジェクト名",
+      "updateSuccess": "プロジェクト名が正常に更新されました",
+      "updateError": "プロジェクト名の更新に失敗しました",
+      "deleteConfirm": "このプロジェクトを削除してもよろしいですか？この操作は元に戻せません。",
+      "deleteSuccess": "プロジェクトが正常に削除されました",
+      "deleteError": "プロジェクトの削除に失敗しました",
+      "dangerZone": "危険ゾーン",
+      "deleteWarning": "プロジェクトを削除すると元に戻すことはできません。注意してください。",
+      "deleteButton": "プロジェクトを削除"
+    },
+    "appearance": {
+      "title": "外観",
+      "description": "アプリケーションの外観をカスタマイズします",
+      "colorTheme": "カラーテーマ",
+      "light": "ライト",
+      "dark": "ダーク",
+      "system": "システム",
+      "font": "フォント",
+      "selectFont": "フォントを選択",
+      "fonts": {
+        "geist": "Geist Sans (デフォルト)",
+        "quicksand": "Quicksand",
+        "nunito": "Nunito",
+        "poppins": "Poppins",
+        "roboto": "Roboto",
+        "ubuntu": "Ubuntu",
+        "varelaRound": "Varela Round",
+        "workSans": "Work Sans",
+        "zillaSlab": "Zilla Slab",
+        "comfortaa": "Comfortaa"
+      }
+    }
+  }
+}

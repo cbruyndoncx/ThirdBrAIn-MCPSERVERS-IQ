@@ -1,0 +1,136 @@
+{
+  "install": {
+    "title": "サーバーをインストール",
+    "description": "このMCPサーバーを設定してインストールします。",
+    "name": "サーバー名",
+    "command": "コマンド",
+    "args": "引数（スペース区切り）",
+    "env": "環境変数",
+    "url": "サーバーURL",
+    "successDescription": "サーバーが正常にインストールされました",
+    "errorDescription": "サーバーのインストールに失敗しました"
+  },
+  "common": {
+    "or": "または",
+    "error": "エラー",
+    "success": "成功",
+    "releaseCandidate": "リリース候補 v{{version}}",
+    "validation": {
+      "required": "このフィールドは必須です",
+      "email": "有効なメールアドレスを入力してください",
+      "minLength": "少なくとも{{count}}文字である必要があります",
+      "maxLength": "最大{{count}}文字である必要があります",
+      "passwordMatch": "パスワードが一致する必要があります"
+    },
+    "save": "保存",
+    "previous": "前へ",
+    "next": "次へ",
+    "page": "ページ {{page}}",
+    "saving": "保存中...",
+    "remove": "削除",
+    "removing": "削除中...",
+    "cancel": "キャンセル",
+    "confirm": "確認",
+    "confirmDelete": "これを削除してもよろしいですか？",
+    "errors": {
+      "unexpected": "予期せぬエラーが発生しました。もう一度お試しください。",
+      "pageNotFound": "ページが見つかりません",
+      "pageNotFoundMessage": "お探しの接続はプラグが抜かれているか、存在しません。"
+    },
+    "loading": "読み込み中...",
+    "notAvailable": "該当なし",
+    "saveChanges": "変更を保存",
+    "backToServerList": "サーバーリストに戻る",
+    "viewSchema": "スキーマを表示",
+    "delete": "削除",
+    "deleting": "削除中...",
+    "pluggedinLogo": "plugged.in ロゴ",
+    "install": "インストール",
+    "installing": "インストール中...",
+    "back": "戻る",
+    "viewAll": "すべて表示"
+  },
+  "actions": {
+    "goHome": "ホームに戻る",
+    "login": "ログイン",
+    "playground": "プレイグラウンド"
+  },
+  "library": {
+    "title": "ライブラリ"
+  },
+  "memory": {
+    "title": "メモリ"
+  },
+  "dashboard": {
+    "title": "ダッシュボード"
+  },
+  "analytics": {
+    "title": "分析"
+  },
+  "projects": {
+    "loading": "Loading Projects...",
+    "loadingHubs": "Loading Hubs...",
+    "hubs": "Hubs",
+    "switchingHub": "Switching Hub...",
+    "searchHubs": "Search hubs...",
+    "noHubFound": "No hub found.",
+    "createHub": "Create Hub",
+    "createHubDialog": {
+      "title": "Create Hub",
+      "description": "Add a new hub to organize your work.",
+      "hubName": "Hub name",
+      "placeholder": "Enter hub name",
+      "creating": "Creating...",
+      "create": "Create"
+    }
+  },
+  "releaseNotes": {
+    "title": "リリースノート",
+    "description": "リポジトリ全体の最新の更新と変更を追跡します",
+    "filters": {
+      "filterBy": "リポジトリでフィルタリング",
+      "all": "すべてのリポジトリ",
+      "allDesc": "すべてのリポジトリからリリースを表示",
+      "app": "pluggedin-app",
+      "appDesc": "AIデータ、メモリ、ツールの交差点にあるインターフェース — モデル、人間、マシンを接続",
+      "mcp": "pluggedin-mcp",
+      "mcpDesc": "TypeScript MCPプロキシサーバー - MCPクライアント用統合インターフェース",
+      "registryProxy": "registry-proxy",
+      "registryProxyDesc": "フィルタリングとキャッシング機能を備えた強化されたMCPレジストリインフラストラクチャ",
+      "pythonSdk": "Python SDK",
+      "pythonSdkDesc": "Plugged.in API用の同期/非同期対応Python SDK",
+      "goSdk": "Go SDK",
+      "goSdkDesc": "Plugged.in API用の完全な型安全性を備えたGo SDK",
+      "jsSdk": "JavaScript/TypeScript SDK",
+      "jsSdkDesc": "Plugged.in API統合用JavaScript/TypeScript SDK",
+      "docs": "ドキュメント",
+      "docsDesc": "Mintlifyを使用した公式ドキュメントサイト"
+    },
+    "changeTypes": {
+      "feature": "機能",
+      "bugfix": "バグ修正",
+      "performanceimprovement": "パフォーマンス改善",
+      "breakingchange": "破壊的変更",
+      "other": "その他の変更"
+    },
+    "viewCommit": "コミットを表示",
+    "noDetails": "このリリースには特定の変更は記載されていません。",
+    "viewOnGitHub": "GitHubで表示",
+    "loadMore": "さらに読み込む",
+    "loading": "リリースを読み込み中...",
+    "error": "リリースノートの読み込みに失敗しました",
+    "retry": "再試行",
+    "noReleases": "リリースが見つかりません",
+    "noReleasesTitle": "利用可能なリリースノートはありません",
+    "noReleasesText": "現在表示するリリースノートはありません。",
+    "noSearchResultsTitle": "結果が見つかりません",
+    "noSearchResultsText": "検索条件に一致するリリースノートはありません。",
+    "noResultsOnPage": "このページに結果がありません",
+    "noResultsOnPageText": "ページ {{page}} に結果がありません。ページネーションコントロールを使用して他のページに移動してください。",
+    "rssFeed": "RSSで購読",
+    "search": {
+      "placeholder": "リリースノートを検索..."
+    },
+    "refresh": "リリースを更新"
+  }
+}

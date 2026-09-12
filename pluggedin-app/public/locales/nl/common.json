@@ -1,0 +1,136 @@
+{
+  "install": {
+    "title": "Server installeren",
+    "description": "Configureer en installeer deze MCP-server.",
+    "name": "Servernaam",
+    "command": "Commando",
+    "args": "Argumenten (spatie-gescheiden)",
+    "env": "Omgevingsvariabelen",
+    "url": "Server URL",
+    "successDescription": "Server succesvol geïnstalleerd",
+    "errorDescription": "Server installatie mislukt"
+  },
+  "common": {
+    "or": "OF",
+    "error": "Fout",
+    "success": "Succes",
+    "releaseCandidate": "Release Candidate v{{version}}",
+    "validation": {
+      "required": "Dit veld is verplicht",
+      "email": "Voer een geldig e-mailadres in",
+      "minLength": "Moet minimaal {{count}} tekens bevatten",
+      "maxLength": "Mag maximaal {{count}} tekens bevatten",
+      "passwordMatch": "Wachtwoorden moeten overeenkomen"
+    },
+    "save": "Opslaan",
+    "previous": "Vorige",
+    "next": "Volgende",
+    "page": "Pagina {{page}}",
+    "saving": "Opslaan...",
+    "remove": "Verwijderen",
+    "removing": "Verwijderen...",
+    "cancel": "Annuleren",
+    "confirm": "Bevestigen",
+    "confirmDelete": "Weet u zeker dat u dit wilt verwijderen?",
+    "errors": {
+      "unexpected": "Er is een onverwachte fout opgetreden. Probeer het opnieuw.",
+      "pageNotFound": "Pagina niet gevonden",
+      "pageNotFoundMessage": "De verbinding die je zoekt lijkt losgekoppeld te zijn of bestaat niet."
+    },
+    "loading": "Laden...",
+    "notAvailable": "N.v.t.",
+    "saveChanges": "Wijzigingen opslaan",
+    "backToServerList": "Terug naar serverlijst",
+    "viewSchema": "Schema bekijken",
+    "delete": "Verwijderen",
+    "deleting": "Verwijderen...",
+    "pluggedinLogo": "plugged.in Logo",
+    "install": "Installeren",
+    "installing": "Installeren...",
+    "back": "Terug",
+    "viewAll": "Bekijk Alles"
+  },
+  "actions": {
+    "goHome": "Naar startpagina",
+    "login": "Inloggen",
+    "playground": "Speeltuin"
+  },
+  "library": {
+    "title": "Bibliotheek"
+  },
+  "memory": {
+    "title": "Geheugen"
+  },
+  "dashboard": {
+    "title": "Dashboard"
+  },
+  "analytics": {
+    "title": "Analytics"
+  },
+  "projects": {
+    "loading": "Loading Projects...",
+    "loadingHubs": "Loading Hubs...",
+    "hubs": "Hubs",
+    "switchingHub": "Switching Hub...",
+    "searchHubs": "Search hubs...",
+    "noHubFound": "No hub found.",
+    "createHub": "Create Hub",
+    "createHubDialog": {
+      "title": "Create Hub",
+      "description": "Add a new hub to organize your work.",
+      "hubName": "Hub name",
+      "placeholder": "Enter hub name",
+      "creating": "Creating...",
+      "create": "Create"
+    }
+  },
+  "releaseNotes": {
+    "title": "Release Notes",
+    "description": "Volg de laatste updates en wijzigingen in onze repositories",
+    "filters": {
+      "filterBy": "Filteren op Repository",
+      "all": "Alle Repositories",
+      "allDesc": "Toon releases van alle repositories",
+      "app": "pluggedin-app",
+      "appDesc": "De interface op het kruispunt van AI-gegevens, geheugen en tools — verbindt modellen, mensen en machines",
+      "mcp": "pluggedin-mcp",
+      "mcpDesc": "TypeScript MCP-proxyserver - uniforme interface voor MCP-clients",
+      "registryProxy": "registry-proxy",
+      "registryProxyDesc": "Verbeterde MCP Registry-infrastructuur met filtering en caching",
+      "pythonSdk": "Python SDK",
+      "pythonSdkDesc": "Python SDK met sync/async clients voor Plugged.in API",
+      "goSdk": "Go SDK",
+      "goSdkDesc": "Go SDK met volledige typeveiligheid voor Plugged.in API",
+      "jsSdk": "JavaScript/TypeScript SDK",
+      "jsSdkDesc": "JavaScript/TypeScript SDK voor Plugged.in API-integratie",
+      "docs": "Documentatie",
+      "docsDesc": "Officiële documentatiesite mogelijk gemaakt door Mintlify"
+    },
+    "changeTypes": {
+      "feature": "Functies",
+      "bugfix": "Bugfixes",
+      "performanceimprovement": "Prestatieverbeteringen",
+      "breakingchange": "Breaking Changes",
+      "other": "Overige wijzigingen"
+    },
+    "viewCommit": "Commit bekijken",
+    "noDetails": "Geen specifieke wijzigingen vermeld voor deze release.",
+    "viewOnGitHub": "Bekijken op GitHub",
+    "loadMore": "Meer laden",
+    "loading": "Releases laden...",
+    "error": "Laden van release notes mislukt",
+    "retry": "Opnieuw proberen",
+    "noReleases": "Geen releases gevonden",
+    "noReleasesTitle": "Geen Release Notes beschikbaar",
+    "noReleasesText": "Er zijn momenteel geen release notes om weer te geven.",
+    "noSearchResultsTitle": "Geen resultaten gevonden",
+    "noSearchResultsText": "Geen release notes komen overeen met uw zoekcriteria.",
+    "noResultsOnPage": "Geen resultaten op deze pagina",
+    "noResultsOnPageText": "Pagina {{page}} heeft geen resultaten. Gebruik de paginabesturing om naar andere pagina's te navigeren.",
+    "rssFeed": "Abonneren via RSS",
+    "search": {
+      "placeholder": "Zoek release notes..."
+    },
+    "refresh": "Releases vernieuwen"
+  }
+}

@@ -1,0 +1,523 @@
+'use server';
+
+import { z } from 'zod';
+
+import { McpServerType } from '@/db/schema';
+import { safeFetch } from '@/lib/oauth/ssrf-protection';
+import { requireAuthUserId } from '@/lib/require-auth';
+import { validateCommand, validateCommandArgs, validateHeaders } from '@/lib/security/validators';
+
+const testConfigSchema = z.object({
+  name: z.string().min(1),
+  type: z.nativeEnum(McpServerType),
+  url: z.string().optional(), // Not using .url() because it might include localhost URLs
+  command: z.string().optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  streamableHTTPOptions: z.object({
+    headers: z.record(z.string(), z.string()).optional(),
+    sessionId: z.string().optional(),
+  }).optional(),
+  transport: z.string().optional(),
+});
+
+interface TestConfig {
+  name: string;
+  type: McpServerType;
+  url?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  streamableHTTPOptions?: {
+    headers?: Record<string, string>;
+    sessionId?: string;
+  };
+  transport?: string;
+}
+
+interface TestResult {
+  success: boolean;
+  messageKey: string; // Translation key instead of hardcoded message
+  message?: string; // Deprecated: kept for backwards compatibility
+  details?: {
+    capabilities?: string[];
+    error?: string;
+    errorKey?: string; // Translation key for error
+    corsIssue?: boolean;
+    corsDetails?: string;
+    requiresAuth?: boolean;
+  };
+}
+
+/**
+ * Check if a response indicates a CORS issue
+ */
+async function checkForCorsIssue(response: Response, url: string, responseText?: string): Promise<{ corsIssue?: boolean; corsDetails?: string }> {
+  // Check if this is a 400 Bad Request that might be session-related
+  if (response.status === 400 && responseText) {
+    if (responseText.includes('session') || responseText.includes('Session-Id') || responseText.includes('Mcp-Session-Id')) {
+      return {
+        corsIssue: true,
+        corsDetails: 'Server requires session ID but may not have proper CORS headers. The server should include "Access-Control-Expose-Headers: Mcp-Session-Id" to allow the client to read the session ID.',
+      };
+    }
+  }
+
+  // Check if the server is missing CORS headers entirely
+  const accessControlAllowOrigin = response.headers.get('Access-Control-Allow-Origin');
+  const accessControlExposeHeaders = response.headers.get('Access-Control-Expose-Headers');
+  
+  if (!accessControlAllowOrigin) {
+    return {
+      corsIssue: true,
+      corsDetails: 'Server is missing Access-Control-Allow-Origin header. The server needs to configure CORS to allow requests from web clients.',
+    };
+  }
+
+  // Check if Mcp-Session-Id is exposed for Streamable HTTP
+  if (!accessControlExposeHeaders?.includes('Mcp-Session-Id')) {
+    return {
+      corsIssue: true,
+      corsDetails: 'Server does not expose Mcp-Session-Id header. Add "Access-Control-Expose-Headers: Mcp-Session-Id" to the server\'s CORS configuration.',
+    };
+  }
+
+  return {};
+}
+
+/**
+ * Check if a network error might be CORS-related
+ */
+function checkForCorsNetworkError(error: unknown): { corsIssue?: boolean; corsDetails?: string } {
+  if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+    return {
+      corsIssue: true,
+      corsDetails: 'Network error (possibly CORS). This often happens when the server doesn\'t allow cross-origin requests. Check the server\'s CORS configuration.',
+    };
+  }
+
+  // Check for other common CORS error patterns
+  const errorMessage = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  if (errorMessage.includes('cors') || errorMessage.includes('cross-origin') || errorMessage.includes('blocked')) {
+    return {
+      corsIssue: true,
+      corsDetails: 'CORS error detected. The server needs to configure proper CORS headers to allow requests from web clients.',
+    };
+  }
+
+  return {};
+}
+
+export async function testMcpConnection(config: TestConfig): Promise<TestResult> {
+  // Every sibling action in this codebase requires a session; this one had no
+  // auth check at all while spawning a child process from caller input.
+  try {
+    await requireAuthUserId();
+  } catch {
+    return {
+      success: false,
+      messageKey: 'mcpServers.test.authRequired',
+      details: { error: 'Authentication required' },
+    };
+  }
+
+  try {
+    // Validate input
+    const validated = testConfigSchema.parse(config);
+    // Special handling for mcp-remote servers (servers that proxy to remote URLs)
+    const isMcpRemote = (validated.command === 'npx' && validated.args?.includes('mcp-remote')) ||
+                        validated.transport === 'mcp-remote';
+    
+    if (isMcpRemote) {
+      // For mcp-remote servers, we need to test the remote URL
+      let remoteUrl = validated.url;
+      
+      // If URL not directly available, find it in args
+      if (!remoteUrl && validated.args) {
+        const urlIndex = validated.args.findIndex(arg => arg.includes('http'));
+        if (urlIndex !== -1) {
+          remoteUrl = validated.args[urlIndex];
+        }
+      }
+      
+      if (remoteUrl) {
+        
+        // Test the remote URL to see if it needs authentication
+        try {
+          // remoteUrl comes out of the server's own args, so the caller
+          // chooses it and the outcome is reported back to them.
+          const response = await safeFetch(remoteUrl, {
+            method: 'HEAD',
+            headers: {
+              'User-Agent': 'Plugged.in MCP Client',
+            },
+            signal: AbortSignal.timeout(5000),
+          });
+          
+          if (response.status === 401) {
+            return {
+              success: true, // The server is reachable, just needs auth
+              messageKey: 'mcpServers.test.authRequired',
+              details: {
+                requiresAuth: true,
+                errorKey: 'mcpServers.test.authRequiredDetail',
+                capabilities: ['Server verified - authentication required'],
+              },
+            };
+          } else if (response.ok || response.status === 405) {
+            return {
+              success: true,
+              messageKey: 'mcpServers.test.mcpRemoteVerified',
+              details: {
+                capabilities: ['Remote server connection verified'],
+              },
+            };
+          } else {
+            return {
+              success: false,
+              messageKey: 'mcpServers.test.httpError',
+              details: {
+                error: `HTTP ${response.status}: ${response.statusText}`,
+              },
+            };
+          }
+        } catch (_error) {
+          // If we can't reach the remote URL, still pass since mcp-remote will handle it
+          return {
+            success: true,
+            messageKey: 'mcpServers.test.mcpRemoteAvailable',
+            details: {
+              capabilities: ['mcp-remote proxy available'],
+            },
+          };
+        }
+      }
+    }
+    
+    // For URL-based servers (SSE and Streamable HTTP)
+    if (validated.url && (validated.type === McpServerType.SSE || validated.type === McpServerType.STREAMABLE_HTTP)) {
+      // Try to make a HEAD request to check if the endpoint is reachable
+      let headers: HeadersInit = {
+        'User-Agent': 'Plugged.in MCP Client',
+      };
+      
+      // Validate and add custom headers if provided
+      if (validated.streamableHTTPOptions?.headers) {
+        const headerValidation = validateHeaders(validated.streamableHTTPOptions.headers);
+        if (!headerValidation.valid) {
+          return {
+            success: false,
+            messageKey: 'mcpServers.test.invalidHeaders',
+            details: {
+              error: headerValidation.error,
+            },
+          };
+        }
+        headers = {
+          ...headers,
+          ...headerValidation.sanitizedHeaders,
+        };
+      }
+
+      // For all Streamable HTTP servers, try to send an initialize request
+      // This is the proper way to test MCP servers
+      if (validated.type === McpServerType.STREAMABLE_HTTP) {
+        // Add MCP-compatible headers
+        headers = {
+          ...headers,
+          'Accept': 'application/json, text/event-stream',
+        };
+        try {
+          // ✅ First, check if server requires authentication with a simple HEAD request
+          // This avoids CORS issues from POST requests without auth
+          try {
+            const headResponse = await safeFetch(validated.url, {
+              method: 'HEAD',
+              headers,
+              signal: AbortSignal.timeout(5000),
+            });
+
+            if (headResponse.status === 401) {
+              return {
+                success: true, // The server is reachable, just needs auth
+                messageKey: 'mcpServers.test.authRequired',
+                details: {
+                  requiresAuth: true,
+                  errorKey: 'mcpServers.test.authRequiredDetail',
+                  capabilities: ['Server verified - authentication required'],
+                },
+              };
+            }
+          } catch {
+            // If HEAD fails, continue to initialize request
+            // The server might not support HEAD
+          }
+
+          // Try to send an initialize request
+          const initResponse = await safeFetch(validated.url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...headers,
+            },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              method: 'initialize',
+              params: {
+                protocolVersion: '2024-11-05',
+                capabilities: {},
+                clientInfo: {
+                  name: 'pluggedin-test',
+                  version: '1.0.0'
+                }
+              },
+              id: 1
+            }),
+            signal: AbortSignal.timeout(5000),
+          });
+
+          if (initResponse.ok) {
+            const contentType = initResponse.headers.get('content-type') || '';
+            
+            // Handle SSE responses
+            if (contentType.includes('text/event-stream')) {
+              const text = await initResponse.text();
+              // Parse SSE format: extract JSON from "data:" lines
+              const dataMatch = text.match(/data:\s*({.*})/);
+              if (dataMatch) {
+                try {
+                  const data = JSON.parse(dataMatch[1]);
+                  return {
+                    success: true,
+                    messageKey: 'mcpServers.test.connectionVerified',
+                    details: {
+                      capabilities: data.result?.capabilities ? Object.keys(data.result.capabilities) : ['Server initialized'],
+                    },
+                  };
+                } catch (parseError) {
+                  return {
+                    success: false,
+                    messageKey: 'mcpServers.test.parseError',
+                    details: {
+                      error: parseError instanceof Error ? parseError.message : 'Invalid SSE response format',
+                    },
+                  };
+                }
+              } else {
+                return {
+                  success: false,
+                  messageKey: 'mcpServers.test.invalidSseFormat',
+                  details: {
+                    error: 'No data field found in SSE response',
+                  },
+                };
+              }
+            }
+
+            // Standard JSON response handling
+            const data = await initResponse.json();
+            return {
+              success: true,
+              messageKey: 'mcpServers.test.connectionVerified',
+              details: {
+                capabilities: data.result?.capabilities ? Object.keys(data.result.capabilities) : ['Server initialized'],
+              },
+            };
+          } else {
+            // Try to read response body for CORS checking
+            let responseText = '';
+            try {
+              responseText = await initResponse.text();
+            } catch {
+              // Ignore errors reading response body
+            }
+
+            // No clone: checkForCorsIssue reads only status and headers, both of
+            // which survive the body being consumed. Cloning first threw
+            // because the body was already read; cloning here would leave a
+            // second buffered stream nobody drains.
+            const corsDetails = await checkForCorsIssue(initResponse, validated.url, responseText);
+            
+            // Check if this is a 401 authentication error
+            const requiresAuth = initResponse.status === 401;
+            
+            if (requiresAuth) {
+              return {
+                success: true, // The server is reachable, just needs auth
+                messageKey: 'mcpServers.test.authRequired',
+                details: {
+                  requiresAuth: true,
+                  errorKey: 'mcpServers.test.authRequiredDetail',
+                  capabilities: ['Server verified - authentication required'],
+                  ...corsDetails,
+                },
+              };
+            }
+            
+            return {
+              success: false,
+              messageKey: 'mcpServers.test.httpError',
+              details: {
+                error: `HTTP ${initResponse.status}: ${initResponse.statusText}${responseText ? ` - ${responseText}` : ''}`,
+                requiresAuth: false,
+                ...corsDetails,
+              },
+            };
+          }
+        } catch (error) {
+          // Check if it's a network error that might be CORS-related
+          const corsDetails = checkForCorsNetworkError(error);
+
+          return {
+            success: false,
+            messageKey: 'mcpServers.test.connectionFailed',
+            details: {
+              error: error instanceof Error ? error.message : 'Connection failed',
+              ...corsDetails,
+            },
+          };
+        }
+      }
+
+
+      // For other servers, try HEAD request first
+      try {
+        const response = await safeFetch(validated.url, {
+          method: 'HEAD',
+          headers,
+          signal: AbortSignal.timeout(5000), // 5 second timeout
+        });
+
+        if (response.ok || response.status === 405) { // 405 Method Not Allowed is OK for HEAD
+          return {
+            success: true,
+            messageKey: 'mcpServers.test.connectionSuccessful',
+            details: {
+              capabilities: ['Connection verified'],
+            },
+          };
+        } else {
+          return {
+            success: false,
+            messageKey: 'mcpServers.test.httpError',
+            details: {
+              error: `HTTP ${response.status}: ${response.statusText}`,
+            },
+          };
+        }
+      } catch (fetchError) {
+        // If HEAD fails, try OPTIONS as a fallback
+        try {
+          const optionsResponse = await safeFetch(validated.url, {
+            method: 'OPTIONS',
+            headers,
+            signal: AbortSignal.timeout(5000),
+          });
+
+          if (optionsResponse.ok) {
+            return {
+              success: true,
+              messageKey: 'mcpServers.test.connectionSuccessfulOptions',
+              details: {
+                capabilities: ['Connection verified via OPTIONS'],
+              },
+            };
+          }
+        } catch {
+          // OPTIONS also failed
+        }
+
+        return {
+          success: false,
+          messageKey: 'mcpServers.test.connectionFailed',
+          details: {
+            error: fetchError instanceof Error ? fetchError.message : 'Connection failed',
+          },
+        };
+      }
+    }
+
+    // For STDIO servers
+    if (validated.command && validated.type === McpServerType.STDIO) {
+      // The command reaches a child process below, so it goes through the same
+      // allowlist every other STDIO path uses. This file previously imported
+      // only validateHeaders and interpolated the command into a shell string.
+      const commandCheck = validateCommand(validated.command);
+      if (!commandCheck.valid) {
+        return {
+          success: false,
+          messageKey: 'mcpServers.test.invalidConfig',
+          details: { error: commandCheck.error },
+        };
+      }
+      if (validated.args) {
+        const argsCheck = validateCommandArgs(validated.args);
+        if (!argsCheck.valid) {
+          return {
+            success: false,
+            messageKey: 'mcpServers.test.invalidConfig',
+            details: { error: argsCheck.error },
+          };
+        }
+      }
+
+      // Check if the command exists
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+
+      try {
+        // argv, never a shell: `which ${command}` through exec() was a command
+        // injection sink for any caller who could reach this action.
+        if (validated.command === 'npx') {
+          await execFileAsync('npx', ['--version']);
+        } else {
+          await execFileAsync('which', [validated.command]);
+        }
+
+        // If it's npx with a package, we can't easily verify without installing
+        if (validated.command === 'npx' && validated.args?.[0]) {
+          return {
+            success: true,
+            messageKey: 'mcpServers.test.npxAvailable',
+            details: {
+              capabilities: ['Command verified'],
+            },
+          };
+        }
+
+        return {
+          success: true,
+          messageKey: 'mcpServers.test.commandAvailable',
+          details: {
+            capabilities: ['Command verified'],
+          },
+        };
+      } catch (_error) {
+        return {
+          success: false,
+          messageKey: 'mcpServers.test.commandNotFound',
+          details: {
+            error: `Command '${validated.command}' not found in PATH`,
+          },
+        };
+      }
+    }
+
+    return {
+      success: false,
+      messageKey: 'mcpServers.test.invalidConfig',
+      details: {
+        error: 'Missing required fields for server type',
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      messageKey: 'mcpServers.test.testFailed',
+      details: {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      },
+    };
+  }
+}

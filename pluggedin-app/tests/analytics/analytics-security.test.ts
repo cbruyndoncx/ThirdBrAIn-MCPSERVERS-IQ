@@ -1,0 +1,590 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { withAnalytics, verifyProfileOwnership } from '@/app/actions/analytics-hof';
+import { analyticsCache } from '@/lib/analytics-cache';
+import { getAuthSession } from '@/lib/auth';
+
+// Mock the dependencies
+vi.mock('@/lib/auth');
+vi.mock('@/db');
+vi.mock('@/lib/analytics-cache');
+vi.mock('@/lib/logger', () => ({
+  default: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+vi.mock('@/lib/rate-limiter', () => ({
+  rateLimiter: {
+    check: vi.fn().mockResolvedValue({ success: true }),
+  },
+}));
+
+const cacheStore = new Map<string, unknown>();
+
+describe('Analytics Security Tests', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cacheStore.clear();
+
+    const mockedCache = vi.mocked(analyticsCache, true);
+    mockedCache.get.mockImplementation((key: string) => {
+      return cacheStore.has(key) ? (cacheStore.get(key) as unknown) : null;
+    });
+    mockedCache.set.mockImplementation(<T>(key: string, value: T) => {
+      cacheStore.set(key, value);
+    });
+    mockedCache.clear.mockImplementation(() => {
+      cacheStore.clear();
+    });
+    mockedCache.invalidate.mockImplementation((key: string) => {
+      cacheStore.delete(key);
+    });
+    mockedCache.invalidateProfile.mockImplementation((profileUuid: string) => {
+      for (const existingKey of Array.from(cacheStore.keys())) {
+        if (existingKey.includes(profileUuid)) {
+          cacheStore.delete(existingKey);
+        }
+      }
+    });
+  });
+
+  afterEach(() => {
+    cacheStore.clear();
+  });
+
+  describe('Cache Isolation Between Users', () => {
+    it('should NOT return cached data for unauthorized users', async () => {
+      const mockGetAuthSession = vi.mocked(getAuthSession);
+
+      // Create analytics function with caching enabled
+      const testAnalytics = withAnalytics(
+        (profileUuid: string, period: string) => ({ profileUuid, period }),
+        (userId) => `test:${userId}`,
+        async ({ profileUuid, period }) => {
+          // Simulate analytics data
+          return {
+            data: `Analytics for profile ${profileUuid} in period ${period}`,
+            sensitive: 'This should not leak to other users'
+          };
+        },
+        {
+          cache: {
+            enabled: true,
+            ttl: 60000,
+          },
+        }
+      );
+
+      // User 1 requests profile A (which they own)
+      mockGetAuthSession.mockResolvedValueOnce({
+        user: { id: 'user1', email: 'user1@test.com' },
+      } as any);
+
+      // Mock that user1 owns profileA
+      const mockDb = (await import('@/db')).db;
+      vi.mocked(mockDb.limit).mockResolvedValueOnce([{ uuid: 'profile-a' }]);
+
+      const result1 = await testAnalytics('profile-a', '7d');
+      expect(result1.success).toBe(true);
+      expect(result1.data).toMatchObject({
+        data: 'Analytics for profile profile-a in period 7d',
+      });
+
+      // User 2 tries to access the same profile (which they don't own)
+      mockGetAuthSession.mockResolvedValueOnce({
+        user: { id: 'user2', email: 'user2@test.com' },
+      } as any);
+
+      // Mock that user2 does NOT own profileA
+      vi.mocked(mockDb.limit).mockResolvedValueOnce([]); // Empty array = no ownership
+
+      const result2 = await testAnalytics('profile-a', '7d');
+
+      // User 2 should be denied access
+      expect(result2.success).toBe(false);
+      expect(result2.error).toBe('Profile not found or unauthorized');
+
+      // Ensure user 2 did NOT receive user 1's cached data
+      expect(result2.data).toBeUndefined();
+    });
+
+    it('should maintain separate cache entries for different users', async () => {
+      const mockGetAuthSession = vi.mocked(getAuthSession);
+
+      const testAnalytics = withAnalytics(
+        (profileUuid: string, period: string) => ({ profileUuid, period }),
+        (userId) => `test:${userId}`,
+        async ({ profileUuid, period }, userId) => {
+          // Return user-specific data
+          return {
+            data: `User ${userId} analytics for ${profileUuid}`,
+            userId: userId,
+          };
+        },
+        {
+          cache: {
+            enabled: true,
+            ttl: 60000,
+          },
+        }
+      );
+
+      // User 1 requests their profile
+      mockGetAuthSession.mockResolvedValueOnce({
+        user: { id: 'user1', email: 'user1@test.com' },
+      } as any);
+
+      const mockDb = (await import('@/db')).db;
+      vi.mocked(mockDb.limit).mockResolvedValueOnce([{ uuid: 'profile-1' }]);
+
+      const result1 = await testAnalytics('profile-1', '7d');
+      expect(result1.success).toBe(true);
+      expect(result1.data?.userId).toBe('user1');
+
+      // User 2 requests their own profile
+      mockGetAuthSession.mockResolvedValueOnce({
+        user: { id: 'user2', email: 'user2@test.com' },
+      } as any);
+
+      vi.mocked(mockDb.limit).mockResolvedValueOnce([{ uuid: 'profile-2' }]);
+
+      const result2 = await testAnalytics('profile-2', '7d');
+      expect(result2.success).toBe(true);
+      expect(result2.data?.userId).toBe('user2');
+
+      // Verify cache keys are different for different users
+      // User 1 requests again - should get their cached data
+      mockGetAuthSession.mockResolvedValueOnce({
+        user: { id: 'user1', email: 'user1@test.com' },
+      } as any);
+
+      vi.mocked(mockDb.limit).mockResolvedValueOnce([{ uuid: 'profile-1' }]);
+
+      const result1Again = await testAnalytics('profile-1', '7d');
+      expect(result1Again.success).toBe(true);
+      expect(result1Again.data?.userId).toBe('user1'); // Should still be user1's data
+    });
+  });
+
+  describe('Profile Ownership Verification', () => {
+    it('should verify ownership before serving any data', async () => {
+      const mockGetAuthSession = vi.mocked(getAuthSession);
+      const mockDb = (await import('@/db')).db;
+
+      let ownershipCheckCalled = false;
+      let cacheCheckCalled = false;
+
+      // Create a custom cache key generator to track when cache is checked
+      const testAnalytics = withAnalytics(
+        (profileUuid: string) => ({ profileUuid, period: '7d' }),
+        (userId) => `test:${userId}`,
+        async ({ profileUuid }) => {
+          return { data: 'sensitive data' };
+        },
+        {
+          cache: {
+            enabled: true,
+            ttl: 60000,
+            keyGenerator: () => {
+              cacheCheckCalled = true;
+              return 'test-cache-key';
+            },
+          },
+        }
+      );
+
+      // Mock auth
+      mockGetAuthSession.mockResolvedValueOnce({
+        user: { id: 'user1', email: 'user1@test.com' },
+      } as any);
+
+      // Track ownership verification
+      vi.mocked(mockDb.limit).mockImplementationOnce(() => {
+        ownershipCheckCalled = true;
+        return Promise.resolve([]);  // No ownership
+      });
+
+      const result = await testAnalytics('some-profile');
+
+      // Ownership should be checked BEFORE cache
+      expect(ownershipCheckCalled).toBe(true);
+      expect(cacheCheckCalled).toBe(false); // Cache should NOT be checked if ownership fails
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Profile not found or unauthorized');
+    });
+  });
+
+  describe('Cache Key Security', () => {
+    it('should include userId in cache keys for tenant isolation', () => {
+      const { getCacheKey } = require('@/lib/analytics-cache');
+
+      // Same profile and period but different users should have different cache keys
+      const key1 = getCacheKey('overview', 'user1', 'profile-uuid', '7d');
+      const key2 = getCacheKey('overview', 'user2', 'profile-uuid', '7d');
+
+      expect(key1).not.toBe(key2);
+      expect(key1).toContain('user1');
+      expect(key2).toContain('user2');
+
+      // Cache key should include all parameters for uniqueness
+      expect(key1).toBe('analytics:overview:user1:profile-uuid:7d');
+    });
+
+    it('should handle undefined/null values safely in cache keys', () => {
+      const { getCacheKey } = require('@/lib/analytics-cache');
+
+      // Should filter out undefined/null but keep other falsy values like empty string
+      const key = getCacheKey('test', 'user1', '', '7d', undefined, null, '0');
+      expect(key).toBe('analytics:test:user1::7d:0');
+    });
+
+    it('should create distinct cache entries for different parameter combinations', async () => {
+      const mockGetAuthSession = vi.mocked(getAuthSession);
+      mockGetAuthSession.mockResolvedValue({
+        user: { id: 'user1', email: 'user1@test.com' },
+      } as any);
+
+      const handler = vi.fn(async ({ limit }: { profileUuid: string; limit: number }) => {
+        return { limit };
+      });
+
+      const analyticsFn = withAnalytics(
+        (profileUuid: string, limit: number) => ({ profileUuid, limit }),
+        (userId) => `analytics:recentDocs:${userId}`,
+        handler,
+        {
+          cache: {
+            enabled: true,
+            ttl: 60000,
+          },
+          skipProfileOwnership: true,
+        }
+      );
+
+      const first = await analyticsFn('profile-1', 5);
+      expect(first.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      const cached = await analyticsFn('profile-1', 5);
+      expect(cached.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      const differentParams = await analyticsFn('profile-1', 10);
+      expect(differentParams.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(2);
+
+      const cachedDifferentParams = await analyticsFn('profile-1', 10);
+      expect(cachedDifferentParams.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('Rate Limiting Before Expensive Operations', () => {
+    it('should apply rate limiting before ownership checks', async () => {
+      const mockGetAuthSession = vi.mocked(getAuthSession);
+      const mockRateLimiter = (await import('@/lib/rate-limiter')).rateLimiter;
+      const mockDb = (await import('@/db')).db;
+
+      let rateLimitChecked = false;
+      let ownershipChecked = false;
+
+      vi.mocked(mockRateLimiter.check).mockImplementationOnce(async () => {
+        rateLimitChecked = true;
+        return { success: false };  // Rate limit exceeded
+      });
+
+      vi.mocked(mockDb.limit).mockImplementationOnce(() => {
+        ownershipChecked = true;
+        return Promise.resolve([{ uuid: 'profile' }]);
+      });
+
+      const testAnalytics = withAnalytics(
+        (profileUuid: string) => ({ profileUuid, period: '7d' }),
+        (userId) => `test:${userId}`,
+        async () => ({ data: 'test' }),
+        { cache: { enabled: false } }
+      );
+
+      mockGetAuthSession.mockResolvedValueOnce({
+        user: { id: 'user1', email: 'user1@test.com' },
+      } as any);
+
+      const result = await testAnalytics('profile-uuid');
+
+      // Rate limit should be checked first
+      expect(rateLimitChecked).toBe(true);
+      expect(ownershipChecked).toBe(false); // Should not check ownership if rate limited
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Rate limit exceeded');
+    });
+  });
+
+  describe('ProjectUuid Cache Isolation', () => {
+    it('should create separate cache entries for different projectUuids', async () => {
+      const mockGetAuthSession = vi.mocked(getAuthSession);
+      const mockDb = (await import('@/db')).db;
+
+      const handler = vi.fn(async ({ profileUuid, projectUuid }: { profileUuid: string; projectUuid?: string }) => {
+        return { profileUuid, projectUuid, data: `Results for ${projectUuid || 'default'}` };
+      });
+
+      const testAnalytics = withAnalytics(
+        (profileUuid: string, period: string, projectUuid?: string) => ({
+          profileUuid,
+          period,
+          projectUuid
+        }),
+        (userId) => `test:${userId}`,
+        handler,
+        {
+          cache: {
+            enabled: true,
+            ttl: 60000,
+          },
+        }
+      );
+
+      // Setup auth mock
+      mockGetAuthSession.mockResolvedValue({
+        user: { id: 'user1', email: 'user1@test.com' },
+      } as any);
+
+      vi.mocked(mockDb.limit).mockResolvedValue([{ uuid: 'profile-a' }]);
+
+      // Call 1: With projectUuid = "project-1"
+      const result1 = await testAnalytics('profile-a', '7d', 'project-1');
+      expect(result1.success).toBe(true);
+      expect(result1.data?.projectUuid).toBe('project-1');
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      // Call 2: Same profile and period, but different projectUuid = "project-2"
+      // Should NOT use cached result from call 1
+      const result2 = await testAnalytics('profile-a', '7d', 'project-2');
+      expect(result2.success).toBe(true);
+      expect(result2.data?.projectUuid).toBe('project-2');
+      expect(handler).toHaveBeenCalledTimes(2); // Handler called again, not cached
+
+      // Call 3: Repeat with projectUuid = "project-1"
+      // Should use cached result from call 1
+      const result3 = await testAnalytics('profile-a', '7d', 'project-1');
+      expect(result3.success).toBe(true);
+      expect(result3.data?.projectUuid).toBe('project-1');
+      expect(handler).toHaveBeenCalledTimes(2); // Still 2, used cache from call 1
+
+      // Call 4: No projectUuid (undefined)
+      // Should be treated as a different cache entry
+      const result4 = await testAnalytics('profile-a', '7d');
+      expect(result4.success).toBe(true);
+      expect(result4.data?.projectUuid).toBeUndefined();
+      expect(handler).toHaveBeenCalledTimes(3); // Handler called, new cache entry
+    });
+
+    it('should maintain cache isolation between profiles with same projectUuid', async () => {
+      const mockGetAuthSession = vi.mocked(getAuthSession);
+      const mockDb = (await import('@/db')).db;
+
+      const handler = vi.fn(async ({ profileUuid, projectUuid }: { profileUuid: string; projectUuid?: string }) => {
+        return { profileUuid, projectUuid };
+      });
+
+      const testAnalytics = withAnalytics(
+        (profileUuid: string, projectUuid?: string) => ({
+          profileUuid,
+          period: '7d',
+          projectUuid
+        }),
+        (userId) => `test:${userId}`,
+        handler,
+        {
+          cache: {
+            enabled: true,
+            ttl: 60000,
+          },
+        }
+      );
+
+      mockGetAuthSession.mockResolvedValue({
+        user: { id: 'user1', email: 'user1@test.com' },
+      } as any);
+
+      // Allow access to both profiles
+      vi.mocked(mockDb.limit).mockResolvedValue([{ uuid: 'any' }]);
+
+      // Call 1: profile-a with project-x
+      const result1 = await testAnalytics('profile-a', 'project-x');
+      expect(result1.success).toBe(true);
+      expect(result1.data?.profileUuid).toBe('profile-a');
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      // Call 2: profile-b with same project-x
+      // Should NOT share cache with call 1 (different profile)
+      const result2 = await testAnalytics('profile-b', 'project-x');
+      expect(result2.success).toBe(true);
+      expect(result2.data?.profileUuid).toBe('profile-b');
+      expect(handler).toHaveBeenCalledTimes(2); // Not cached
+    });
+  });
+
+  describe('Stable Serialization for Complex Objects', () => {
+    it('should handle complex objects in cache keys consistently', async () => {
+      const mockGetAuthSession = vi.mocked(getAuthSession);
+      const mockDb = (await import('@/db')).db;
+
+      const handler = vi.fn(async (params: any) => {
+        return { result: 'test-data' };
+      });
+
+      const testAnalytics = withAnalytics(
+        (profileUuid: string, filters: Record<string, any>) => ({
+          profileUuid,
+          period: '7d',
+          filters
+        }),
+        (userId) => `test:${userId}`,
+        handler,
+        {
+          cache: {
+            enabled: true,
+            ttl: 60000,
+          },
+        }
+      );
+
+      mockGetAuthSession.mockResolvedValue({
+        user: { id: 'user1', email: 'user1@test.com' },
+      } as any);
+
+      vi.mocked(mockDb.limit).mockResolvedValue([{ uuid: 'profile-a' }]);
+
+      // Call 1: With object {a: 1, b: 2}
+      const result1 = await testAnalytics('profile-a', { a: 1, b: 2 });
+      expect(result1.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      // Call 2: Same object but different key order {b: 2, a: 1}
+      // Stable serialization should recognize this as the same cache key
+      const result2 = await testAnalytics('profile-a', { b: 2, a: 1 });
+      expect(result2.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1); // Should use cache, not call handler again
+
+      // Call 3: Different object values
+      const result3 = await testAnalytics('profile-a', { a: 1, b: 3 });
+      expect(result3.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(2); // Different object, not cached
+    });
+
+    it('should handle null, undefined, and arrays in cache keys', async () => {
+      const mockGetAuthSession = vi.mocked(getAuthSession);
+      const mockDb = (await import('@/db')).db;
+
+      const handler = vi.fn(async (params: any) => {
+        return { params };
+      });
+
+      const testAnalytics = withAnalytics(
+        (profileUuid: string, data: any) => ({
+          profileUuid,
+          period: '7d',
+          data
+        }),
+        (userId) => `test:${userId}`,
+        handler,
+        {
+          cache: {
+            enabled: true,
+            ttl: 60000,
+          },
+        }
+      );
+
+      mockGetAuthSession.mockResolvedValue({
+        user: { id: 'user1', email: 'user1@test.com' },
+      } as any);
+
+      vi.mocked(mockDb.limit).mockResolvedValue([{ uuid: 'profile-a' }]);
+
+      // Test with null
+      const result1 = await testAnalytics('profile-a', { value: null });
+      expect(result1.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      // Same null value should hit cache
+      const result2 = await testAnalytics('profile-a', { value: null });
+      expect(result2.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1); // Cached
+
+      // Test with array
+      const result3 = await testAnalytics('profile-a', { items: [1, 2, 3] });
+      expect(result3.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(2);
+
+      // Same array should hit cache
+      const result4 = await testAnalytics('profile-a', { items: [1, 2, 3] });
+      expect(result4.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(2); // Cached
+
+      // Different array should not hit cache
+      const result5 = await testAnalytics('profile-a', { items: [1, 2, 4] });
+      expect(result5.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(3); // Not cached
+    });
+
+    it('should handle nested objects consistently', async () => {
+      const mockGetAuthSession = vi.mocked(getAuthSession);
+      const mockDb = (await import('@/db')).db;
+
+      const handler = vi.fn(async (params: any) => {
+        return { nested: true };
+      });
+
+      const testAnalytics = withAnalytics(
+        (profileUuid: string, nested: any) => ({
+          profileUuid,
+          period: '7d',
+          nested
+        }),
+        (userId) => `test:${userId}`,
+        handler,
+        {
+          cache: {
+            enabled: true,
+            ttl: 60000,
+          },
+        }
+      );
+
+      mockGetAuthSession.mockResolvedValue({
+        user: { id: 'user1', email: 'user1@test.com' },
+      } as any);
+
+      vi.mocked(mockDb.limit).mockResolvedValue([{ uuid: 'profile-a' }]);
+
+      // Complex nested object
+      const nestedObj = {
+        level1: {
+          level2: {
+            level3: { value: 123, name: 'test' }
+          }
+        }
+      };
+
+      const result1 = await testAnalytics('profile-a', nestedObj);
+      expect(result1.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      // Same nested structure should hit cache
+      const result2 = await testAnalytics('profile-a', {
+        level1: {
+          level2: {
+            level3: { value: 123, name: 'test' }
+          }
+        }
+      });
+      expect(result2.success).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1); // Cached
+    });
+  });
+});

@@ -1,0 +1,963 @@
+{
+  "navigation": {
+    "enterApp": "进入应用",
+    "whyPluggedin": "为什么选择 plugged.in",
+    "features": "功能",
+    "aiModels": "AI 模型",
+    "pricing": "定价",
+    "community": "社区",
+    "collections": "集合",
+    "playground": "演练场",
+    "documentation": "文档",
+    "blog": "博客",
+    "getStarted": "连接",
+    "mcpProxy": "MCP 代理",
+    "mcpServers": "MCP 服务器"
+  },
+  "hero": {
+    "badge": "全球首个AI-CMS",
+    "headline": "知识、工具、记忆与智能体交汇之处",
+    "subheadline": "一个统一平台，编排您的所有AI交互。模型无关的基础设施，让您的AI真正属于您—在Claude、ChatGPT、Cursor和您使用的每个平台上持久存在。",
+    "tagline": "一个平台。您的所有AI。永久拥有。",
+    "cta": {
+      "primary": "连接",
+      "secondary": "了解工作原理"
+    },
+    "pillars": {
+      "knowledge": "知识",
+      "tools": "工具",
+      "memory": "记忆",
+      "agents": "智能体"
+    },
+    "title": "AI 的十字路口",
+    "subtitle": "通过统一平台连接、创建和扩展您的 AI 能力。构建和管理增强您 AI 工作流程的插件。",
+    "analogy": "\"您的 AI 生态系统，统一且社交\"",
+    "valueBanner": "您的 AI 生成数据。每个模型。每次交互。尽在您的掌控之中。",
+    "openSource": "自豪地开源",
+    "features": {
+      "security": "Enterprise Security",
+      "fast": "Lightning Fast",
+      "scale": "Global Scale"
+    }
+  },
+  "problemStatement": {
+    "title": "AI碎片化正在浪费您的时间、金钱和智慧",
+    "subtitle": "AI生产力的承诺是真实的。但现实是什么？您的AI能力分散在各个平台上，工具在每次会话后重置，什么都无法互相通信。",
+    "problems": {
+      "scattered": {
+        "title": "知识分散各处",
+        "description": "您的文档存储在Google Drive、Notion、Confluence和本地文件中。每个AI平台都要求您重新上传所有内容，或者根本无法访问它们。"
+      },
+      "reconfiguring": {
+        "title": "无尽的工具配置",
+        "description": "在Claude中花费数小时设置GitHub集成？现在为ChatGPT再做一次。再为Cursor做一次。每次尝试新的AI工具都要重复一遍。"
+      },
+      "noMemory": {
+        "title": "会话之间无记忆",
+        "description": "每次对话都从零开始。昨天建立的上下文？消失了。上周设置的偏好？被遗忘了。您不断地重新解释自己。"
+      },
+      "agentFailures": {
+        "title": "无声消失的智能体",
+        "description": "部署了自主智能体？希望它不会崩溃。您要到几个小时后才能知道。没有生命周期管理，没有监控，没有控制。"
+      },
+      "productionGap": {
+        "title": "概念验证地狱",
+        "description": "88%的AI项目从未进入生产环境。为什么？因为拼凑API、管理状态和确保安全性变成了一份全职工作。"
+      }
+    },
+    "quote": "我们花了几周时间为每个团队成员单独配置MCP服务器。Plugged.in将一切集中在一个地方——现在我们的团队每周节省15小时，我们的AI真正记住了我们的代码库。",
+    "quoteAuthor": "工程主管，B轮SaaS公司"
+  },
+  "fourPillars": {
+    "badge": "完整平台",
+    "title": "四大支柱。无限可能。",
+    "subtitle": "唯一结合MCP编排、嵌入式向量搜索、持久记忆系统和自主智能体生命周期管理的统一平台。",
+    "knowledge": {
+      "title": "您AI的记忆银行",
+      "description": "上传一次文档，随处访问。我们的嵌入式向量引擎将您的机构知识转化为每个AI都可以利用的持久、可搜索的上下文——无需外部服务。",
+      "features": {
+        "1": "具有完整模型归因和版本历史的AI生成文档",
+        "2": "由进程内HNSW向量索引驱动的亚秒级语义搜索",
+        "3": "多格式支持：带自动分块和嵌入的PDF、Markdown、JSON、HTML"
+      },
+      "highlightLabel": "真实影响",
+      "highlight": "跨AI平台持久的代码审查记忆。您的调试会话成为随时间复合的机构知识。"
+    },
+    "tools": {
+      "title": "1500+工具，一个界面",
+      "description": "不再为每个 AI 平台重复配置相同的 MCP 服务器。一次连接，处处使用。原生 Claude Code 插件加上适用于所有其他客户端的通用 MCP 代理。",
+      "features": {
+        "1": "原生 Claude Code 插件：所有工具、知识库、记忆和通知在您的 IDE 中",
+        "2": "与典型MCP代理相比，令牌效率提高30-55%",
+        "3": "通用兼容：Claude Code、Cursor、Cline、ChatGPT、LM Studio 等"
+      },
+      "highlightLabel": "效率提升",
+      "highlight": "几秒钟内将 plugged.in 添加到 Claude Code。一个插件替代数百个单独的 MCP 配置 — 一次更新，全部生效。"
+    },
+    "memory": {
+      "title": "智能记忆系统",
+      "description": "受人类认知启发的记忆系统，具有同心环、智能遗忘和集体智慧。从剪贴板存储到自然衰减的长期记忆，以及匿名涌现的社区模式。",
+      "features": {
+        "1": "同心记忆环：新鲜观察、程序、实践、长期和冲击",
+        "2": "集体最佳实践：从社区以隐私保护方式聚合的模式",
+        "3": "剪贴板、会话、Z报告和10倍令牌效率的渐进式检索"
+      },
+      "highlightLabel": "v3.1.0新功能",
+      "highlight": "集体最佳实践（CBP）系统现已上线。您的智能体从匿名化的社区模式中学习——错误恢复、工作流和最佳实践——不暴露私人数据。"
+    },
+    "agents": {
+      "title": "具有军事级治理的自主智能体",
+      "description": "世界上第一个全面的智能体生命周期管理协议。以企业要求的可靠性部署、监控和控制自主智能体。",
+      "features": {
+        "1": "具有基于DNS的智能体寻址的亚50毫秒控制平面延迟",
+        "2": "全面的生命周期管理：NEW → PROVISIONED → ACTIVE → DRAINING → TERMINATED",
+        "3": "在混沌测试下具有自动故障恢复的99.9%正常运行时间"
+      },
+      "highlightLabel": "学术创新",
+      "highlight": "PAP协议学术论文已准备好提交arXiv。通过协议级可靠性解决现实任务中人类和AI性能之间28%的差距。"
+    },
+    "cta": {
+      "text": "准备好统一您的AI基础设施了吗？",
+      "button": "今天免费开始"
+    }
+  },
+  "videoTutorials": {
+    "title": "实战演示",
+    "subtitle": "观看分步教程，在几分钟内开始使用plugged.in。从基本设置到高级功能。",
+    "quickSetup": {
+      "title": "快速设置",
+      "duration": "3分钟",
+      "description": "在3分钟内将MCP服务器连接到Claude Desktop、VS Code、Cursor和其他AI工具。",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw"
+    },
+    "ragArchive": {
+      "title": "RAG和文档存档",
+      "duration": "5分钟",
+      "description": "了解如何将文件保存到知识库，并使用AI驱动的语义搜索在所有平台上查询它们。",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw?start=141"
+    },
+    "notifications": {
+      "title": "任务通知",
+      "duration": "4分钟",
+      "description": "设置自动通知和任务跟踪，掌握AI工作流和智能体活动。",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw?start=250"
+    },
+    "oauthServers": {
+      "title": "OAuth集成",
+      "duration": "6分钟",
+      "description": "通过OAuth连接Notion、Linear和GitHub等服务。一次认证，令牌在过期前自动刷新。无需手动管理令牌。",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw?start=276"
+    },
+    "moreVideos": "更多教程可在我们的",
+    "docsLink": "文档中找到"
+  },
+  "whyPluggedin": {
+    "title": "为什么选择 plugged.in？",
+    "subtitle": "所有 AI 交互汇聚的十字路口",
+    "problem": {
+      "title": "我们解决的问题",
+      "description": "每次您与 AI 互动时 - 无论是 Claude、GPT 还是其他模型 - 都会生成有价值的数据。洞察、配置、成功的提示和上下文知识。但这些数据存在于孤岛中，由不同的平台控制，无法跨工具利用。"
+    },
+    "solution": {
+      "title": "我们的解决方案",
+      "description": "plugged.in 充当通用十字路口，在这里：",
+      "benefit1": "每个 AI 交互都通过您控制的环境流动",
+      "benefit2": "每个生成的数据片段都归您所有、分析和重用",
+      "benefit3": "每个模型通过单一、统一的界面连接",
+      "benefit4": "每个洞察都建立在前一个的基础上，创造复合价值"
+    },
+    "bridge": {
+      "title": "建立在开放标准之上",
+      "description": "我们利用模型上下文协议（MCP）作为技术基础 - 不是因为它时髦，而是因为它是使真正的数据所有权成为可能的开放标准。MCP 确保您的数据不会被锁定在专有平台中，而是成为您的便携资产。"
+    },
+    "visual": {
+      "hub": "plugged.in 中心",
+      "hubDesc": "您的受控环境",
+      "yourData": "您的数据",
+      "yourDataDesc": "拥有、便携和可重用"
+    },
+    "cta": {
+      "title": "一个平台。所有模型。您的数据。您的未来。",
+      "subtitle": "加入数千名已经掌控其 AI 生成数据的人"
+    },
+    "aiModels": {
+      "claude": "Claude",
+      "gpt4": "GPT-4",
+      "llama": "Llama",
+      "gemini": "Gemini"
+    }
+  },
+  "aiModels": {
+    "badge": "由 Langchain 提供支持",
+    "title": "一个平台，每个模型",
+    "subtitle": "立即在模型之间测试相同的提示。您的数据在任何地方都能工作 - 无需重新训练。",
+    "moreModels": "通过我们的 Langchain 集成，还有数十种其他模型",
+    "viewAll": "查看所有模型",
+    "feature1": {
+      "title": "即时模型切换",
+      "description": "一键并排比较不同模型的响应。"
+    },
+    "feature2": {
+      "title": "统一提示",
+      "description": "您的提示和上下文在所有 AI 模型中无缝工作。"
+    },
+    "feature3": {
+      "title": "模型无关的数据",
+      "description": "一次构建，随处使用。您的 AI 资产不会锁定在任何模型上。"
+    },
+    "cta": {
+      "title": "准备好用多个模型进行测试了吗？",
+      "button": "试试演练场"
+    }
+  },
+  "features": {
+    "title": "功能",
+    "subtitle": "管理 MCP 服务器所需的一切",
+    "sectionTitle": "完整的 AI 生态系统平台",
+    "sectionSubtitle": "从数据所有权到社区协作 - 您需要的一切都在一个平台上。",
+    "claudeCodePlugin": {
+      "title": "Claude Code 插件",
+      "description": "Claude Code 原生 MCP 插件。所有工具、知识库、记忆和通知直接在您的编码工作流中使用 — 零配置。"
+    },
+    "oauthAutoRotation": {
+      "title": "OAuth 2.1 自动轮换",
+      "description": "过期前15分钟自动刷新令牌。符合OAuth 2.1标准的令牌轮换。零服务中断，零手动操作。"
+    },
+    "mcpProxy": {
+      "title": "统一MCP代理",
+      "description": "所有MCP服务器的单一端点。内置AI演练场、通知系统和文档交换。支持STDIO、SSE和Streamable HTTP传输。"
+    },
+    "officialSdks": {
+      "title": "JavaScript、Python和Go SDK",
+      "description": "适用于JavaScript/TypeScript、Python和Go的全功能SDK。跨语言一致接口的文档管理、RAG查询和API访问。"
+    },
+    "advancedSearch": {
+      "title": "智能发现引擎",
+      "description": "在 GitHub、Smithery 和 npm 中找到完美的 MCP 服务器。按能力、评分和社区推荐过滤。"
+    },
+    "mcpPlayground": {
+      "title": "通用 AI 演练场",
+      "description": "使用任何模型测试 MCP 服务器 - Claude、GPT、Llama 等。支持大型对话的虚拟滚动和自定义指令。"
+    },
+    "ragIntegration": {
+      "title": "AI 知识平台 (RAG)",
+      "description": "上传文档，创建知识库，通过任何 MCP 客户端查询。企业级安全的安全项目隔离。"
+    },
+    "notifications": {
+      "title": "实时活动监控",
+      "description": "通过详细日志、执行分析和可选邮件传递的自定义通知跟踪所有 MCP 操作。"
+    },
+    "security": {
+      "title": "企业安全与隐私",
+      "description": "多层身份验证、Firejail 沙盒、全面审计跟踪和完全控制的自托管选项。"
+    },
+    "internationalization": {
+      "title": "全球平台",
+      "description": "支持 6 种语言，自动浏览器检测。社区驱动的翻译实现全球可访问性。"
+    },
+    "pluginManagement": {
+      "title": "插件管理",
+      "description": "浏览、配置和管理 MCP 服务器和插件",
+      "content": "通过统一界面连接各种 AI 工具和服务。从中央仪表板配置和管理您的插件。",
+      "action": "浏览插件"
+    },
+    "aiPlayground": {
+      "title": "AI 演练场",
+      "description": "在交互式环境中测试和实验您的 AI 工具",
+      "content": "体验运行中的插件。演练场允许您测试不同配置并查看实时结果。",
+      "action": "打开演练场"
+    },
+    "customDevelopment": {
+      "title": "自定义开发",
+      "description": "创建和自定义您自己的 MCP 服务器和工具",
+      "benefit1": "发现其他开发者的创新服务器。",
+      "benefit2": "获得对您共享服务器的反馈和评分。",
+      "benefit3": "在社区创作基础上协作和构建。",
+      "benefit4": "了解最新的 MCP 趋势。",
+      "visualPlaceholder": "显示服务器共享/评分的视觉",
+      "content": "使用我们的 Python 编辑器和集成开发环境构建自定义功能。通过专门功能扩展您的 AI。",
+      "action": "创建自定义工具"
+    },
+    "langchainAbstraction": {
+      "title": "测试任何模型：Langchain 抽象",
+      "description": "Plugged.in 使用 Langchain 抽象层，因此您可以在单一界面中使用 Claude、GPT、Llama 等测试您的 MCP 服务器。即时比较模型，面向未来的工作流程，体验真正的模型无关 AI。"
+    }
+  },
+  "community": {
+    "title": "加入全球 MCP 社区",
+    "subtitle": "与数千名构建 AI 未来的开发者连接",
+    "description": "分享您的 MCP 服务器，关注开发者，获取实时通知，在我们的社交平台内协作。通过评分、评论和社区贡献建立您的声誉。",
+    "action": "加入社区",
+    "stats": {
+      "developers": "1K+ 开发者",
+      "servers": "500+ MCP 服务器",
+      "collections": "即将推出",
+      "languages": "6 种语言"
+    },
+    "socialFeatures": {
+      "title": "社交平台功能",
+      "profiles": "带活动流的公开开发者档案",
+      "following": "关注开发者并获取他们工作的更新",
+      "notifications": "关注、分享和更新的实时通知",
+      "reputation": "通过社区参与建立您的声誉"
+    },
+    "benefit1": "发现其他开发者的创新服务器。",
+    "benefit2": "获得对您共享服务器的反馈和评分。",
+    "benefit3": "在社区创作基础上协作和构建。",
+    "benefit4": "了解最新的 MCP 趋势。",
+    "visualPlaceholder": "显示服务器共享/评分的视觉"
+  },
+  "search": {
+    "title": "智能发现引擎",
+    "subtitle": "在 GitHub、Smithery 和 npm 中找到完美的 MCP 服务器",
+    "description": "我们的高级发现引擎搜索多个来源，使用社区信号来突出显示您需要的最佳工具。",
+    "action": "发现工具",
+    "sources": {
+      "title": "搜索所有来源",
+      "github": "带有 MCP 服务器的 GitHub 仓库",
+      "smithery": "Smithery 市场集成",
+      "npm": "支持 MCP 的 NPM 包",
+      "community": "社区共享的服务器"
+    },
+    "imagePlaceholder": "图像：显示社区服务器的搜索结果（CardGrid 模型）",
+    "feature1Title": "AI 驱动搜索",
+    "feature1Desc": "理解您要查找内容的自然语言搜索，而不仅仅是关键词。",
+    "feature2Title": "社区信号",
+    "feature2Desc": "按评分、安装、最近更新和开发者声誉过滤。",
+    "feature3Title": "能力匹配",
+    "feature3Desc": "按您需要的确切能力找到服务器 - 工具、资源或提示。",
+    "feature4Title": "即时预览",
+    "feature4Desc": "直接从搜索结果测试服务器，无需安装。"
+  },
+  "playground": {
+    "title": "通用 AI 测试演练场",
+    "subtitle": "使用任何 AI 模型测试任何 MCP 服务器 - Claude、GPT、Llama 等。",
+    "feature1Title": "多模型支持",
+    "feature1Desc": "通过我们的 Langchain 集成测试 Claude、GPT-4、Llama、Gemini 和数十种其他模型。",
+    "feature2Title": "高级 RAG 集成",
+    "feature2Desc": "上传文档，创建知识库，使用任何模型即时查询。",
+    "feature3Title": "虚拟滚动和性能",
+    "feature3Desc": "通过虚拟滚动和优化性能处理大型对话。",
+    "feature4Title": "自定义指令",
+    "feature4Desc": "设置模型特定指令和系统提示以实现精确控制。",
+    "feature5Title": "实时监控",
+    "feature5Desc": "通过详细日志、执行分析和性能指标跟踪所有操作。",
+    "visualPlaceholder": "演练场环境的视觉表示",
+    "imagePlaceholder": "图像：演练场/调试模型",
+    "langchainCallout": "<0>测试任何模型：</0> 感谢我们的 <1>Langchain 抽象</1>，您可以在单一演练场中使用 Claude、GPT、Llama 等测试您的 MCP 服务器。即时比较模型，体验真正的模型无关 AI。"
+  },
+  "opensource": {
+    "title": "自豪地开源",
+    "subtitle": "由社区构建，为社区服务。贡献并塑造 MCP 的未来。",
+    "badge": "开源",
+    "viewOnGithub": "在 GitHub 上查看",
+    "followOrg": "关注 VeriTeknik",
+    "contribute": "加入我们的开源社区，共同构建 AI 集成的未来",
+    "repos": {
+      "app": {
+        "description": "主应用程序 - 用于 MCP 管理的 Next.js Web 平台"
+      },
+      "proxy": {
+        "description": "模型上下文协议的通用代理服务器"
+      }
+    }
+  },
+  "collections": {
+    "title": "智能集合和版本控制",
+    "subtitle": "即将推出：组织、版本化和共享您的 MCP 服务器集合",
+    "description": "即将推出创建版本化集合、跟踪安装、与团队协作以及维护开发、测试和生产的不同配置等功能。",
+    "action": "了解更多",
+    "versionControl": {
+      "title": "集合版本控制",
+      "feature1": "在任何时间点创建集合快照",
+      "feature2": "在需要时回滚到以前的版本",
+      "feature3": "跟踪更改并查看版本之间的差异",
+      "feature4": "与您的团队共享特定版本"
+    },
+    "sharing": {
+      "title": "公开和私有共享",
+      "public": "与社区公开共享集合",
+      "private": "与团队成员私下共享",
+      "stats": "跟踪安装和使用统计",
+      "ratings": "从用户获得反馈和评分"
+    },
+    "collectionsTitle": "简化集合",
+    "collectionsDesc": "将相关 MCP 服务器分组到特定客户端、应用程序或环境的逻辑集合中。",
+    "workspacesTitle": "多工作区管理",
+    "workspacesDesc": "通过专用工作区隔离项目。在开发、测试和生产配置之间即时切换。",
+    "hierarchyPlaceholder": "集合层次结构的视觉表示",
+    "imagePlaceholder": "图像：集合/工作区模型"
+  },
+  "sharing": {
+    "title": "社区共享",
+    "subtitle": "与他人分享",
+    "description": "与社区分享您的 MCP 服务器和工具。",
+    "action": "开始分享"
+  },
+  "security": {
+    "title": "企业级安全",
+    "subtitle": "您的 AI 基础设施，每一层都受到保护",
+    "description": "采用安全优先架构构建，具有多层身份验证、沙盒执行和全面审计跟踪。",
+    "features": {
+      "authentication": {
+        "title": "多层身份验证",
+        "desc": "OAuth 提供商、API 密钥和 JWT 令牌的会话管理"
+      },
+      "sandboxing": {
+        "title": "Firejail 沙盒",
+        "desc": "Linux 上所有 STDIO MCP 服务器的自动安全沙盒"
+      },
+      "isolation": {
+        "title": "项目隔离",
+        "desc": "基于角色的访问控制实现项目间完全数据隔离"
+      },
+      "audit": {
+        "title": "全面审计跟踪",
+        "desc": "跟踪所有操作、API 调用和用户操作以确保合规性"
+      },
+      "encryption": {
+        "title": "数据加密",
+        "desc": "敏感数据和 API 通信的端到端加密"
+      },
+      "selfhost": {
+        "title": "自托管选项",
+        "desc": "在您的基础设施上部署以实现完全控制和合规性"
+      }
+    },
+    "compliance": "符合 SOC2 Type II 的基础设施，定期进行安全审计",
+    "action": "查看安全详情"
+  },
+  "developers": {
+    "title": "为开发者而构建",
+    "subtitle": "强大的工具和 API 来扩展您的 AI 能力",
+    "description": "具有全面 API、SDK 和开发者工具的开源平台。",
+    "features": {
+      "opensource": {
+        "title": "100% 开源",
+        "desc": "MIT 许可，在 GitHub 上透明开发"
+      },
+      "apis": {
+        "title": "RESTful API",
+        "desc": "所有平台功能的完整 API 覆盖"
+      },
+      "sdks": {
+        "title": "TypeScript SDK",
+        "desc": "具有完整 IntelliSense 支持的类型安全 SDK"
+      },
+      "extensibility": {
+        "title": "插件架构",
+        "desc": "通过自定义 MCP 服务器和集成扩展平台"
+      },
+      "documentation": {
+        "title": "全面文档",
+        "desc": "带有示例和教程的详细文档"
+      },
+      "community": {
+        "title": "活跃社区",
+        "desc": "Reddit、X、GitHub 讨论和社区支持"
+      }
+    },
+    "codeExample": {
+      "title": "快速集成示例",
+      "description": "几秒钟内连接到 Plugged.in："
+    },
+    "action": "查看文档"
+  },
+  "pricing": {
+    "badge": "100% 永久免费",
+    "title": "完全免费 - 无隐藏费用",
+    "subtitle": "我们相信 AI 数据所有权的民主化。每个功能，面向每个人，永远免费。",
+    "free": {
+      "title": "一切包含",
+      "description": "无限制、无层级、无惊喜",
+      "cta": "立即开始",
+      "note": "无需信用卡 • 个人使用永远免费",
+      "everything_included": "包含所有功能："
+    },
+    "features": {
+      "unlimited_ai_model_connections": "无限制 AI 模型连接",
+      "full_data_ownership_and_export": "完全数据所有权和导出",
+      "mcp_server_integrations": "500+ MCP 服务器集成",
+      "unlimited_workspaces_and_projects": "无限制工作空间和项目",
+      "community_sharing_and_collaboration": "社区共享和协作",
+      "end_to_end_encryption": "端到端加密",
+      "rag_document_storage": "RAG 文档存储",
+      "real_time_notifications": "实时通知",
+      "oauth_authentication": "OAuth 身份验证",
+      "api_access": "API 访问"
+    },
+    "whyFree": {
+      "title": "为什么 plugged.in 是免费的？",
+      "description": "我们正在构建 AI 数据所有权的未来。我们的使命是确保每个人都能控制他们的 AI 生成数据。通过保持平台免费，我们正在创建最大的生态系统，让开发者可以共享、学习和共同构建。"
+    },
+    "enterprise": {
+      "title": "企业版",
+      "price": "定制",
+      "period": "",
+      "description": "有高级需求的组织",
+      "features": [
+        "专业版的所有功能",
+        "自托管选项",
+        "SSO/SAML 身份验证",
+        "SLA 保证",
+        "专门支持",
+        "自定义集成"
+      ],
+      "cta": "联系销售"
+    }
+  },
+  "gettingStarted": {
+    "title": "开始很容易",
+    "subtitle": "5 分钟内从零到 AI 驱动",
+    "description": "按照我们的快速入门指南连接您的第一个 MCP 服务器并开始构建。",
+    "steps": {
+      "step1": {
+        "title": "1. 创建账户",
+        "desc": "使用邮箱或 OAuth 提供商注册"
+      },
+      "step2": {
+        "title": "2. 获取 API 密钥",
+        "desc": "从仪表板生成您的 API 密钥"
+      },
+      "step3": {
+        "title": "3. 安装 MCP 代理",
+        "desc": "运行：npx @pluggedin/pluggedin-mcp-proxy@latest"
+      },
+      "step4": {
+        "title": "4. 连接客户端",
+        "desc": "添加 Claude Code 插件、Cursor 或任何 MCP 客户端"
+      }
+    },
+    "resources": {
+      "title": "学习资源",
+      "quickstart": "5 分钟快速入门指南",
+      "tutorials": "逐步教程",
+      "videos": "视频演示",
+      "examples": "示例项目和模板"
+    },
+    "action": "查看设置指南"
+  },
+  "cta": {
+    "title": "准备好加入 AI 革命了吗？",
+    "subtitle": "使用最全面的 MCP 平台开始构建。个人永久免费。",
+    "description": "加入数千名使用 Plugged.in 构建 AI 未来的开发者。",
+    "primary": "免费开始",
+    "secondary": "查看文档",
+    "primaryAction": "创建免费账户",
+    "secondaryAction": "探索文档",
+    "features": {
+      "title": "您需要的一切",
+      "feature1": "✓ 无限制 MCP 服务器",
+      "feature2": "✓ 支持所有 AI 模型",
+      "feature3": "✓ RAG 知识库",
+      "feature4": "✓ 社交功能",
+      "feature5": "✓ 6 种语言支持",
+      "feature6": "✓ 企业安全"
+    },
+    "step1": {
+      "title": "注册",
+      "description": "几秒钟内创建您的免费账户。无需信用卡。"
+    },
+    "step2": {
+      "title": "连接和发现",
+      "description": "添加 MCP 服务器，关注开发者，加入社区。"
+    },
+    "step3": {
+      "title": "构建和分享",
+      "description": "创建集合，上传知识，与世界分享。"
+    },
+    "security": {
+      "title": "企业级安全",
+      "description": "您的数据通过多层身份验证、Firejail 沙盒和全面审计跟踪得到保护。自托管以实现完全控制。"
+    }
+  },
+  "trust": {
+    "title": "企业信任与安全",
+    "subtitle": "数千家组织信任 Plugged.in 作为其关键 AI 基础设施",
+    "certifications": {
+      "soc2": {
+        "label": "SOC 2 Type II",
+        "description": "兼容"
+      },
+      "pciDss": {
+        "label": "PCI-DSS",
+        "description": "合规"
+      },
+      "gdpr": {
+        "label": "GDPR",
+        "description": "合规"
+      },
+      "hipaa": {
+        "label": "HIPAA",
+        "description": "就绪"
+      }
+    },
+    "growth": {
+      "title": "30 天内从 0 到 14,000+ API 调用",
+      "subtitle": "加入 620+ 开发者，共同使用增长最快的 AI 集成平台构建未来",
+      "stats": {
+        "documents": "87+ AI 文档",
+        "servers": "460 活跃服务器",
+        "projects": "650+ 创建的项目"
+      }
+    }
+  },
+  "metrics": {
+    "growth": {
+      "value": "718",
+      "suffix": "%",
+      "label": "月度增长"
+    },
+    "tools": {
+      "value": "7,268",
+      "suffix": "+",
+      "label": "已验证工具"
+    },
+    "servers": {
+      "value": "1,500",
+      "suffix": "+",
+      "label": "MCP 服务器"
+    },
+    "apiCalls": {
+      "value": "14K",
+      "suffix": "+",
+      "label": "月度 API 调用"
+    },
+    "projects": {
+      "value": "650",
+      "suffix": "+",
+      "label": "活跃项目"
+    },
+    "users": {
+      "value": "620",
+      "suffix": "+",
+      "label": "活跃开发者"
+    },
+    "activeServers": {
+      "value": "460",
+      "suffix": "+",
+      "label": "活跃服务器"
+    },
+    "response": {
+      "value": "100",
+      "prefix": "<",
+      "suffix": "ms",
+      "label": "响应时间"
+    },
+    "uptime": {
+      "value": "99.9",
+      "suffix": "%",
+      "label": "正常运行时间 SLA"
+    },
+    "documents": {
+      "value": "87",
+      "suffix": "+",
+      "label": "AI 文档"
+    }
+  },
+  "roadmap": {
+    "badge": "产品路线图",
+    "title": "Plugged.in 路线图",
+    "subtitle": "从统一AI控制平面到真实世界自主智能体",
+    "stage1": {
+      "date": "2025年3月",
+      "title": "起点：统一AI控制平面",
+      "description": "Plugged.in启动。第一个基础：知识、工具和记忆在一个控制平面下。模型上下文协议支持开始。"
+    },
+    "stage2": {
+      "date": "2026年3月",
+      "title": "Plugged.in v3.0.0 — 嵌入式RAG向量引擎",
+      "description": "RAG使用嵌入式zvec向量引擎从零开始重建。零外部依赖——文档分块、嵌入和HNSW搜索全部在进程内运行。知识成为内置能力，而非外部服务。"
+    },
+    "stage3": {
+      "title": "Plugged.in v3.1.0 — 集体最佳实践",
+      "description": "智能体现在从社区学习。CBP系统通过k-匿名保护、基于HMAC的隐私和上下文注入，将高质量记忆提升为匿名化的集体模式。包括Gemini支持的AI提供商抽象和共享向量基础设施。"
+    },
+    "stage4": {
+      "date": "2025年10月下旬",
+      "title": "PAP — Plugged.in智能体协议（里程碑）",
+      "description": "PAP作为控制+遥测支柱发布。自主智能体现在拥有：生命周期管理、策略引擎、安全通道、终止开关、事件流和跨模型编排。PAP将Plugged.in从控制层转变为自主智能体平台。"
+    },
+    "stage5": {
+      "date": "2026年第二季度",
+      "title": "传感器 → 智能体 → 认知预测自动化",
+      "description": "Plugged.in扩展到物理世界。Raspberry Pi和轻量级传感器节点流式传输：压力、振动、热量、声学、电压和电流。云智能体学习、适应、预测和行动。结果：'工作的智能体。'实现全球智能体支持的劳动力。"
+    },
+    "outcome": {
+      "title": "认知预测自动化",
+      "line1": "分析真实世界数据、从模式中学习并在故障发生前采取行动的自主智能体。",
+      "line2": "这是数字智能与物理系统相遇的地方。"
+    },
+    "workforce": {
+      "title": "智能体支持的劳动力",
+      "line1": "数千名安装和配置传感器的技术人员。",
+      "line2": "扩展人而不是替代人的技术。"
+    },
+    "cta": {
+      "primary": "获取API密钥",
+      "secondary": "查看GitHub"
+    },
+    "status": {
+      "completed": "已完成",
+      "inProgress": "进行中",
+      "planned": "已计划",
+      "future": "未来"
+    }
+  },
+  "popularServers": {
+    "badge": "最受欢迎",
+    "title": "热门MCP服务器",
+    "subtitle": "发现我们社区中安装次数最多和评分最高的MCP服务器",
+    "viewDetails": "查看详情",
+    "exploreAll": "Explore All {{count}}+ Servers"
+  },
+  "jungian": {
+    "title": "与您共同成长的智能",
+    "subtitle": "灵感来自荣格的集体无意识——您的AI不仅仅是记忆，它在学习、整合和进化。",
+    "archetypes": {
+      "shadow": "阴影",
+      "shadowDesc": "警告您不该做的事——反模式、安全风险、已知陷阱",
+      "sage": "智者",
+      "sageDesc": "指导正确的方法——最佳实践、经过验证的解决方案、专家智慧",
+      "hero": "英雄",
+      "heroDesc": "展示该做什么——工作流程、工具序列、行动计划",
+      "trickster": "诡计者",
+      "tricksterDesc": "提供创意解决方案——变通方法、边缘情况、非常规修复"
+    }
+  },
+  "terminal": {
+    "title": "零配置。一切自动化。",
+    "subtitle": "五个生命周期钩子从头到尾管理你的整个内存会话——无需手动干预。",
+    "learnMore": "同步检测工作原理"
+  },
+  "heroPlugin": {
+    "badge": "从所有人中学习的 AI 记忆",
+    "headline": "你的 AI 记住你。我们记住所有人。",
+    "subtitle": "从数千名开发者中提炼的集体记忆。你即将犯的错误？别人已经犯过了。Plugged.in 知道。",
+    "tagline": "个人记忆是有限的。集体记忆是超能力。",
+    "copy": "复制安装命令",
+    "copied": "已复制！",
+    "setupHint": "通过浏览器登录以连接您的工作区",
+    "starOnGithub": "在 GitHub 上加星",
+    "howItWorks": "工作原理",
+    "stats": "开源。永久免费。社区驱动。",
+    "contrast": {
+      "title": "为什么不直接用模型自带的记忆？",
+      "model": {
+        "col1": "仅限你的会话",
+        "col2": "上下文满了就遗忘",
+        "col3": "你重复同样的错误"
+      },
+      "pluggedin": {
+        "col1": "数千名开发者的经验",
+        "col2": "模式是永久的",
+        "col3": "警告你：别这样做"
+      },
+      "labels": {
+        "model": "模型记忆",
+        "pluggedin": "Plugged.in"
+      }
+    },
+    "proxySetupHint": "适用于 Cursor、Cline、ChatGPT、LM Studio 等的通用 MCP 代理",
+    "compat": "两条安装路径 · 适用于 Claude Code 的原生插件 · 适用于其他所有客户端的通用 MCP 代理",
+    "tabs": {
+      "plugin": "Claude Code 插件",
+      "proxy": "MCP 代理（其他客户端）",
+      "pluginCaption": "Claude Code · 30 秒 · 零配置",
+      "proxyCaption": "Cursor · Cline · ChatGPT · LM Studio · 任何 MCP 客户端",
+      "tablistLabel": "安装方式"
+    }
+  },
+  "oneLiner": {
+    "statement": "AI 记忆。学习。进化。",
+    "subtitle": "三个智能层将每次 AI 交互从空白页面转变为上下文、智慧和洞察的连续体。",
+    "personal": {
+      "title": "个人记忆",
+      "desc": "每次会话都建立在上一次的基础上。你的 AI 在对话和平台之间保持上下文、偏好和工作模式——一切都不会从零开始。"
+    },
+    "collective": {
+      "title": "集体智慧",
+      "desc": "来自社区的匿名最佳实践自动浮现。当多个用户独立发现相同的洞察时，它就变成了共享智慧。"
+    },
+    "archetypal": {
+      "title": "原型指导",
+      "desc": "受荣格心理学启发，你的 AI 发展出一种微妙的判断力，知道该做什么、避免什么，以及何时尝试非常规的方法。"
+    }
+  },
+  "scenarios": {
+    "title": "这种事发生在你身上过吗？",
+    "subtitle": "每个开发者都经历过。区别在于你是独自学习，还是从所有人那里学习。",
+    "bug": {
+      "title": "3 小时，1 个 Bug",
+      "before": "递归查询无限循环。开了 14 个 Stack Overflow 标签页。问了 ChatGPT 3 次，每次答案都不一样。解决了——3 小时后。",
+      "after": "「此模式已出现 47 次。89% 由缺少基本条件引起。」——5 分钟。",
+      "label": "Debug 时间"
+    },
+    "production": {
+      "title": "凌晨 2 点的生产事故",
+      "before": "把 .env.staging 的值推到了 .env.production。告警炸了。回滚、事后分析、羞愧。",
+      "after": "「此配置曾 12 次被错误部署到生产环境。你确定吗？」——部署之前。",
+      "label": "部署安全"
+    },
+    "framework": {
+      "title": "新框架，老错误",
+      "before": "学习新框架。读文档、做教程。但生产环境中出现了意料之外的边界情况。",
+      "after": "「使用此框架最常见的 3 个错误：连接池、cache invalidation、缺少 error boundaries。」——在你开始之前。",
+      "label": "上手指引"
+    },
+    "beforeLabel": "没有 Plugged.in",
+    "afterLabel": "有 Plugged.in"
+  },
+  "howItWorks": {
+    "title": "你的 AI 已经知道别人学到的东西",
+    "subtitle": "无需设置。无需配置。模式自动流向你的 AI。",
+    "dontDoThis": {
+      "title": "别这样做",
+      "desc": "社区中反复出现的错误、反模式、已知陷阱。你的 AI 会警告你——因为别人已经掉过坑了。"
+    },
+    "tryThis": {
+      "title": "试试这样做",
+      "desc": "经过验证的解决方案、最佳实践、社区验证过的方法。不是一个人的观点——而是数百名开发者的经验。"
+    },
+    "creative": {
+      "title": "还没人试过，但是……",
+      "desc": "非常规但有效的解决方案。来自社区的创造性方法——超越标准答案。"
+    },
+    "flow": {
+      "step1": "你写代码",
+      "step2": "检测到模式",
+      "step3": "与社区匹配",
+      "step4": "你的 AI 告诉你"
+    }
+  },
+  "ctaPlugin": {
+    "headline": "社区已经学到了。你还在独自摸索吗？",
+    "copy": "复制安装命令",
+    "copied": "已复制！",
+    "setupHint": "30 秒安装。加入集体记忆。",
+    "starOnGithub": "在 GitHub 上加星",
+    "readDocs": "文档",
+    "platform": "开放平台",
+    "footer": "永久免费。开源。你的模式保持私密。"
+  },
+  "dream": {
+    "title": "梦境处理：记忆整合",
+    "subtitle": "就像睡眠中的人脑一样，你的 AI 将分散的片段转化为权威知识——大幅减少令牌开销。",
+    "before": "15 个碎片记忆",
+    "after": "1 个全面指南",
+    "processingLabel": "梦境处理",
+    "consolidated": "已整合",
+    "tokensBefore": "7,500 令牌",
+    "tokensAfter": "600 令牌",
+    "tokenReduction": "令牌减少",
+    "decay": "记忆自然经历各阶段衰减，只保留重要的内容：",
+    "full": "完整",
+    "compressed": "压缩",
+    "summary": "摘要",
+    "essence": "精华",
+    "learnMore": "梦境处理工作原理"
+  },
+  "individuation": {
+    "title": "个体化评分",
+    "cardLabel": "个体化评分",
+    "subtitle": "通过可衡量的维度追踪你的 AI 从空白到完全个体化智能的成长旅程。",
+    "bars": {
+      "memoryDepth": "记忆深度",
+      "learningVelocity": "学习速度",
+      "collectiveContribution": "集体贡献",
+      "selfAwareness": "自我意识"
+    },
+    "maxScore": "/100",
+    "tip": "提示：贡献集体最佳实践并启用反思来加速你的个体化评分。",
+    "levels": {
+      "nascent": "萌芽",
+      "developing": "发展中",
+      "established": "已建立",
+      "mature": "成熟",
+      "individuated": "已个体化"
+    },
+    "teamEffect": "新团队成员从第一天起就继承集体智慧。",
+    "learnMore": "个体化评分工作原理"
+  },
+  "platformCapabilities": {
+    "title": "一个平台。每个模型。零碎片化。",
+    "subtitle": "Plugged.in 将 2,700+ MCP 服务器、持久记忆、文档和知识库统一到一个模型无关的基础设施中——你的数据留在你手中，而不是模型中。",
+    "tagline": "一个插件。每个模型。你的数据。零锁定。",
+    "cards": {
+      "mcpHub": {
+        "title": "2,700+ MCP 服务器",
+        "desc": "聚合数千个工具服务器的通用 MCP 代理。连接一次——从 Claude Code、Cursor、ChatGPT 或任何 MCP 客户端使用。支持 STDIO、SSE 和 Streamable HTTP。"
+      },
+      "memory": {
+        "title": "持久记忆",
+        "desc": "个人 + 集体记忆。你的 AI 从你的会话中学习——也从数千名开发者发现的模式中学习。通过 HMAC-SHA256 + k-匿名性保护隐私。"
+      },
+      "knowledge": {
+        "title": "知识库 (RAG)",
+        "desc": "上传文档，使用嵌入式向量搜索构建知识库。进程内 HNSW 索引——无需外部服务。企业知识始终可访问。"
+      },
+      "modelAgnostic": {
+        "title": "模型无关",
+        "desc": "与每个 AI 模型和平台兼容。Claude、ChatGPT、Cursor、Cline、LM Studio——自由切换模型，你的工具、记忆和知识随你而行。"
+      },
+      "dataOwnership": {
+        "title": "企业级安全",
+        "desc": "AES-256-GCM 加密，OAuth 2.1/PKCE，firejail 沙箱。六轮安全审查。符合 SOC 2 标准的架构。"
+      },
+      "openSource": {
+        "title": "开源和自托管",
+        "desc": "MIT 许可，完全开源。部署到你自己的基础设施以获得完全控制。没有供应商锁定——你的 AI 设置永远属于你。"
+      }
+    }
+  },
+  "privacy": {
+    "title": "没有人看得到你的代码",
+    "subtitle": "模式是共享的。代码永远不会。",
+    "identity": {
+      "title": "你的身份已被擦除",
+      "desc": "你的经验经过单向加密。无法追溯到你。不可逆。"
+    },
+    "kanonymity": {
+      "title": "你独自时是不可见的",
+      "desc": "一个模式在至少 3 位不同开发者发现之前不会被共享。一个人的错误永远不会被暴露。"
+    },
+    "temporal": {
+      "title": "时间是模糊的",
+      "desc": "你做某事的时间也被匿名化了。不是「周二下午 2:32」，而是「这个月」。"
+    },
+    "tagline": "隐私是数学，不是承诺。HMAC-SHA256 + k-anonymity (k>=3)。",
+    "openSource": "完全开源。一切可验证。"
+  },
+  "mcpProxy": {
+    "badge": "通用 MCP 代理",
+    "title": "一个端点。所有 MCP 服务器。所有 AI 客户端。",
+    "subtitle": "不是 Claude Code 用户？Plugged.in 的通用 MCP 代理将任何 AI 客户端 — Cursor、Cline、ChatGPT、LM Studio、Continue、Windsurf — 转变为通往数千个 MCP 服务器、您的知识库和持久内存的统一网关。",
+    "installLabel": "MCP 代理安装",
+    "copy": "复制",
+    "copied": "已复制！",
+    "compat": "兼容 Cursor · Cline · ChatGPT Desktop · LM Studio · Continue · Windsurf · 任何兼容 MCP 的客户端",
+    "features": {
+      "servers": {
+        "title": "2,700+ MCP 服务器",
+        "desc": "GitHub、Slack、Notion、Linear、Postgres、Stripe、AWS、Google Drive — 还有数千个其他。从一个注册表发现、安装和管理。"
+      },
+      "transports": {
+        "title": "所有传输",
+        "desc": "STDIO、Server-Sent Events (SSE) 和 Streamable HTTP 传输 — 通过 OAuth 2.1 令牌轮换在单个代理端点后统一。"
+      },
+      "clients": {
+        "title": "所有 AI 客户端",
+        "desc": "在 Plugged.in 中配置一次。在 Cursor、Cline、ChatGPT、LM Studio 和任何兼容 MCP 的客户端中使用相同的工具集、知识和内存。"
+      },
+      "orchestration": {
+        "title": "内置编排",
+        "desc": "用于测试的 AI playground、实时活动监控、自定义说明、文档交换和通知 — 包含在内，而不是附加。"
+      }
+    },
+    "cta": {
+      "browse": "浏览注册表",
+      "setupGuide": "设置指南",
+      "getApiKey": "获取免费 API 密钥"
+    }
+  }
+}

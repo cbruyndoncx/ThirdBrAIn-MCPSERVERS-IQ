@@ -1,0 +1,114 @@
+{
+  "setupGuide": {
+    "title": "Setup Guide",
+    "moreInfo": {
+      "prefix": "Need a deeper walkthrough? Read the full documentation at",
+      "linkLabel": "docs.plugged.in/setup-guide"
+    },
+    "proxyBenefits": {
+      "title": "Benefits of Plugged.in MCP",
+      "description": "Plugged.in MCP acts as a unified proxy for all your MCP servers, providing several advantages:",
+      "benefits": [
+        "Single Configuration Point - Manage all your MCP servers through one central configuration",
+        "Automatic Updates - Get the latest features and security updates automatically",
+        "Simplified Authentication - Use a single API key for all your MCP servers",
+        "Enhanced Security - Built-in security features and best practices",
+        "Cross-Platform Compatibility - Works seamlessly across different operating systems"
+      ]
+    },
+    "installation": {
+      "title": "Installation Methods",
+      "apiKeysNotice": "You can manage your API keys on the API Keys page.",
+      "apiKeyCard": {
+        "title": "Your Plugged.in API Key",
+        "description": "Use this value wherever a configuration asks for PLUGGEDIN_API_KEY. Need a new key? Manage them on the",
+        "copySuccess": "API key copied to clipboard",
+        "copyLabel": "Copy Plugged.in API key"
+      },
+      "shared": {
+        "copyLabel": "Copy to clipboard"
+      },
+      "claudeDesktop": {
+        "title": "Claude Desktop Setup",
+        "intro": "Claude Desktop reads from a JSON configuration file. Update it with the snippet below and restart the desktop app.",
+        "step1": {
+          "title": "Open Settings",
+          "description": "Open Claude Desktop and navigate to Settings > MCP Servers."
+        },
+        "step2": {
+          "title": "Locate Configuration",
+          "description": "Edit the configuration file located on your machine."
+        },
+        "step3": {
+          "title": "Add Plugged.in MCP Configuration",
+          "description": "Paste the snippet below inside the \"mcpServers\" object. It already includes your API key."
+        },
+        "step4": {
+          "title": "Restart Application",
+          "description": "Restart Claude Desktop to load the new MCP configuration."
+        },
+        "step5": {
+          "title": "Verify Setup",
+          "description": "Back in Settings > MCP Servers, confirm that PluggedinMCP appears and shows a valid API key."
+        },
+        "copySuccess": "Claude Desktop configuration copied to clipboard"
+      },
+      "claudeCode": {
+        "title": "Claude Code Setup",
+        "step1": {
+          "title": "Step 1: Open Claude Code Settings",
+          "description": "Open Claude Code and use the command palette (Cmd/Ctrl+Shift+P) to search for \"MCP Settings\"."
+        },
+        "step2": {
+          "title": "Step 2: Access MCP Configuration",
+          "description": "In the settings modal, open the MCP Servers section to manage local configurations."
+        },
+        "step3": {
+          "title": "Step 3: Add Plugged.in MCP Server",
+          "description": "Run the command below in a terminal where Claude Code is installed. It registers the Plugged.in proxy with your API key."
+        },
+        "step4": {
+          "title": "Step 4: Apply Configuration",
+          "description": "Refresh the MCP Servers list in Claude Code to load the new entry."
+        },
+        "step5": {
+          "title": "Step 5: Test Connection",
+          "description": "Run `claude mcp list` or open Claude Code to confirm the Plugged.in server is available."
+        },
+        "copySuccess": "Claude Code command copied to clipboard",
+        "noteTitle": "Where to run this command",
+        "noteDescription": "Execute the command in the same environment where Claude Code is installed. You can verify the installation with"
+      },
+      "manualConfig": {
+        "title": "Configuration file paths",
+        "description": "For Claude Desktop, locate the configuration file at:",
+        "paths": {
+          "macos": "macOS",
+          "windows": "Windows"
+        }
+      },
+      "cursorConfig": {
+        "title": "Cursor Configuration",
+        "description": "Cursor lets you register MCP servers from the Integrations panel.",
+        "steps": [
+          "Open Cursor and select Integrations > MCP.",
+          "Choose \"Edit mcp.json\" to open your MCP configuration.",
+          "Add or merge the PluggedinMCP entry.",
+          "Use the following command to run the proxy locally or in a terminal:"
+        ],
+        "copySuccess": "Cursor command copied to clipboard"
+      }
+    },
+    "lmStudio": {
+      "title": "LM Studio Setup",
+      "description": "LM Studio reads MCP servers from `mcp.json`. The configuration mirrors the Claude Desktop example.",
+      "steps": [
+        "In LM Studio, open Integrations > MCP and select \"Edit mcp.json\".",
+        "Paste the snippet below inside the `mcpServers` object (create it if missing).",
+        "Save the file to reload your MCP servers."
+      ],
+      "copySuccess": "LM Studio configuration copied to clipboard",
+      "saveNote": "Saving the file automatically reloads MCP servers in LM Studio."
+    }
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "settings": {
+    "title": "Settings",
+    "profile": {
+      "title": "Profile",
+      "description": "Manage your profile information",
+      "avatar": "Upload Avatar",
+      "avatarRecommendation": "Recommended: Square image, max 1MB",
+      "name": "Name",
+      "namePlaceholder": "Enter your name",
+      "language": "Language",
+      "updateButton": "Update Profile",
+      "success": "Profile updated successfully",
+      "error": "Failed to update profile"
+    },
+    "password": {
+      "title": "Password",
+      "description": "Change your password",
+      "descriptionWithRemove": "Change or remove your password",
+      "descriptionNoPassword": "Set a password for email/password login",
+      "current": {
+        "label": "Current Password",
+        "placeholder": "Enter current password"
+      },
+      "new": {
+        "label": "New Password",
+        "placeholder": "Enter new password"
+      },
+      "confirm": {
+        "label": "Confirm New Password",
+        "placeholder": "Confirm new password"
+      },
+      "updateButton": "Change Password",
+      "removeButton": "Remove Password",
+      "setButton": "Set Password",
+      "noPasswordSet": "You currently sign in with OAuth. Setting a password allows you to also log in with email/password.",
+      "success": "Password updated successfully",
+      "error": "Failed to update password",
+      "removeDialog": {
+        "title": "Remove Password?",
+        "description": "You will only be able to sign in using your connected OAuth accounts. This action cannot be undone.",
+        "confirmLabel": "Type your email to confirm",
+        "confirmPlaceholder": "Enter your email",
+        "warning": "Make sure you have at least one OAuth account connected before removing your password.",
+        "cancel": "Cancel",
+        "confirm": "Remove Password"
+      },
+      "errors": {
+        "onlyLoginMethod": "Cannot remove password. It's your only login method. Please connect an OAuth account first.",
+        "confirmEmailMismatch": "Email confirmation does not match.",
+        "removalFailed": "Failed to remove password.",
+        "setFailed": "Failed to set password.",
+        "alreadyExists": "Password already exists. Use the change password option instead."
+      },
+      "successMessages": {
+        "removed": "Password removed successfully. You can now only sign in with OAuth.",
+        "set": "Password set successfully. You can now sign in with email/password."
+      }
+    },
+    "loginMethods": {
+      "title": "Login Methods",
+      "description": "Manage how you sign in to your account",
+      "emailPassword": "Email & Password",
+      "active": "Active",
+      "inactive": "Inactive",
+      "notConfigured": "Not configured",
+      "connected": "Connected",
+      "notConnected": "Not connected",
+      "disconnect": "Disconnect",
+      "connect": "Connect",
+      "providers": {
+        "google": "Google",
+        "github": "GitHub",
+        "twitter": "Twitter"
+      }
+    },
+    "account": {
+      "title": "Delete Account",
+      "description": "Permanently delete your account and all associated data",
+      "deleteButton": "Delete Account",
+      "confirmTitle": "Are you sure?",
+      "confirmDescription": "This action cannot be undone. This will permanently delete your account and remove all associated data from our servers.",
+      "confirmButton": "Yes, delete my account",
+      "deletingButton": "Deleting...",
+      "success": "Account deleted successfully",
+      "error": "Failed to delete account"
+    },
+    "validation": {
+      "invalidJsonArray": "Invalid JSON format or not an array of messages."
+    },
+    "connectedAccounts": {
+      "title": "Connected Accounts",
+      "description": "Manage your connected social accounts",
+      "github": {
+        "connected": "Connected to GitHub",
+        "connect": "Connect your GitHub account"
+      },
+      "google": {
+        "connected": "Connected to Google",
+        "connect": "Connect your Google account"
+      },
+      "twitter": {
+        "connected": "Connected to Twitter",
+        "connect": "Connect your Twitter account"
+      },
+      "connected": "Connected",
+      "removed": "{{provider}} account disconnected successfully",
+      "error": "Failed to disconnect account"
+    },
+    "project": {
+      "title": "Current Hub",
+      "description": "Manage your current hub settings",
+      "loading": "Loading Project...",
+      "namePlaceholder": "Project name",
+      "updateSuccess": "Project name updated successfully",
+      "updateError": "Failed to update project name",
+      "deleteConfirm": "Are you sure you want to delete this project? This action cannot be undone.",
+      "deleteSuccess": "Project deleted successfully",
+      "deleteError": "Failed to delete project",
+      "dangerZone": "Danger Zone",
+      "deleteWarning": "Once you delete a project, there is no going back. Please be careful.",
+      "deleteButton": "Delete Project"
+    },
+    "appearance": {
+      "title": "Appearance",
+      "description": "Customize the appearance of the application",
+      "colorTheme": "Color Theme",
+      "light": "Light",
+      "dark": "Dark",
+      "system": "System",
+      "font": "Font",
+      "selectFont": "Select a font",
+      "fonts": {
+        "geist": "Geist Sans (Default)",
+        "quicksand": "Quicksand",
+        "nunito": "Nunito",
+        "poppins": "Poppins",
+        "roboto": "Roboto",
+        "ubuntu": "Ubuntu",
+        "varelaRound": "Varela Round",
+        "workSans": "Work Sans",
+        "zillaSlab": "Zilla Slab",
+        "comfortaa": "Comfortaa"
+      }
+    }
+  }
+}

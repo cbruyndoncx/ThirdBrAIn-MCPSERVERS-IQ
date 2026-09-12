@@ -1,0 +1,168 @@
+{
+  "title": "विश्लेषण",
+  "description": "अपने MCP उपयोग, RAG खोज और उत्पादकता पैटर्न को विज़ुअलाइज़ करें",
+  "tabs": {
+    "overview": "अवलोकन",
+    "tools": "उपकरण और सर्वर",
+    "library": "पुस्तकालय और RAG",
+    "productivity": "उत्पादकता",
+    "dashboard": "डैशबोर्ड",
+    "roadmap": "रोडमैप"
+  },
+  "period": {
+    "7d": "पिछले 7 दिन",
+    "30d": "पिछले 30 दिन",
+    "90d": "पिछले 90 दिन",
+    "all": "सभी समय"
+  },
+  "overview": {
+    "title": "अवलोकन",
+    "totalToolCalls": "कुल टूल कॉल",
+    "totalDocuments": "दस्तावेज़",
+    "totalRagSearches": "RAG खोजें",
+    "mostUsedServer": "सबसे अधिक उपयोग किया गया सर्वर",
+    "storageUsed": "उपयोग किया गया स्टोरेज",
+    "activityTimeline": "गतिविधि समयरेखा",
+    "toolCallsLabel": "टूल कॉल",
+    "ragSearchesLabel": "RAG खोजें",
+    "trend": {
+      "up": "{{percent}}% वृद्धि",
+      "down": "{{percent}}% कमी",
+      "neutral": "कोई परिवर्तन नहीं"
+    }
+  },
+  "tools": {
+    "title": "उपकरण और सर्वर",
+    "topTools": "शीर्ष उपकरण",
+    "serverActivity": "सर्वर गतिविधि",
+    "hourlyDistribution": "प्रति घंटा वितरण",
+    "activityHeatmap": "गतिविधि हीटमैप",
+    "activity": "{{count}} गतिविधि",
+    "activity_plural": "{{count}} गतिविधियाँ",
+    "toolName": "उपकरण का नाम",
+    "serverName": "सर्वर का नाम",
+    "callCount": "कॉल",
+    "successRate": "सफलता दर",
+    "toolCalls": "टूल कॉल",
+    "resourceReads": "संसाधन पढ़ें",
+    "promptGets": "प्रॉम्प्ट प्राप्त करें",
+    "totalActivity": "कुल गतिविधि",
+    "hour": "घंटा",
+    "count": "गणना",
+    "noData": "कोई गतिविधि डेटा उपलब्ध नहीं",
+    "filterByServer": "सर्वर द्वारा फ़िल्टर करें"
+  },
+  "toolCallLog": {
+    "title": "हाल की टूल कॉल",
+    "description": "आपके सबसे हालिया MCP टूल निष्पादन की गतिविधि लॉग",
+    "searchPlaceholder": "टूल या सर्वर नाम से खोजें...",
+    "columns": {
+      "timestamp": "समय",
+      "toolName": "उपकरण",
+      "serverName": "सर्वर"
+    },
+    "noResults": "आपकी खोज से मेल खाने वाली कोई टूल कॉल नहीं मिली",
+    "noData": "कोई हाल की टूल कॉल नहीं",
+    "resultsCount": "{{count}} परिणाम दिखाया जा रहा है",
+    "resultsCount_plural": "{{count}} परिणाम दिखाए जा रहे हैं",
+    "timeAgo": {
+      "days": "{{count}} दिन पहले",
+      "days_plural": "{{count}} दिन पहले",
+      "hours": "{{count}} घंटे पहले",
+      "hours_plural": "{{count}} घंटे पहले",
+      "minutes": "{{count}} मिनट पहले",
+      "minutes_plural": "{{count}} मिनट पहले",
+      "seconds": "{{count}} सेकंड पहले",
+      "seconds_plural": "{{count}} सेकंड पहले"
+    }
+  },
+  "library": {
+    "title": "पुस्तकालय और RAG",
+    "documentStats": "दस्तावेज़ सांख्यिकी",
+    "totalDocuments": "कुल दस्तावेज़",
+    "aiGenerated": "AI द्वारा जनरेट किया गया",
+    "uploaded": "अपलोड किया गया",
+    "storageBreakdown": "स्टोरेज विभाजन",
+    "files": "फ़ाइलें",
+    "ragVectors": "RAG वेक्टर",
+    "documentsByModel": "AI मॉडल द्वारा दस्तावेज़",
+    "ragSearchFrequency": "RAG खोज आवृत्ति",
+    "mostAccessedDocs": "सबसे अधिक एक्सेस किए गए दस्तावेज़",
+    "model": "मॉडल",
+    "accessCount": "एक्सेस गणना",
+    "searches": "खोजें",
+    "noDocuments": "अभी तक कोई दस्तावेज़ नहीं"
+  },
+  "productivity": {
+    "title": "उत्पादकता",
+    "activeStreak": "सक्रिय स्ट्रीक",
+    "streakDays": "{{count}} दिन",
+    "streakDays_plural": "{{count}} दिन",
+    "mostProductiveHour": "सबसे उत्पादक घंटा",
+    "mostProductiveDay": "सबसे उत्पादक दिन",
+    "avgToolCallsPerDay": "औसत टूल कॉल/दिन",
+    "avgDocumentsPerWeek": "औसत दस्तावेज़/सप्ताह",
+    "achievements": "उपलब्धियां",
+    "achievementProgress": "{{percent}}% पूर्ण",
+    "achievementUnlocked": "अनलॉक किया गया!",
+    "achievementLocked": "लॉक",
+    "workPatterns": "कार्य पैटर्न",
+    "hourlyActivity": "प्रति घंटा गतिविधि",
+    "dailyActivity": "दैनिक गतिविधि"
+  },
+  "errors": {
+    "loadFailed": "विश्लेषण डेटा लोड करने में विफल",
+    "unauthorized": "विश्लेषण देखने के लिए आपको लॉग इन होना चाहिए",
+    "retry": "फिर से प्रयास करें"
+  },
+  "loading": "विश्लेषण लोड हो रहा है...",
+  "dashboard": {
+    "title": "डैशबोर्ड",
+    "description": "आपका AI कार्यक्षेत्र एक नज़र में",
+    "recentDocuments": "हाल के दस्तावेज़",
+    "recentDocumentsDescription": "आपके ज्ञान आधार में नवीनतम जोड़",
+    "recentActivity": "हाल की गतिविधि",
+    "recentActivityDescription": "नवीनतम टूल कॉल और सर्वर इंटरैक्शन",
+    "viewAll": "सभी देखें",
+    "searchPlaceholder": "अपने ज्ञान आधार में खोजें...",
+    "aiSearchPlaceholder": "अपने दस्तावेज़ों के बारे में प्रश्न पूछें...",
+    "aiSearch": "AI खोज",
+    "emptyDocs": {
+      "title": "अपना ज्ञान आधार बनाना शुरू करें",
+      "description": "AI-संचालित search और insights सक्षम करने के लिए दस्तावेज़ जोड़ें",
+      "uploadAction": "दस्तावेज़ अपलोड करें"
+    },
+    "emptyTools": {
+      "title": "अपना पहला MCP Server कनेक्ट करें",
+      "description": "AI टूल इंटरैक्शन सक्षम करने के लिए MCP servers सेटअप करें",
+      "configureAction": "servers configure करें"
+    }
+  },
+  "whyConnect": {
+    "title": "Plugged.in से क्यों कनेक्ट करें?",
+    "description": "शक्तिशाली केंद्रीकृत सुविधाओं को अनलॉक करने के लिए अपने AI क्लाइंट को कनेक्ट करें",
+    "intro": "अपने सभी AI वर्कफ़्लो के लिए एक unified layer सक्षम करने हेतु Plugged.in MCP Proxy को अपने AI क्लाइंट (Claude Code, Claude Desktop, LM Studio, ChatGPT, आदि) से कनेक्ट करें:",
+    "features": {
+      "knowledge": {
+        "title": "केंद्रीकृत ज्ञान आधार",
+        "description": "RAG-संचालित semantic search के साथ किसी भी connected AI client से अपने दस्तावेज़ों तक पहुंचें और खोजें"
+      },
+      "tools": {
+        "title": "unified टूल एक्सेस",
+        "description": "MCP servers को एक बार configure करें और अपने सभी AI clients में समान टूल का उपयोग करें"
+      },
+      "memory": {
+        "title": "persistent मेमोरी",
+        "description": "सत्रों और विभिन्न AI clients के बीच संदर्भ और इतिहास बनाए रखें"
+      },
+      "workflows": {
+        "title": "सुरक्षित वर्कफ़्लो",
+        "description": "टीम के सदस्यों के साथ AI वर्कफ़्लो को सुरक्षित रूप से share और collaborate करें"
+      }
+    },
+    "actions": {
+      "setup": "MCP Proxy सेटअप करें",
+      "docs": "दस्तावेज़ देखें"
+    }
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "settings": {
+    "title": "Instellingen",
+    "profile": {
+      "title": "Profiel",
+      "description": "Beheer uw profielinformatie",
+      "avatar": "Avatar uploaden",
+      "avatarRecommendation": "Aanbevolen: Vierkante afbeelding, max 1MB",
+      "name": "Naam",
+      "namePlaceholder": "Voer uw naam in",
+      "language": "Taal",
+      "updateButton": "Profiel bijwerken",
+      "success": "Profiel succesvol bijgewerkt",
+      "error": "Bijwerken profiel mislukt"
+    },
+    "password": {
+      "title": "Wachtwoord",
+      "description": "Wijzig uw wachtwoord",
+      "descriptionWithRemove": "Wijzig of verwijder uw wachtwoord",
+      "descriptionNoPassword": "Stel een wachtwoord in voor e-mail/wachtwoord login",
+      "current": {
+        "label": "Huidig wachtwoord",
+        "placeholder": "Voer huidig wachtwoord in"
+      },
+      "new": {
+        "label": "Nieuw wachtwoord",
+        "placeholder": "Voer nieuw wachtwoord in"
+      },
+      "confirm": {
+        "label": "Bevestig nieuw wachtwoord",
+        "placeholder": "Bevestig nieuw wachtwoord"
+      },
+      "updateButton": "Wachtwoord wijzigen",
+      "removeButton": "Wachtwoord verwijderen",
+      "setButton": "Wachtwoord instellen",
+      "noPasswordSet": "U meldt zich momenteel aan met OAuth. Door een wachtwoord in te stellen, kunt u ook inloggen met e-mail/wachtwoord.",
+      "success": "Wachtwoord succesvol bijgewerkt",
+      "error": "Bijwerken wachtwoord mislukt",
+      "removeDialog": {
+        "title": "Wachtwoord verwijderen?",
+        "description": "U kunt zich alleen aanmelden met uw verbonden OAuth-accounts. Deze actie kan niet ongedaan worden gemaakt.",
+        "confirmLabel": "Typ uw e-mailadres ter bevestiging",
+        "confirmPlaceholder": "Voer uw e-mailadres in",
+        "warning": "Zorg ervoor dat u minstens één OAuth-account verbonden hebt voordat u uw wachtwoord verwijdert.",
+        "cancel": "Annuleren",
+        "confirm": "Wachtwoord verwijderen"
+      },
+      "errors": {
+        "onlyLoginMethod": "Kan wachtwoord niet verwijderen. Dit is uw enige inlogmethode. Verbind eerst een OAuth-account.",
+        "confirmEmailMismatch": "E-mailbevestiging komt niet overeen.",
+        "removalFailed": "Verwijderen wachtwoord mislukt.",
+        "setFailed": "Instellen wachtwoord mislukt.",
+        "alreadyExists": "Wachtwoord bestaat al. Gebruik de optie wachtwoord wijzigen."
+      },
+      "successMessages": {
+        "removed": "Wachtwoord succesvol verwijderd. U kunt zich nu alleen aanmelden met OAuth.",
+        "set": "Wachtwoord succesvol ingesteld. U kunt zich nu aanmelden met e-mail/wachtwoord."
+      }
+    },
+    "loginMethods": {
+      "title": "Inlogmethoden",
+      "description": "Beheer hoe u inlogt op uw account",
+      "emailPassword": "E-mail & Wachtwoord",
+      "active": "Actief",
+      "inactive": "Inactief",
+      "notConfigured": "Niet geconfigureerd",
+      "connected": "Verbonden",
+      "notConnected": "Niet verbonden",
+      "disconnect": "Verbinding verbreken",
+      "connect": "Verbinden",
+      "providers": {
+        "google": "Google",
+        "github": "GitHub",
+        "twitter": "Twitter"
+      }
+    },
+    "account": {
+      "title": "Account verwijderen",
+      "description": "Verwijder uw account en alle bijbehorende gegevens permanent",
+      "deleteButton": "Account verwijderen",
+      "confirmTitle": "Weet u het zeker?",
+      "confirmDescription": "Deze actie kan niet ongedaan worden gemaakt. Dit verwijdert uw account permanent en verwijdert alle bijbehorende gegevens van onze servers.",
+      "confirmButton": "Ja, verwijder mijn account",
+      "deletingButton": "Verwijderen...",
+      "success": "Account succesvol verwijderd",
+      "error": "Verwijderen account mislukt"
+    },
+    "validation": {
+      "invalidJsonArray": "Ongeldig JSON-formaat of geen array van berichten."
+    },
+    "connectedAccounts": {
+      "title": "Verbonden accounts",
+      "description": "Beheer uw verbonden sociale accounts",
+      "github": {
+        "connected": "Verbonden met GitHub",
+        "connect": "Verbind uw GitHub-account"
+      },
+      "google": {
+        "connected": "Verbonden met Google",
+        "connect": "Verbind uw Google-account"
+      },
+      "twitter": {
+        "connected": "Verbonden met Twitter",
+        "connect": "Verbind uw Twitter-account"
+      },
+      "connected": "Verbonden",
+      "removed": "{{provider}}-account succesvol losgekoppeld",
+      "error": "Loskoppelen account mislukt"
+    },
+    "project": {
+      "title": "Huidige Hub",
+      "description": "Beheer uw huidige hub-instellingen",
+      "loading": "Project laden...",
+      "namePlaceholder": "Projectnaam",
+      "updateSuccess": "Projectnaam succesvol bijgewerkt",
+      "updateError": "Bijwerken projectnaam mislukt",
+      "deleteConfirm": "Weet u zeker dat u dit project wilt verwijderen? Deze actie kan niet ongedaan worden gemaakt.",
+      "deleteSuccess": "Project succesvol verwijderd",
+      "deleteError": "Verwijderen project mislukt",
+      "dangerZone": "Gevarenzone",
+      "deleteWarning": "Zodra u een project verwijdert, is er geen weg terug. Wees voorzichtig.",
+      "deleteButton": "Project verwijderen"
+    },
+    "appearance": {
+      "title": "Uiterlijk",
+      "description": "Pas het uiterlijk van de applicatie aan",
+      "colorTheme": "Kleurenthema",
+      "light": "Licht",
+      "dark": "Donker",
+      "system": "Systeem",
+      "font": "Lettertype",
+      "selectFont": "Selecteer een lettertype",
+      "fonts": {
+        "geist": "Geist Sans (Standaard)",
+        "quicksand": "Quicksand",
+        "nunito": "Nunito",
+        "poppins": "Poppins",
+        "roboto": "Roboto",
+        "ubuntu": "Ubuntu",
+        "varelaRound": "Varela Round",
+        "workSans": "Work Sans",
+        "zillaSlab": "Zilla Slab",
+        "comfortaa": "Comfortaa"
+      }
+    }
+  }
+}

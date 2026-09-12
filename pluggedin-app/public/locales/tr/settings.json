@@ -1,0 +1,147 @@
+{
+  "settings": {
+    "title": "Ayarlar",
+    "profile": {
+      "title": "Profil",
+      "description": "Profil bilgilerinizi yönetin",
+      "avatar": "Profil Resmi Yükle",
+      "avatarRecommendation": "Önerilen: Kare resim, maksimum 1MB",
+      "name": "İsim",
+      "namePlaceholder": "İsminizi girin",
+      "language": "Dil",
+      "updateButton": "Profili Güncelle",
+      "success": "Profil başarıyla güncellendi",
+      "error": "Profil güncellenirken hata oluştu"
+    },
+    "password": {
+      "title": "Şifre",
+      "description": "Şifrenizi değiştirin",
+      "descriptionWithRemove": "Şifrenizi değiştirin veya kaldırın",
+      "descriptionNoPassword": "E-posta/şifre girişi için bir şifre belirleyin",
+      "current": {
+        "label": "Mevcut Şifre",
+        "placeholder": "Mevcut şifrenizi girin"
+      },
+      "new": {
+        "label": "Yeni Şifre",
+        "placeholder": "Yeni şifrenizi girin"
+      },
+      "confirm": {
+        "label": "Yeni Şifreyi Onayla",
+        "placeholder": "Yeni şifrenizi tekrar girin"
+      },
+      "updateButton": "Şifreyi Değiştir",
+      "removeButton": "Şifreyi Kaldır",
+      "setButton": "Şifre Belirle",
+      "noPasswordSet": "Şu anda OAuth ile giriş yapıyorsunuz. Şifre belirlemeniz e-posta/şifre ile de giriş yapabilmenizi sağlar.",
+      "success": "Şifre başarıyla güncellendi",
+      "error": "Şifre güncellenirken hata oluştu",
+      "removeDialog": {
+        "title": "Şifre Kaldırılsın mı?",
+        "description": "Sadece bağlı OAuth hesaplarınızla giriş yapabileceksiniz. Bu işlem geri alınamaz.",
+        "confirmLabel": "Onaylamak için e-postanızı yazın",
+        "confirmPlaceholder": "E-postanızı girin",
+        "warning": "Şifrenizi kaldırmadan önce en az bir OAuth hesabınızın bağlı olduğundan emin olun.",
+        "cancel": "İptal",
+        "confirm": "Şifreyi Kaldır"
+      },
+      "errors": {
+        "onlyLoginMethod": "Şifre kaldırılamaz. Bu tek giriş yönteminiz. Lütfen önce bir OAuth hesabı bağlayın.",
+        "confirmEmailMismatch": "E-posta onayı eşleşmiyor.",
+        "removalFailed": "Şifre kaldırılamadı.",
+        "setFailed": "Şifre belirlenemedi.",
+        "alreadyExists": "Şifre zaten mevcut. Şifre değiştir seçeneğini kullanın."
+      },
+      "successMessages": {
+        "removed": "Şifre başarıyla kaldırıldı. Artık sadece OAuth ile giriş yapabilirsiniz.",
+        "set": "Şifre başarıyla belirlendi. Artık e-posta/şifre ile giriş yapabilirsiniz."
+      }
+    },
+    "loginMethods": {
+      "title": "Giriş Yöntemleri",
+      "description": "Hesabınıza nasıl giriş yaptığınızı yönetin",
+      "emailPassword": "E-posta & Şifre",
+      "active": "Aktif",
+      "inactive": "Pasif",
+      "notConfigured": "Yapılandırılmamış",
+      "connected": "Bağlı",
+      "notConnected": "Bağlı değil",
+      "disconnect": "Bağlantıyı Kes",
+      "connect": "Bağlan",
+      "providers": {
+        "google": "Google",
+        "github": "GitHub",
+        "twitter": "Twitter"
+      }
+    },
+    "account": {
+      "title": "Hesabı Sil",
+      "description": "Hesabınızı ve ilişkili tüm verileri kalıcı olarak silin",
+      "deleteButton": "Hesabı Sil",
+      "confirmTitle": "Emin misiniz?",
+      "confirmDescription": "Bu işlem geri alınamaz. Hesabınız ve ilişkili tüm veriler sunucularımızdan kalıcı olarak silinecektir.",
+      "confirmButton": "Evet, hesabımı sil",
+      "deletingButton": "Siliniyor...",
+      "success": "Hesap başarıyla silindi",
+      "error": "Hesap silinirken hata oluştu"
+    },
+    "validation": {
+      "invalidJsonArray": "Geçersiz JSON formatı veya mesaj dizisi değil."
+    },
+    "connectedAccounts": {
+      "title": "Bağlı Hesaplar",
+      "description": "Bağlı sosyal medya hesaplarınızı yönetin",
+      "github": {
+        "connected": "GitHub'a bağlı",
+        "connect": "GitHub hesabınızı bağlayın"
+      },
+      "google": {
+        "connected": "Google'a bağlı",
+        "connect": "Google hesabınızı bağlayın"
+      },
+      "twitter": {
+        "connected": "Twitter'a bağlı",
+        "connect": "Twitter hesabınızı bağlayın"
+      },
+      "connected": "Bağlı",
+      "removed": "{{provider}} hesabı başarıyla kaldırıldı",
+      "error": "Hesap bağlantısı kesilirken hata oluştu"
+    },
+    "project": {
+      "title": "Mevcut Hub",
+      "description": "Mevcut hub ayarlarınızı yönetin",
+      "loading": "Proje Yükleniyor...",
+      "namePlaceholder": "Proje adı",
+      "updateSuccess": "Proje adı başarıyla güncellendi",
+      "updateError": "Proje adı güncellenirken hata oluştu",
+      "deleteConfirm": "Bu projeyi silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+      "deleteSuccess": "Proje başarıyla silindi",
+      "deleteError": "Proje silinirken hata oluştu",
+      "dangerZone": "Tehlikeli Bölge",
+      "deleteWarning": "Bir projeyi sildikten sonra geri dönüş yoktur. Lütfen dikkatli olun.",
+      "deleteButton": "Projeyi Sil"
+    },
+    "appearance": {
+      "title": "Görünüm",
+      "description": "Uygulama görünümünü özelleştirin",
+      "colorTheme": "Renk Teması",
+      "light": "Açık",
+      "dark": "Koyu",
+      "system": "Sistem",
+      "font": "Yazı Tipi",
+      "selectFont": "Yazı tipi seçin",
+      "fonts": {
+        "geist": "Geist Sans (Varsayılan)",
+        "quicksand": "Quicksand",
+        "nunito": "Nunito",
+        "poppins": "Poppins",
+        "roboto": "Roboto",
+        "ubuntu": "Ubuntu",
+        "varelaRound": "Varela Round",
+        "workSans": "Work Sans",
+        "zillaSlab": "Zilla Slab",
+        "comfortaa": "Comfortaa"
+      }
+    }
+  }
+}

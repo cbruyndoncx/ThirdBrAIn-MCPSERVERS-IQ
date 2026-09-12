@@ -1,0 +1,18 @@
+[
+  "app/actions/analytics.ts#getOverviewMetrics",
+  "app/actions/analytics.ts#getProductivityMetrics",
+  "app/actions/analytics.ts#getRagAnalytics",
+  "app/actions/analytics.ts#getRecentDocuments",
+  "app/actions/analytics.ts#getRecentToolCalls",
+  "app/actions/analytics.ts#getToolAnalytics",
+  "app/actions/mcp-server-logger.ts#createEnhancedMcpLogger",
+  "app/actions/mcp-server-metrics.ts#trackServerInstallation",
+  "app/actions/mcp-server-user-rating.ts#getUserRating",
+  "app/actions/mcp-server-user-rating.ts#getUserRatingsForServers",
+  "app/actions/playground-settings.ts#getPlaygroundSettings",
+  "app/actions/playground-settings.ts#updatePlaygroundSettings",
+  "app/actions/profiles.ts#getProfile",
+  "app/actions/profiles.ts#setActiveProfile",
+  "app/actions/registry-servers.ts#getClaimableServers",
+  "app/actions/roadmap.ts#calculateVoteWeight"
+]

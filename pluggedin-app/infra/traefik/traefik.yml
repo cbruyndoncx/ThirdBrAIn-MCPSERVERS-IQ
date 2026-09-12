@@ -1,0 +1,102 @@
+# Traefik v3 static configuration.
+#
+# Static config = entrypoints, ACME resolvers, log levels, providers. Anything
+# that needs a restart to change lives here. Dynamic config (middlewares,
+# routers, services from labels) is hot-reloaded out of /etc/traefik/dynamic/.
+#
+# ACME / TLS:
+#   HTTP-01 challenge, the same mechanism certbot used on this host before
+#   the migration. Traefik must own port 80 at startup so Let's Encrypt's
+#   HTTP-01 validator can reach /.well-known/acme-challenge/. We pre-list
+#   the served hostname on the websecure entrypoint so cert issuance
+#   happens at startup, not lazily on first request — keeps cutover
+#   latency low.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+api:
+  # Dashboard exposed only behind Traefik on traefik.plugged.in with basic
+  # auth (see dynamic/middlewares.yml). insecure: false means no listener
+  # on a public port.
+  dashboard: true
+  insecure: false
+
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json
+  filters:
+    statusCodes:
+      - "400-499"
+      - "500-599"
+
+ping:
+  entryPoint: web
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: le
+        # Pre-issue at startup; without `domains:`, Traefik lazy-issues on
+        # the first request and that first request pays the LE validation
+        # latency (5–10s). Listed explicitly because HTTP-01 cannot issue
+        # wildcards.
+        domains:
+          - main: plugged.in
+          - main: traefik.plugged.in   # dashboard, basic-auth gated
+
+providers:
+  file:
+    # Deliberately NOT /etc/traefik/dynamic bind-mounted from the git working
+    # tree. `watch: true` means any rewrite of those files is picked up
+    # immediately — including a rewrite by `git pull` or `git checkout`, which
+    # the documented deploy performs on every release. Observed: a checkout
+    # where the before and after content were byte-identical still 404'd the
+    # site for ~40s, because the watcher read the file mid-write, found no
+    # `compress` middleware, and every router referencing it failed. Content
+    # equality is not write atomicity.
+    #
+    # deploy.sh now stages this directory into tmpfs with atomic renames, so
+    # git never touches what Traefik reads and a partial file is unobservable.
+    directory: /run/sops/traefik-dynamic
+    watch: true
+  docker:
+    # docker-socket-proxy, not the raw socket. Mounting /var/run/docker.sock
+    # here — even `:ro`, which only makes the socket *file* read-only, not
+    # the API — gave Traefik the ability to read every container's
+    # environment (measured: 108 vars off pluggedin-app, 28 secret-bearing)
+    # and to POST /containers/create, which is one bind-mount of / away from
+    # host root. The proxy denies all POST and exposes only the read
+    # endpoints the docker provider actually uses.
+    endpoint: "tcp://docker-socket-proxy:2375"
+    # Default-allow on the docker provider is a footgun; every container
+    # that wants exposure must opt in via `traefik.enable=true`.
+    exposedByDefault: false
+    network: pluggedin
+
+certificatesResolvers:
+  le:
+    acme:
+      email: ops@plugged.in
+      storage: /letsencrypt/acme.json
+      # Switch to acme.staging.letsencrypt.org while iterating on certs to
+      # avoid the 5-per-week production rate limit.
+      # caServer: https://acme-staging-v02.api.letsencrypt.org/directory
+      caServer: https://acme-v02.api.letsencrypt.org/directory
+      httpChallenge:
+        entryPoint: web

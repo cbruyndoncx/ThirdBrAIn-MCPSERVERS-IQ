@@ -1,0 +1,243 @@
+name: Build image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'app/**'
+      - 'components/**'
+      - 'lib/**'
+      - 'db/**'
+      - 'public/**'
+      - 'scripts/**'
+      # infra/** is here so the `Validate compose + scripts` job runs on
+      # PRs that touch only the compose stack, Traefik/Ofelia config, or
+      # the operational scripts. The `build` job in this workflow has its
+      # own `if:` guard which keeps it from firing on fork PRs; on internal
+      # infra-only PRs it'll still rebuild the image, which is acceptable
+      # — the image is small and the host runner has the cache warm.
+      - 'infra/**'
+      # The root compose files were absent from this list, so a PR touching
+      # only the stack end users actually run got zero compose validation.
+      - 'docker-compose*.yml'
+      - '.env.example'
+      - '.github/workflows/build-image.yml'
+      - '.github/scripts/**'
+  workflow_dispatch:
+
+# Default to read-only token. The build job re-grants packages:write
+# explicitly. Other jobs (stack-validate) inherit the read-only default,
+# so a compromised checkout in those jobs can't push branches, comment
+# on PRs, or write to packages.
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: veriteknik/pluggedin-app
+
+jobs:
+  build:
+    # Runs on the self-hosted runner set up by
+    # infra/scripts/setup-gha-runner.sh on the prod host. The host's CPU has
+    # the AVX2/AVX-512 instructions @zvec/zvec's native binding ships;
+    # GitHub-hosted runners did not, and the build hit SIGILL inconsistently
+    # depending on which Xeon Actions allocated.
+    #
+    # SECURITY: this is a self-hosted runner on a public repo's prod box —
+    # the host carries the SOPS-decrypted secrets, prod DB credentials,
+    # and the docker socket. A malicious workflow run from a fork PR
+    # could exfiltrate any of that. Three guards layer here:
+    #   1. The `if:` below skips fork PRs entirely. github.event.pull_request
+    #      .head.repo.full_name only matches when the PR's head branch is in
+    #      this repo, not a fork.
+    #   2. GitHub's repo-level "Require approval for all outside
+    #      collaborators" setting (Settings → Actions → General → Fork pull
+    #      request workflows). Must stay enabled — operators verify it as
+    #      part of the runner runbook.
+    #   3. The workflow's default `permissions:` is read-only above; we
+    #      re-grant packages:write here for this job alone.
+    # If any one of those fails, the others still hold.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      packages: write
+    #
+    # If the self-hosted runner is offline the job stays queued — that's a
+    # signal to either bring the runner back or trigger a build elsewhere.
+    runs-on: [self-hosted, linux, x64, plugged-in-prod]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        # Login on PRs too so the registry cache (cache-from) is reachable.
+        # PRs from forks can't push (read-only GITHUB_TOKEN), so cache-to is
+        # gated separately below.
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build (push on main/tag, load on PR)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # PRs read the warm cache; only main / tag pushes refresh it.
+          # Writing the cache from a PR requires registry write access,
+          # which GITHUB_TOKEN withholds on fork PRs — gating cache-to to
+          # non-PR events keeps internal PRs fast and fork PRs unblocked.
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}:cache,mode=max', env.REGISTRY, env.IMAGE_NAME) || '' }}
+          build-args: |
+            NEXT_TELEMETRY_DISABLED=1
+
+      - name: Smoke-test the built image (PR only)
+        if: github.event_name == 'pull_request'
+        env:
+          # Pipe action outputs through env: to avoid GHA expression-injection
+          # in the run: shell. See the project's GHA workflow security guide.
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          tag=$(printf '%s\n' "$IMAGE_TAGS" | head -1)
+          docker run --rm --entrypoint /bin/sh "$tag" -c '
+            node --version
+            tsx --version
+            test -f /app/server.js
+            test -d /app/.next/static
+            test -d /app/drizzle
+            test -x /usr/bin/bwrap
+          '
+
+  stack-validate:
+    name: Validate compose + scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: docker compose config
+        run: |
+          set -euo pipefail
+          # The compose file references /run/sops/secrets.env which doesn't
+          # exist in CI; create a minimal stub so `compose config` can resolve
+          # env_file without erroring.
+          sudo mkdir -p /run/sops
+          {
+            echo "POSTGRES_DB=v220_prod"
+            echo "POSTGRES_USER=pluggedin"
+            echo "POSTGRES_PASSWORD=stub"
+          } | sudo tee /run/sops/secrets.env >/dev/null
+          docker compose -f infra/docker-compose.yml config -q
+
+      # Only infra/docker-compose.yml was validated here. The three root compose
+      # files — including the default self-host stack end users run — were never
+      # parsed in CI, which is how an insecure default shipped unnoticed.
+      # Services declare `env_file: - .env`, which compose requires to EXIST as a
+      # file even though interpolation is fed from --env-file /dev/null. The stub
+      # is deliberately EMPTY: it satisfies env_file without contributing to
+      # interpolation, which the fail-closed assertion below depends on.
+      - name: Stub .env for compose validation
+        run: |
+          set -euo pipefail
+          test ! -s .env
+          : > .env
+
+      - name: Validate root compose files
+        run: |
+          set -euo pipefail
+          # Throwaway per-run values, generated rather than hardcoded so there is
+          # no literal password in this file for a secret scanner to flag.
+          export POSTGRES_PASSWORD REDIS_PASSWORD DB_PASSWORD
+          POSTGRES_PASSWORD=$(openssl rand -hex 16)
+          REDIS_PASSWORD=$(openssl rand -hex 16)
+          DB_PASSWORD=$(openssl rand -hex 16)
+          for f in docker-compose.yml docker-compose.dev.yml docker-compose.production.yml; do
+            echo "== $f =="
+            docker compose --env-file /dev/null -f "$f" config -q
+          done
+
+      - name: Assert self-host stack refuses to start without passwords
+        run: |
+          set -euo pipefail
+          # POSTGRES_PASSWORD/REDIS_PASSWORD are deliberately default-less, so a
+          # self-hoster cannot end up running a database whose password is in
+          # this repository. Prove the fail-closed interpolation still bites.
+          # No passwords are exported here and the .env stub is empty, so both
+          # interpolation sources are genuinely absent.
+          if docker compose --env-file /dev/null -f docker-compose.yml config -q 2>/dev/null; then
+            echo "::error file=docker-compose.yml::rendered without POSTGRES_PASSWORD/REDIS_PASSWORD — the required-variable guard was weakened"
+            exit 1
+          fi
+          echo "ok: docker-compose.yml fails closed when passwords are unset"
+
+      - name: Assert datastores are not published beyond loopback
+        run: |
+          set -euo pipefail
+          export POSTGRES_PASSWORD REDIS_PASSWORD DB_PASSWORD
+          POSTGRES_PASSWORD=$(openssl rand -hex 16)
+          REDIS_PASSWORD=$(openssl rand -hex 16)
+          DB_PASSWORD=$(openssl rand -hex 16)
+          rendered=()
+          for f in docker-compose.yml docker-compose.dev.yml docker-compose.production.yml; do
+            out="${RUNNER_TEMP}/${f}.json"
+            docker compose --env-file /dev/null -f "$f" config --format json > "$out"
+            rendered+=("$out")
+          done
+          python3 .github/scripts/assert_compose_ports.py "${rendered[@]}"
+
+      - uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: ./infra/scripts
+          severity: warning
+
+      - name: Validate Traefik static config
+        run: |
+          set -euo pipefail
+          # Must match the image infra/docker-compose.yml pins. Traefik
+          # pins its Docker client to API 1.24 through v3.5, which Docker
+          # Engine 29 rejects outright, so the stack runs v3.7 — validating
+          # against v3.2 here would be checking a version we deliberately
+          # cannot run.
+          docker run --rm -v "$PWD/infra/traefik:/etc/traefik:ro" \
+            traefik:v3.7 traefik --configfile=/etc/traefik/traefik.yml --help \
+            > /dev/null
+
+      - name: Lint Ofelia config (basic INI parse)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import configparser, sys
+          c = configparser.ConfigParser(strict=False)
+          c.read('infra/ofelia/config.ini')
+          assert any(s.startswith('job-') for s in c.sections()), 'no jobs in ofelia config'
+          PY

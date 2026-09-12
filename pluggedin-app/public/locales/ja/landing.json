@@ -1,0 +1,970 @@
+{
+  "navigation": {
+    "enterApp": "アプリに入る",
+    "features": "機能",
+    "community": "コミュニティ",
+    "collections": "コレクション",
+    "playground": "プレイグラウンド",
+    "documentation": "ドキュメント",
+    "blog": "ブログ",
+    "getStarted": "接続",
+    "mcpProxy": "MCP プロキシ",
+    "mcpServers": "MCP サーバー"
+  },
+  "hero": {
+    "badge": "世界初のAI-CMS",
+    "headline": "知識、ツール、メモリ、エージェントが融合する場所",
+    "subheadline": "すべてのAIインタラクションを統合する一つのプラットフォーム。あなたのAIを真にあなたのものにするモデル不可知論的なインフラストラクチャ—Claude、ChatGPT、Cursorなど、使用するすべてのプラットフォームで永続的。",
+    "tagline": "一つのプラットフォーム。すべてのAI。永遠に。",
+    "cta": {
+      "primary": "接続",
+      "secondary": "仕組みを見る"
+    },
+    "pillars": {
+      "knowledge": "知識",
+      "tools": "ツール",
+      "memory": "メモリ",
+      "agents": "エージェント"
+    },
+    "title": "AIの交差点",
+    "subtitle": "統一されたプラットフォームでAI機能を接続、作成、拡張します。AIワークフローを強化するプラグインを構築および管理します。",
+    "analogy": "\"AIエコシステムを統合し、ソーシャルに\"",
+    "openSource": "誇りを持ってオープンソース",
+    "features": {
+      "security": "Enterprise Security",
+      "fast": "Lightning Fast",
+      "scale": "Global Scale"
+    }
+  },
+  "features": {
+    "title": "機能",
+    "subtitle": "MCPサーバーを管理するために必要なすべて",
+    "sectionTitle": "完全なAIエコシステムプラットフォーム",
+    "sectionSubtitle": "エンタープライズグレードの機能でAI機能を接続、共有、発見、拡張します。",
+    "claudeCodePlugin": {
+      "title": "Claude Code プラグイン",
+      "description": "Claude Code用ネイティブMCPプラグイン。すべてのツール、ナレッジベース、メモリ、通知をコーディングワークフローで直接利用 — 設定不要。"
+    },
+    "oauthAutoRotation": {
+      "title": "OAuth 2.1自動ローテーション",
+      "description": "期限切れの15分前に自動トークン更新。OAuth 2.1準拠のトークンローテーション。サービス中断ゼロ、手動作業ゼロ。"
+    },
+    "mcpProxy": {
+      "title": "統一MCPプロキシ",
+      "description": "すべてのMCPサーバー用の単一エンドポイント。内蔵AIプレイグラウンド、通知システム、ドキュメント交換。STDIO、SSE、Streamable HTTPトランスポートをサポート。"
+    },
+    "officialSdks": {
+      "title": "JavaScript、Python、Go SDK",
+      "description": "JavaScript/TypeScript、Python、Go向けのフル機能SDK。言語間で一貫したインターフェースを備えたドキュメント管理、RAGクエリ、APIアクセス。"
+    },
+    "advancedSearch": {
+      "title": "インテリジェント発見エンジン",
+      "description": "GitHub、Smithery、npmを横断して完璧なMCPサーバーを見つけます。機能、評価、コミュニティ推奨でフィルタリング。"
+    },
+    "mcpPlayground": {
+      "title": "ユニバーサルAIプレイグラウンド",
+      "description": "任意のモデル（Claude、GPT、Llamaなど）でMCPサーバーをテストします。大規模な会話のための仮想スクロールとカスタム指示サポート。"
+    },
+    "ragIntegration": {
+      "title": "AI知識プラットフォーム（RAG）",
+      "description": "ドキュメントをアップロードし、知識ベースを作成し、任意のMCPクライアントを通じてクエリします。エンタープライズグレードセキュリティによる安全なプロジェクトベース分離。"
+    },
+    "notifications": {
+      "title": "リアルタイム活動監視",
+      "description": "詳細なログ、実行分析、オプションのメール配信による カスタム通知で、すべてのMCP操作を追跡します。"
+    },
+    "security": {
+      "title": "エンタープライズセキュリティ＆プライバシー",
+      "description": "多層認証、Firejailサンドボックス、包括的監査証跡、完全制御のためのセルフホスティングオプション。"
+    },
+    "internationalization": {
+      "title": "グローバルプラットフォーム",
+      "description": "自動ブラウザ検出付きの6言語で利用可能。世界的なアクセシビリティのためのコミュニティ主導翻訳。"
+    },
+    "pluginManagement": {
+      "title": "プラグイン管理",
+      "description": "MCPサーバーとプラグインを閲覧、設定、管理します",
+      "content": "統一されたインターフェースを通じて、さまざまなAIツールやサービスを接続します。中央ダッシュボードからプラグインを設定および管理します。",
+      "action": "プラグインを閲覧"
+    },
+    "aiPlayground": {
+      "title": "AIプレイグラウンド",
+      "description": "インタラクティブな環境でAIツールをテストおよび実験します",
+      "content": "プラグインの動作を体験してください。プレイグラウンドでは、さまざまな設定をテストし、リアルタイムの結果を確認できます。",
+      "action": "プレイグラウンドを開く"
+    },
+    "customDevelopment": {
+      "title": "カスタム開発",
+      "description": "独自のMCPサーバーとツールを作成およびカスタマイズします",
+      "benefit1": "仲間の開発者から革新的なサーバーを発見します。",
+      "benefit2": "共有したサーバーに関するフィードバックと評価を取得します。",
+      "benefit3": "コミュニティの作成物に基づいて協力し、構築します。",
+      "benefit4": "最新のMCPトレンドを常に把握します。",
+      "visualPlaceholder": "サーバー共有/評価を示すビジュアル",
+      "content": "Pythonエディターと統合開発環境を使用してカスタム機能を構築します。特殊な機能でAIを拡張します。",
+      "action": "カスタムツールを作成"
+    },
+    "langchainAbstraction": {
+      "title": "あらゆるモデルをテスト: Langchain抽象化",
+      "description": "Plugged.inはLangchain抽象化レイヤーを使用しているため、Claude、GPT、Llamaなど、さまざまなモデルでMCPサーバーを1つのインターフェースからテストできます。モデルを即座に比較し、ワークフローを将来に備え、本当のモデル非依存AIを体験しましょう。"
+    }
+  },
+  "community": {
+    "title": "グローバルMCPコミュニティに参加",
+    "subtitle": "AIの未来を構築する数千人の開発者とつながる",
+    "description": "MCPサーバーを共有し、開発者をフォローし、リアルタイム通知を受け取り、ソーシャルプラットフォーム内で協力します。評価、レビュー、コミュニティ貢献で評判を構築します。",
+    "action": "コミュニティに参加",
+    "stats": {
+      "developers": "1,000+開発者",
+      "servers": "500+MCPサーバー",
+      "collections": "近日公開",
+      "languages": "6言語"
+    },
+    "socialFeatures": {
+      "title": "ソーシャルプラットフォーム機能",
+      "profiles": "活動フィード付き公開開発者プロフィール",
+      "following": "開発者をフォローし、その作業の更新を受け取る",
+      "notifications": "フォロー、共有、更新のリアルタイム通知",
+      "reputation": "コミュニティエンゲージメントを通じて評判を構築"
+    },
+    "benefit1": "仲間の開発者から革新的なサーバーを発見します。",
+    "benefit2": "共有したサーバーに関するフィードバックと評価を取得します。",
+    "benefit3": "コミュニティの作成物に基づいて協力し、構築します。",
+    "benefit4": "最新のMCPトレンドを常に把握します。",
+    "visualPlaceholder": "サーバー共有/評価を示すビジュアル"
+  },
+  "search": {
+    "title": "インテリジェント発見エンジン",
+    "subtitle": "GitHub、Smithery、npmを横断して完璧なMCPサーバーを見つける",
+    "description": "高度な発見エンジンが複数のソースを検索し、コミュニティシグナルを使用してニーズに最適なツールを表面化します。",
+    "action": "ツールを発見",
+    "sources": {
+      "title": "すべてのソースを横断検索",
+      "github": "MCPサーバー付きGitHubリポジトリ",
+      "smithery": "Smitheryマーケットプレイス統合",
+      "npm": "MCPサポート付きNPMパッケージ",
+      "community": "コミュニティ共有サーバー"
+    },
+    "imagePlaceholder": "画像：コミュニティサーバーを示す検索結果（CardGridモックアップ）",
+    "feature1Title": "AI搭載検索",
+    "feature1Desc": "キーワードだけでなく、探しているものを理解する自然言語検索。",
+    "feature2Title": "コミュニティシグナル",
+    "feature2Desc": "評価、インストール数、最新更新、開発者評価でフィルタリング。",
+    "feature3Title": "機能マッチング",
+    "feature3Desc": "必要な正確な機能（ツール、リソース、プロンプト）でサーバーを見つける。",
+    "feature4Title": "即座プレビュー",
+    "feature4Desc": "インストールなしで検索結果から直接サーバーをテスト。"
+  },
+  "playground": {
+    "title": "ユニバーサルAIテストプレイグラウンド",
+    "subtitle": "任意のAIモデル（Claude、GPT、Llamaなど）で任意のMCPサーバーをテスト。",
+    "feature1Title": "マルチモデルサポート",
+    "feature1Desc": "Langchain統合を通じてClaude、GPT-4、Llama、Geminiなど数十のモデルでテスト。",
+    "feature2Title": "高度なRAG統合",
+    "feature2Desc": "ドキュメントをアップロードし、知識ベースを作成し、任意のモデルで即座にクエリ。",
+    "feature3Title": "仮想スクロール＆パフォーマンス",
+    "feature3Desc": "仮想スクロールと最適化されたパフォーマンスで大規模な会話を処理。",
+    "feature4Title": "カスタム指示",
+    "feature4Desc": "精密な制御のためのモデル固有の指示とシステムプロンプトを設定。",
+    "feature5Title": "リアルタイム監視",
+    "feature5Desc": "詳細なログ、実行分析、パフォーマンスメトリクスですべての操作を追跡。",
+    "visualPlaceholder": "プレイグラウンド環境の視覚的表現",
+    "imagePlaceholder": "画像：プレイグラウンド/デバッグモックアップ",
+    "langchainCallout": "<0>任意のモデルでテスト:</0> 私たちの<1>Langchain抽象化</1>のおかげで、Claude、GPT、Llamaなど、さまざまなモデルでMCPサーバーを1つのプレイグラウンドからテストできます。モデルを即座に比較し、本当のモデル非依存AIを体験しましょう。"
+  },
+  "collections": {
+    "title": "スマートコレクション＆バージョン管理",
+    "subtitle": "近日公開：MCPサーバーコレクションを整理、バージョン管理、共有",
+    "description": "まもなくバージョン管理されたコレクションを作成し、インストールを追跡し、チームと協力し、開発、ステージング、本番用の異なる構成を維持できるようになります。",
+    "action": "詳しく見る",
+    "versionControl": {
+      "title": "コレクションのバージョン管理",
+      "feature1": "任意の時点でコレクションのスナップショットを作成",
+      "feature2": "必要に応じて以前のバージョンにロールバック",
+      "feature3": "変更を追跡し、バージョン間の違いを確認",
+      "feature4": "特定のバージョンをチームと共有"
+    },
+    "sharing": {
+      "title": "公開＆非公開共有",
+      "public": "コミュニティとコレクションを公開共有",
+      "private": "チームメンバーとの非公開共有",
+      "stats": "インストールと使用統計を追跡",
+      "ratings": "ユーザーからフィードバックと評価を取得"
+    },
+    "collectionsTitle": "合理化されたコレクション",
+    "collectionsDesc": "特定のクライアント、アプリケーション、または環境向けに関連するMCPサーバーを論理的なコレクションにグループ化します。",
+    "workspacesTitle": "マルチワークスペース管理",
+    "workspacesDesc": "専用ワークスペースでプロジェクトを分離します。開発、ステージング、本番構成間で瞬時に切り替えます。",
+    "hierarchyPlaceholder": "コレクション階層の視覚的表現",
+    "imagePlaceholder": "画像：コレクション/ワークスペースモックアップ"
+  },
+  "sharing": {
+    "title": "コミュニティ共有",
+    "subtitle": "他の人と共有",
+    "description": "MCPサーバーとツールをコミュニティと共有します。",
+    "action": "共有を開始"
+  },
+  "security": {
+    "title": "エンタープライズグレードセキュリティ",
+    "subtitle": "あらゆる層で保護されたAIインフラストラクチャ",
+    "description": "多層認証、サンドボックス実行、包括的監査証跡を特徴とするセキュリティファーストアーキテクチャで構築。",
+    "features": {
+      "authentication": {
+        "title": "多層認証",
+        "desc": "OAuthプロバイダー、APIキー、JWTトークンによるセッション管理"
+      },
+      "sandboxing": {
+        "title": "Firejailサンドボックス",
+        "desc": "Linux上のすべてのSTDIO MCPサーバーの自動セキュリティサンドボックス"
+      },
+      "isolation": {
+        "title": "プロジェクト分離",
+        "desc": "役割ベースアクセス制御によるプロジェクト間の完全なデータ分離"
+      },
+      "audit": {
+        "title": "包括的監査証跡",
+        "desc": "コンプライアンスのためのすべての操作、API呼び出し、ユーザーアクションを追跡"
+      },
+      "encryption": {
+        "title": "データ暗号化",
+        "desc": "機密データとAPI通信のエンドツーエンド暗号化"
+      },
+      "selfhost": {
+        "title": "セルフホスティングオプション",
+        "desc": "完全な制御とコンプライアンスのためにインフラストラクチャに展開"
+      }
+    },
+    "compliance": "定期的なセキュリティ監査を伴うSOC2 Type II準拠インフラストラクチャ",
+    "action": "セキュリティ詳細を表示"
+  },
+  "opensource": {
+    "title": "誇り高きオープンソース",
+    "subtitle": "コミュニティにより、コミュニティのために構築。貢献してMCPの未来を形作りましょう。",
+    "badge": "オープンソース",
+    "viewOnGithub": "GitHubで表示",
+    "followOrg": "VeriTeknikをフォロー",
+    "contribute": "オープンソースコミュニティに参加し、AI統合の未来を一緒に構築しましょう",
+    "repos": {
+      "app": {
+        "description": "メインアプリケーション - MCP管理用Next.js Webプラットフォーム"
+      },
+      "proxy": {
+        "description": "モデルコンテキストプロトコル用ユニバーサルプロキシサーバー"
+      }
+    }
+  },
+  "developers": {
+    "title": "開発者のために構築",
+    "subtitle": "AI機能を拡張する強力なツールとAPI",
+    "description": "包括的なAPI、SDK、開発者ツールを備えたオープンソースプラットフォーム。",
+    "features": {
+      "opensource": {
+        "title": "100%オープンソース",
+        "desc": "GitHubでの透明な開発を伴うMITライセンス"
+      },
+      "apis": {
+        "title": "RESTful API",
+        "desc": "すべてのプラットフォーム機能の完全なAPI カバレッジ"
+      },
+      "sdks": {
+        "title": "TypeScript SDK",
+        "desc": "完全なIntelliSenseサポートを備えたタイプセーフSDK"
+      },
+      "extensibility": {
+        "title": "プラグインアーキテクチャ",
+        "desc": "カスタムMCPサーバーと統合でプラットフォームを拡張"
+      },
+      "documentation": {
+        "title": "包括的ドキュメント",
+        "desc": "例とチュートリアル付きの詳細ドキュメント"
+      },
+      "community": {
+        "title": "アクティブコミュニティ",
+        "desc": "Reddit、X、GitHub discussions、コミュニティサポート"
+      }
+    },
+    "codeExample": {
+      "title": "クイック統合例",
+      "description": "数秒でPlugged.inに接続："
+    },
+    "action": "ドキュメントを表示"
+  },
+  "pricing": {
+    "badge": "100% 永久無料",
+    "title": "完全無料 - 隠れたコストなし",
+    "subtitle": "AIデータ所有権の民主化を信じています。すべての機能を、すべての人に、永遠に。",
+    "free": {
+      "title": "すべて含まれています",
+      "description": "制限なし、階層なし、驚きなし",
+      "cta": "今すぐ始める",
+      "note": "クレジットカード不要 • 個人使用は常に無料",
+      "everything_included": "すべての機能が含まれています："
+    },
+    "features": {
+      "unlimited_ai_model_connections": "無制限のAIモデル接続",
+      "full_data_ownership_and_export": "完全なデータ所有権とエクスポート",
+      "mcp_server_integrations": "500以上のMCPサーバー統合",
+      "unlimited_workspaces_and_projects": "無制限のワークスペースとプロジェクト",
+      "community_sharing_and_collaboration": "コミュニティ共有とコラボレーション",
+      "end_to_end_encryption": "エンドツーエンド暗号化",
+      "rag_document_storage": "RAGドキュメントストレージ",
+      "real_time_notifications": "リアルタイム通知",
+      "oauth_authentication": "OAuth認証",
+      "api_access": "APIアクセス"
+    },
+    "whyFree": {
+      "title": "なぜplugged.inは無料なのか？",
+      "description": "私たちはAIデータ所有権の未来を構築しています。私たちの使命は、誰もがAI生成データをコントロールできるようにすることです。プラットフォームを無料に保つことで、開発者が共有し、学び、一緒に構築できる最大のエコシステムを作り出しています。"
+    },
+    "enterprise": {
+      "title": "エンタープライズ",
+      "price": "カスタム",
+      "period": "",
+      "description": "高度なニーズを持つ組織向け",
+      "features": [
+        "プロプランのすべて",
+        "セルフホスティングオプション",
+        "SSO/SAML認証",
+        "SLA保証",
+        "専用サポート",
+        "カスタム統合"
+      ],
+      "cta": "営業に連絡"
+    }
+  },
+  "gettingStarted": {
+    "title": "始めるのは簡単",
+    "subtitle": "5分以内にゼロからAI搭載へ",
+    "description": "最初のMCPサーバーを接続して構築を開始するクイックスタートガイドに従ってください。",
+    "steps": {
+      "step1": {
+        "title": "1. アカウント作成",
+        "desc": "メールまたはOAuthプロバイダーでサインアップ"
+      },
+      "step2": {
+        "title": "2. APIキー取得",
+        "desc": "ダッシュボードからAPIキーを生成"
+      },
+      "step3": {
+        "title": "3. MCPプロキシインストール",
+        "desc": "実行：npx @pluggedin/pluggedin-mcp-proxy@latest"
+      },
+      "step4": {
+        "title": "4. クライアント接続",
+        "desc": "Claude Codeプラグイン、Cursorまたは任意のMCPクライアントを追加"
+      }
+    },
+    "resources": {
+      "title": "学習リソース",
+      "quickstart": "5分クイックスタートガイド",
+      "tutorials": "ステップバイステップチュートリアル",
+      "videos": "ビデオウォークスルー",
+      "examples": "例プロジェクトとテンプレート"
+    },
+    "action": "セットアップガイドを表示"
+  },
+  "cta": {
+    "title": "AI革命に参加する準備はできましたか？",
+    "subtitle": "最も包括的なMCPプラットフォームで構築を開始します。個人には永続無料。",
+    "description": "Plugged.inでAIの未来を構築する数千人の開発者に参加します。",
+    "primary": "無料で始める",
+    "secondary": "ドキュメントを表示",
+    "primaryAction": "無料アカウント作成",
+    "secondaryAction": "ドキュメントを探索",
+    "features": {
+      "title": "必要なすべて",
+      "feature1": "✓ 無制限MCPサーバー",
+      "feature2": "✓ すべてのAIモデルサポート",
+      "feature3": "✓ RAG知識ベース",
+      "feature4": "✓ ソーシャル機能",
+      "feature5": "✓ 6言語サポート",
+      "feature6": "✓ エンタープライズセキュリティ"
+    },
+    "step1": {
+      "title": "サインアップ",
+      "description": "数秒で無料アカウントを作成します。クレジットカード不要。"
+    },
+    "step2": {
+      "title": "接続＆発見",
+      "description": "MCPサーバーを追加し、開発者をフォローし、コミュニティに参加します。"
+    },
+    "step3": {
+      "title": "構築＆共有",
+      "description": "コレクションを作成し、知識をアップロードし、世界と共有します。"
+    },
+    "security": {
+      "title": "エンタープライズグレードセキュリティ",
+      "description": "データは多層認証、Firejailサンドボックス、包括的監査証跡で保護されています。完全な制御のためにセルフホストできます。"
+    }
+  },
+  "aiModels": {
+    "badge": "Langchainによる提供",
+    "title": "1つのプラットフォーム、すべてのモデル",
+    "subtitle": "すべてのモデルが同じナレッジベースにアクセスし、同じツールを使用し、同じメモリを共有します。",
+    "moreModels": "Langchain統合により、さらに数十のモデル",
+    "viewAll": "すべてのモデルを表示",
+    "feature1": {
+      "title": "共有ナレッジベース",
+      "description": "すべてのモデルがドキュメントをクエリし、カスタムコンテキストにアクセスできます。"
+    },
+    "feature2": {
+      "title": "ユニバーサルツールアクセス",
+      "description": "すべてのモデルが同じMCPツールを使用してアクションを実行できます。"
+    },
+    "feature3": {
+      "title": "永続的メモリ（開発中）",
+      "description": "すべてのモデルが間もなく会話全体で同じメモリを共有します。"
+    },
+    "feature4": {
+      "title": "ワンクリック切り替え",
+      "description": "コンテキストを失うことなく、モデル間で即座に切り替え。"
+    },
+    "supportedModels": {
+      "claude": "Claude",
+      "gpt4": "GPT-4",
+      "llama": "Llama",
+      "gemini": "Gemini"
+    }
+  },
+  "whyPluggedin": {
+    "title": "なぜplugged.in?",
+    "subtitle": "AIには会話以上のものが必要です",
+    "problem": {
+      "title": "欠けているピース",
+      "description": "AIは強力ですが、3つの重要な機能が欠けています：特定のドキュメントからの知識、過去のやり取りの記憶、実際のアクションを実行するツール。これらがなければ、すべての会話がゼロから始まります。"
+    },
+    "solution": {
+      "title": "AIを完成させる",
+      "description": "plugged.inはAIに必要な三位一体を提供します：",
+      "benefit1": "📚 知識：ドキュメントをアップロードして、AIに特定のコンテキストへのアクセスを許可",
+      "benefit2": "🧠 メモリ：近日公開 - すべての会話にわたる永続的なコンテキスト",
+      "benefit3": "🔧 ツール：任意のMCPサーバーを接続して、AIに実世界の機能を提供",
+      "benefit4": "🔄 ユニバーサル：Claude、GPT-4、Gemini、およびすべての主要モデルで動作"
+    },
+    "bridge": {
+      "title": "オープンスタンダードに基づいて構築",
+      "description": "技術的な基盤としてModel Context Protocol（MCP）を活用しています。これはトレンディだからではなく、真のデータ所有権を可能にするオープンスタンダードだからです。MCPは、あなたのデータが独自のプラットフォームにロックされるのではなく、ポータブルな資産になることを保証します。"
+    },
+    "visual": {
+      "hub": "plugged.in ハブ",
+      "aiSupport": "Claude、GPT-4、Gemini...",
+      "feature": {
+        "knowledge": "📚 知識",
+        "memory": "🧠 メモリ",
+        "tools": "🔧 ツール"
+      },
+      "knowledge": {
+        "title": "知識",
+        "description": "ドキュメントとコンテキスト"
+      },
+      "memory": {
+        "title": "メモリ",
+        "description": "クリップボードストレージ"
+      },
+      "tools": {
+        "title": "ツール",
+        "description": "MCPサーバー"
+      }
+    }
+  },
+  "trust": {
+    "title": "エンタープライズの信頼性とセキュリティ",
+    "subtitle": "数千の組織が重要なAIインフラストラクチャをPlugged.inに託しています",
+    "certifications": {
+      "soc2": {
+        "label": "SOC 2 Type II",
+        "description": "互換性あり"
+      },
+      "pciDss": {
+        "label": "PCI-DSS",
+        "description": "準拠"
+      },
+      "gdpr": {
+        "label": "GDPR",
+        "description": "準拠"
+      },
+      "hipaa": {
+        "label": "HIPAA",
+        "description": "対応"
+      }
+    },
+    "growth": {
+      "title": "30日で0から14,000以上のAPIコール",
+      "subtitle": "最も急速に成長しているAI統合プラットフォームで未来を構築する620以上の開発者に加わりましょう",
+      "stats": {
+        "documents": "87以上のAIドキュメント",
+        "servers": "460のアクティブサーバー",
+        "projects": "650以上のプロジェクト作成"
+      }
+    }
+  },
+  "metrics": {
+    "growth": {
+      "value": "718",
+      "suffix": "%",
+      "label": "月間成長率"
+    },
+    "tools": {
+      "value": "7,268",
+      "suffix": "+",
+      "label": "検証済みツール"
+    },
+    "servers": {
+      "value": "1,500",
+      "suffix": "+",
+      "label": "MCPサーバー"
+    },
+    "apiCalls": {
+      "value": "14K",
+      "suffix": "+",
+      "label": "月間APIコール"
+    },
+    "projects": {
+      "value": "650",
+      "suffix": "+",
+      "label": "アクティブプロジェクト"
+    },
+    "users": {
+      "value": "620",
+      "suffix": "+",
+      "label": "アクティブ開発者"
+    },
+    "activeServers": {
+      "value": "460",
+      "suffix": "+",
+      "label": "アクティブサーバー"
+    },
+    "response": {
+      "value": "100",
+      "prefix": "<",
+      "suffix": "ms",
+      "label": "応答時間"
+    },
+    "uptime": {
+      "value": "99.9",
+      "suffix": "%",
+      "label": "稼働時間SLA"
+    },
+    "documents": {
+      "value": "87",
+      "suffix": "+",
+      "label": "AIドキュメント"
+    }
+  },
+  "problemStatement": {
+    "title": "AI の断片化があなたの時間、お金、知能を無駄にしています",
+    "subtitle": "AI生産性の約束は現実です。しかし現実は？あなたのAI機能はプラットフォーム全体に分散し、セッションごとにツールがリセットされ、何も連携しません。",
+    "problems": {
+      "scattered": {
+        "title": "知識が至る所に散在",
+        "description": "あなたのドキュメントはGoogle Drive、Notion、Confluence、ローカルファイルに存在します。各AIプラットフォームではすべてを再アップロードするか、まったくアクセスできません。"
+      },
+      "reconfiguring": {
+        "title": "終わりのないツール設定",
+        "description": "ClaudeでGitHub統合を設定するのに何時間も費やしましたか？次はChatGPTで同じことを。そしてCursorで。そして試す新しいAIツールごとに。"
+      },
+      "noMemory": {
+        "title": "セッション間でメモリなし",
+        "description": "すべての会話はゼロから始まります。昨日構築したコンテキストは？消えました。先週設定した設定は？忘れられました。常に自分自身を再説明しています。"
+      },
+      "agentFailures": {
+        "title": "静かに消えるエージェント",
+        "description": "自律エージェントをデプロイしましたか？クラッシュしないことを願います。数時間後までわかりません。ライフサイクル管理なし、監視なし、制御なし。"
+      },
+      "productionGap": {
+        "title": "概念実証の地獄",
+        "description": "AIプロジェクトの88%は本番環境に到達しません。なぜ？APIをつなぎ合わせ、状態を管理し、セキュリティを確保することがフルタイムの仕事になるからです。"
+      }
+    },
+    "quote": "各チームメンバーに個別にMCPサーバーを設定するのに数週間かけました。Plugged.inですべてを一箇所に—今では週15時間節約され、AIが実際にコードベースを覚えています。",
+    "quoteAuthor": "エンジニアリングリード、シリーズB SaaS企業"
+  },
+  "fourPillars": {
+    "badge": "完全なプラットフォーム",
+    "title": "4つの柱。無限の可能性。",
+    "subtitle": "MCPオーケストレーション、組み込みベクトル検索、永続的メモリシステム、自律エージェントライフサイクル管理を組み合わせた唯一の統合プラットフォーム。",
+    "knowledge": {
+      "title": "AIのメモリバンク",
+      "description": "一度ドキュメントをアップロードすれば、どこでもアクセス。私たちの組み込みベクトルエンジンは、組織の知識をすべてのAIが利用できる永続的で検索可能なコンテキストに変換します — 外部サービス不要。",
+      "features": {
+        "1": "完全なモデル属性とバージョン履歴を持つAI生成ドキュメント",
+        "2": "インプロセスHNSWベクトルインデックスによる1秒以下のセマンティック検索",
+        "3": "マルチフォーマットサポート：自動チャンキングとエンベディング付きPDF、Markdown、JSON、HTML"
+      },
+      "highlightLabel": "実世界への影響",
+      "highlight": "AIプラットフォーム全体で永続するコードレビューメモリ。デバッグセッションが時間とともに蓄積される組織知識になります。"
+    },
+    "tools": {
+      "title": "1,500以上のツール、1つのインターフェース",
+      "description": "すべてのAIプラットフォームに同じMCPサーバーを設定するのをやめましょう。一度接続すればどこでも使えます。ネイティブClaude Codeプラグインと他のすべてのクライアント向けユニバーサルMCPプロキシ。",
+      "features": {
+        "1": "ネイティブClaude Codeプラグイン：すべてのツール、ナレッジベース、メモリ、通知をIDEで",
+        "2": "通常のMCPプロキシと比較して30-55%のトークン効率改善",
+        "3": "ユニバーサル互換性：Claude Code、Cursor、Cline、ChatGPT、LM Studio等"
+      },
+      "highlightLabel": "効率の向上",
+      "highlight": "plugged.inをClaude Codeに数秒で追加。1つのプラグインが数百の個別MCP設定に取って代わります — 一度更新すればすべてに適用。"
+    },
+    "memory": {
+      "title": "インテリジェントメモリシステム",
+      "description": "同心円リング、インテリジェントな忘却、集合知を備えた人間の認知に着想を得たメモリシステム。クリップボードストレージから自然に減衰する長期記憶、匿名で出現するコミュニティパターンまで。",
+      "features": {
+        "1": "同心円メモリリング：新鮮な観察、手順、実践、長期、ショック",
+        "2": "集合的ベストプラクティス：コミュニティからプライバシー保護で集約されたパターン",
+        "3": "クリップボード、セッション、Zレポート、10倍トークン効率のプログレッシブ取得"
+      },
+      "highlightLabel": "v3.1.0の新機能",
+      "highlight": "集合的ベストプラクティス（CBP）システムが稼働。エージェントは匿名化されたコミュニティパターンから学習します — エラー回復、ワークフロー、ベストプラクティス — プライベートデータを公開することなく。"
+    },
+    "agents": {
+      "title": "軍用グレードのガバナンスを備えた自律エージェント",
+      "description": "世界初の包括的なエージェントライフサイクル管理プロトコル。企業が要求する信頼性で自律エージェントをデプロイ、監視、制御します。",
+      "features": {
+        "1": "DNSベースのエージェントアドレッシングで50ms未満のコントロールプレーンレイテンシ",
+        "2": "包括的なライフサイクル管理：NEW → PROVISIONED → ACTIVE → DRAINING → TERMINATED",
+        "3": "カオステストで99.9%の稼働時間、自動障害回復"
+      },
+      "highlightLabel": "学術イノベーション",
+      "highlight": "PAPプロトコル学術論文がarXiv提出準備完了。プロトコルレベルの信頼性を通じて、現実的なタスクでの人間とAIのパフォーマンスの28%のギャップを解決します。"
+    },
+    "cta": {
+      "text": "AIインフラストラクチャを統一する準備はできていますか？",
+      "button": "今日から無料で始める"
+    }
+  },
+  "videoTutorials": {
+    "title": "実際の動作を見る",
+    "subtitle": "数分でplugged.inを開始するためのステップバイステップのチュートリアルをご覧ください。基本設定から高度な機能まで。",
+    "quickSetup": {
+      "title": "クイックセットアップ",
+      "duration": "3分",
+      "description": "Claude Desktop、VS Code、Cursor、その他のAIツールにMCPサーバーを3分以内で接続します。",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw"
+    },
+    "ragArchive": {
+      "title": "RAGとドキュメントアーカイブ",
+      "duration": "5分",
+      "description": "ナレッジベースにファイルを保存し、すべてのプラットフォームでAI駆動のセマンティック検索を使用してクエリする方法を学びます。",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw?start=141"
+    },
+    "notifications": {
+      "title": "タスク通知",
+      "duration": "4分",
+      "description": "自動通知とタスク追跡を設定して、AIワークフローとエージェントアクティビティの最新情報を把握します。",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw?start=250"
+    },
+    "oauthServers": {
+      "title": "OAuth統合",
+      "duration": "6分",
+      "description": "Notion、Linear、GitHubなどのサービスをOAuthで接続。一度認証すればトークンは期限切れ前に自動更新されます。手動でのトークン管理は不要です。",
+      "videoUrl": "https://www.youtube.com/embed/WFe3rb6JtQw?start=276"
+    },
+    "moreVideos": "より多くのチュートリアルは私たちの",
+    "docsLink": "ドキュメント"
+  },
+  "roadmap": {
+    "badge": "製品ロードマップ",
+    "title": "Plugged.inロードマップ",
+    "subtitle": "統一されたAI制御プレーンから現実世界の自律エージェントへ",
+    "stage1": {
+      "date": "2025年3月",
+      "title": "始まり：統一AI制御プレーン",
+      "description": "Plugged.inが始動。最初の基盤：知識、ツール、メモリが1つの制御プレーンの下に。Model Context Protocolサポートが開始。"
+    },
+    "stage2": {
+      "date": "2026年3月",
+      "title": "Plugged.in v3.0.0 — 組み込みRAGベクトルエンジン",
+      "description": "RAGを組み込みzvecベクトルエンジンでゼロから再構築。外部依存関係ゼロ — ドキュメントチャンキング、エンベディング、HNSW検索がすべてインプロセスで実行。知識は外部サービスではなく、組み込み機能になります。"
+    },
+    "stage3": {
+      "title": "Plugged.in v3.1.0 — 集合的ベストプラクティス",
+      "description": "エージェントがコミュニティから学習開始。CBPシステムはk-匿名性保護、HMACベースのプライバシー、コンテキスト注入により、高品質な記憶を匿名化された集合パターンに昇格します。Geminiサポート付きAIプロバイダー抽象化と共有ベクトルインフラストラクチャを含みます。"
+    },
+    "stage4": {
+      "date": "2025年10月下旬",
+      "title": "PAP — Plugged.inエージェントプロトコル（マイルストーン）",
+      "description": "PAPが制御+テレメトリーバックボーンとしてリリース。自律エージェントは今や持つ：ライフサイクル管理、ポリシーエンジン、セキュアチャネル、キルスイッチ、イベントストリーミング、クロスモデルオーケストレーション。PAPはPlugged.inを制御レイヤーから自律エージェントプラットフォームに変える。"
+    },
+    "stage5": {
+      "date": "2026年第2四半期",
+      "title": "センサー → エージェント → 認知予測自動化",
+      "description": "Plugged.inが物理世界に拡大。Raspberry Piと軽量センサーノードがストリーミング：圧力、振動、熱、音響、電圧と電流。クラウドエージェントは学習し、適応し、予測し、行動する。結果：'働くエージェント。'グローバルなエージェント対応労働力を可能にする。"
+    },
+    "outcome": {
+      "title": "認知予測自動化",
+      "line1": "現実世界のデータを分析し、パターンから学び、障害が発生する前に行動する自律エージェント。",
+      "line2": "ここがデジタルインテリジェンスと物理システムが出会う場所。"
+    },
+    "workforce": {
+      "title": "エージェント対応労働力",
+      "line1": "センサーを設置し構成する数千人の技術者。",
+      "line2": "人を置き換えるのではなく、スケールする技術。"
+    },
+    "cta": {
+      "primary": "APIキーを取得",
+      "secondary": "GitHubを表示"
+    },
+    "status": {
+      "completed": "完了",
+      "inProgress": "進行中",
+      "planned": "計画済み",
+      "future": "将来"
+    }
+  },
+  "popularServers": {
+    "badge": "最も人気",
+    "title": "トップMCPサーバー",
+    "subtitle": "コミュニティから最もインストールされ、高評価のMCPサーバーを発見",
+    "viewDetails": "詳細を見る",
+    "exploreAll": "Explore All {{count}}+ Servers"
+  },
+  "jungian": {
+    "title": "あなたと共に成長する知性",
+    "subtitle": "ユングの集合的無意識に着想を得て — AIは記憶するだけでなく、学び、統合し、進化します。",
+    "archetypes": {
+      "shadow": "影",
+      "shadowDesc": "やってはいけないことを警告 — アンチパターン、セキュリティリスク、既知の落とし穴",
+      "sage": "賢者",
+      "sageDesc": "正しいアプローチを導く — ベストプラクティス、実証済みの解決策、専門家の知恵",
+      "hero": "英雄",
+      "heroDesc": "何をすべきか示す — ワークフロー、ツールシーケンス、アクションプラン",
+      "trickster": "トリックスター",
+      "tricksterDesc": "創造的な解決策を提供 — 回避策、エッジケース、型破りな修正"
+    }
+  },
+  "terminal": {
+    "title": "設定ゼロ。すべて自動化。",
+    "subtitle": "5つのライフサイクルフックがメモリセッション全体を最初から最後まで管理します — 手動操作は不要です。",
+    "learnMore": "シンクロニシティ検出の仕組み"
+  },
+  "heroPlugin": {
+    "badge": "すべての人から学ぶAIメモリ",
+    "headline": "あなたのAIはあなたを覚えています。私たちは全員を覚えています。",
+    "subtitle": "数千人の開発者から蒸留された集合的記憶。あなたがこれから犯そうとしている間違い？誰かがもう犯しました。Plugged.inは知っています。",
+    "tagline": "個人の記憶には限界がある。集合的記憶はスーパーパワーです。",
+    "copy": "インストールコマンドをコピー",
+    "copied": "コピーしました！",
+    "setupHint": "ブラウザでサインインしてワークスペースを接続",
+    "starOnGithub": "GitHubでスターを付ける",
+    "howItWorks": "仕組み",
+    "stats": "オープンソース。永久無料。コミュニティ主導。",
+    "contrast": {
+      "title": "モデル自体のメモリだけでいいのでは？",
+      "model": {
+        "col1": "あなたのセッションだけ",
+        "col2": "コンテキストが埋まると忘れる",
+        "col3": "同じ間違いを繰り返す"
+      },
+      "pluggedin": {
+        "col1": "数千人の開発者の経験",
+        "col2": "パターンは永続的",
+        "col3": "警告してくれる：それはやめて"
+      },
+      "labels": {
+        "model": "モデルメモリ",
+        "pluggedin": "Plugged.in"
+      }
+    },
+    "proxySetupHint": "Cursor、Cline、ChatGPT、LM Studio などのためのユニバーサル MCP プロキシ",
+    "compat": "2 つのインストールパス · Claude Code 用ネイティブプラグイン · その他すべてのクライアント用ユニバーサル MCP プロキシ",
+    "tabs": {
+      "plugin": "Claude Code プラグイン",
+      "proxy": "MCP プロキシ（他のクライアント）",
+      "pluginCaption": "Claude Code · 30 秒 · ゼロコンフィグ",
+      "proxyCaption": "Cursor · Cline · ChatGPT · LM Studio · 任意の MCP クライアント",
+      "tablistLabel": "インストール方法"
+    }
+  },
+  "oneLiner": {
+    "statement": "AIが記憶する。学ぶ。進化する。",
+    "subtitle": "3つのインテリジェンスレイヤーが、すべてのAIインタラクションを白紙からコンテキスト、知恵、洞察の連続体に変えます。",
+    "personal": {
+      "title": "パーソナルメモリ",
+      "desc": "各セッションは前回の上に構築されます。AIは会話やプラットフォーム間でコンテキスト、好み、作業パターンを維持します — ゼロからのスタートはありません。"
+    },
+    "collective": {
+      "title": "集合知性",
+      "desc": "コミュニティからの匿名化されたベストプラクティスが自動的に浮上します。複数のユーザーが独立して同じ洞察を発見すると、共有の知恵になります。"
+    },
+    "archetypal": {
+      "title": "アーキタイプガイダンス",
+      "desc": "ユング心理学に触発され、AIは何をすべきか、何を避けるべきか、いつ型破りなことを試すべきかを知る繊細な判断力を発達させます。"
+    }
+  },
+  "scenarios": {
+    "title": "こんな経験ありませんか？",
+    "subtitle": "すべての開発者が経験してきたこと。違いは、一人で学ぶか、みんなから学ぶか。",
+    "bug": {
+      "title": "3時間、1つのバグ",
+      "before": "再帰クエリの無限ループ。Stack Overflowのタブ14個。ChatGPTに3回聞いて、毎回違う答え。解決した——3時間後に。",
+      "after": "「このパターンは47回観測済み。89%はbase caseの欠落が原因。」——5分。",
+      "label": "Debug時間"
+    },
+    "production": {
+      "title": "午前2時の本番障害",
+      "before": ".env.stagingの値を.env.productionにプッシュ。アラート発生。ロールバック、ポストモーテム、反省。",
+      "after": "「この設定は12回、誤って本番にデプロイされました。本当にいいですか？」——デプロイ前に。",
+      "label": "デプロイ安全性"
+    },
+    "framework": {
+      "title": "新しいフレームワーク、古い間違い",
+      "before": "新しいフレームワークを学習中。ドキュメントを読み、チュートリアルをやった。でも本番で予想外のエッジケース。",
+      "after": "「このフレームワークのよくある間違いトップ3：connection pooling、cache invalidation、missing error boundaries。」——始める前に。",
+      "label": "オンボーディング"
+    },
+    "beforeLabel": "Plugged.inなし",
+    "afterLabel": "Plugged.inあり"
+  },
+  "howItWorks": {
+    "title": "あなたのAIは、他の人が学んだことをすでに知っている",
+    "subtitle": "セットアップ不要。設定不要。パターンは自動的にあなたのAIに流れてきます。",
+    "dontDoThis": {
+      "title": "これはやめて",
+      "desc": "繰り返される間違い、アンチパターン、コミュニティの既知の罠。あなたのAIが警告してくれます——他の人がもう落ちたから。"
+    },
+    "tryThis": {
+      "title": "代わりにこれを試して",
+      "desc": "実証済みのソリューション、ベストプラクティス、コミュニティで検証されたアプローチ。一人の意見ではなく——数百人の開発者の経験。"
+    },
+    "creative": {
+      "title": "誰も試していないけど...",
+      "desc": "型破りだけど機能するソリューション。コミュニティからの創造的なアプローチ——標準的な答えを超えて。"
+    },
+    "flow": {
+      "step1": "コードを書く",
+      "step2": "パターン検出",
+      "step3": "コミュニティと照合",
+      "step4": "AIが教えてくれる"
+    }
+  },
+  "ctaPlugin": {
+    "headline": "コミュニティはもう学んだ。まだ一人で学んでいますか？",
+    "copy": "インストールコマンドをコピー",
+    "copied": "コピーしました！",
+    "setupHint": "30秒でインストール。集合的記憶に参加。",
+    "starOnGithub": "GitHubでスターを付ける",
+    "readDocs": "ドキュメント",
+    "platform": "オープンプラットフォーム",
+    "footer": "永久無料。オープンソース。あなたのパターンはプライベートのまま。"
+  },
+  "dream": {
+    "title": "ドリームプロセッシング：メモリ統合",
+    "subtitle": "睡眠中の人間の脳のように、AIが散在する断片を権威ある知識に変換し、トークンオーバーヘッドを劇的に削減します。",
+    "before": "15の断片化された記憶",
+    "after": "1つの包括的ガイド",
+    "processingLabel": "ドリームプロセッシング",
+    "consolidated": "統合済み",
+    "tokensBefore": "7,500トークン",
+    "tokensAfter": "600トークン",
+    "tokenReduction": "トークン削減",
+    "decay": "記憶は自然にステージを経て減衰し、重要なものだけが保存されます：",
+    "full": "完全",
+    "compressed": "圧縮",
+    "summary": "要約",
+    "essence": "本質",
+    "learnMore": "ドリームプロセッシングの仕組み"
+  },
+  "individuation": {
+    "title": "個性化スコア",
+    "cardLabel": "個性化スコア",
+    "subtitle": "測定可能な次元で、AIの白紙から完全に個性化された知性への成長の旅を追跡します。",
+    "bars": {
+      "memoryDepth": "メモリ深度",
+      "learningVelocity": "学習速度",
+      "collectiveContribution": "集合的貢献",
+      "selfAwareness": "自己認識"
+    },
+    "maxScore": "/100",
+    "tip": "ヒント：集合的ベストプラクティスに貢献し、リフレクションを有効にして個性化スコアを加速させましょう。",
+    "levels": {
+      "nascent": "萌芽",
+      "developing": "発展中",
+      "established": "確立",
+      "mature": "成熟",
+      "individuated": "個性化済み"
+    },
+    "teamEffect": "新しいチームメンバーは初日から集合知を受け継ぎます。",
+    "learnMore": "個性化スコアリングの仕組み"
+  },
+  "platformCapabilities": {
+    "title": "ワンプラットフォーム。あらゆるモデル。ゼロ断片化。",
+    "subtitle": "Plugged.inは2,700以上のMCPサーバー、永続メモリ、ドキュメント、ナレッジベースを単一のモデル非依存インフラに統合します — データはモデルではなく、あなたの手元に。",
+    "tagline": "1つのプラグイン。すべてのモデル。あなたのデータ。ロックインゼロ。",
+    "cards": {
+      "mcpHub": {
+        "title": "2,700以上のMCPサーバー",
+        "desc": "数千のツールサーバーを集約するユニバーサルMCPプロキシ。一度接続すれば、Claude Code、Cursor、ChatGPT、または任意のMCPクライアントから使用できます。STDIO、SSE、Streamable HTTPすべてに対応。"
+      },
+      "memory": {
+        "title": "永続メモリ",
+        "desc": "個人 + 集合メモリ。AIはあなたのセッションから学習し、何千人もの開発者が発見したパターンからも学びます。HMAC-SHA256 + k匿名性でプライバシーを保護。"
+      },
+      "knowledge": {
+        "title": "ナレッジベース (RAG)",
+        "desc": "ドキュメントをアップロードし、埋め込みベクター検索でナレッジベースを構築。インプロセスHNSWインデックス — 外部サービス不要。企業の知識に常にアクセス可能。"
+      },
+      "modelAgnostic": {
+        "title": "モデル非依存",
+        "desc": "すべてのAIモデルとプラットフォームで動作します。Claude、ChatGPT、Cursor、Cline、LM Studio — モデルを自由に切り替え、ツール、メモリ、知識はあなたと一緒に移動します。"
+      },
+      "dataOwnership": {
+        "title": "エンタープライズセキュリティ",
+        "desc": "AES-256-GCM暗号化、OAuth 2.1/PKCE、firejailサンドボックス。6回のセキュリティレビュー。SOC 2対応アーキテクチャ。"
+      },
+      "openSource": {
+        "title": "オープンソース＆セルフホスト",
+        "desc": "MITライセンス、完全オープンソース。完全な制御のために自社インフラにデプロイ。ベンダーロックインなし — AIセットアップは永久にあなたのものです。"
+      }
+    }
+  },
+  "privacy": {
+    "title": "誰もあなたのコードを見ません",
+    "subtitle": "パターンは共有されます。コードは決して。",
+    "identity": {
+      "title": "あなたの身元は消去されています",
+      "desc": "あなたの経験は一方向暗号化されています。あなたに遡ることはできません。不可逆です。"
+    },
+    "kanonymity": {
+      "title": "一人では見えない",
+      "desc": "パターンは少なくとも3人の異なる開発者が発見するまで共有されません。一人の間違いが露出することは決してありません。"
+    },
+    "temporal": {
+      "title": "時間はぼかされている",
+      "desc": "あなたが何かをした時間も匿名化されます。「火曜日の午後2:32」ではなく「今月」です。"
+    },
+    "tagline": "プライバシーは数学であり、約束ではありません。HMAC-SHA256 + k-anonymity (k>=3)。",
+    "openSource": "完全オープンソース。すべて検証可能。"
+  },
+  "mcpProxy": {
+    "badge": "ユニバーサル MCP プロキシ",
+    "title": "1 つのエンドポイント。すべての MCP サーバー。すべての AI クライアント。",
+    "subtitle": "Claude Code ユーザーではない方へ。Plugged.in のユニバーサル MCP プロキシは、Cursor、Cline、ChatGPT、LM Studio、Continue、Windsurf など、あらゆる AI クライアントを、数千の MCP サーバー、ナレッジベース、永続メモリへの統一ゲートウェイに変えます。",
+    "installLabel": "MCP プロキシのインストール",
+    "copy": "コピー",
+    "copied": "コピーしました！",
+    "compat": "Cursor · Cline · ChatGPT Desktop · LM Studio · Continue · Windsurf · あらゆる MCP 対応クライアントで動作",
+    "features": {
+      "servers": {
+        "title": "2,700+ MCP サーバー",
+        "desc": "GitHub、Slack、Notion、Linear、Postgres、Stripe、AWS、Google Drive — そして数千以上。1 つのレジストリから発見、インストール、管理。"
+      },
+      "transports": {
+        "title": "すべてのトランスポート",
+        "desc": "STDIO、Server-Sent Events (SSE)、Streamable HTTP トランスポート — すべて OAuth 2.1 トークンローテーション付きの単一プロキシエンドポイントに統合。"
+      },
+      "clients": {
+        "title": "すべての AI クライアント",
+        "desc": "Plugged.in で一度設定するだけ。同じツールセット、ナレッジ、メモリを Cursor、Cline、ChatGPT、LM Studio、あらゆる MCP 準拠クライアントで使用。"
+      },
+      "orchestration": {
+        "title": "組み込みオーケストレーション",
+        "desc": "テスト用 AI playground、リアルタイムアクティビティ監視、カスタム指示、ドキュメント交換、通知 — 後付けではなく、含まれています。"
+      }
+    },
+    "cta": {
+      "browse": "レジストリを見る",
+      "setupGuide": "セットアップガイド",
+      "getApiKey": "無料 API キーを取得"
+    }
+  }
+}

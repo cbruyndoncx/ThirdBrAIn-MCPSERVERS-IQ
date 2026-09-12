@@ -1,0 +1,705 @@
+// Security validation utilities for MCP server configurations
+
+/**
+ * Allowed URL schemes for MCP connections
+ */
+const ALLOWED_SCHEMES = ['http:', 'https:'] as const;
+
+/**
+ * Blocked hosts to prevent SSRF attacks
+ */
+const BLOCKED_HOSTS = [
+  // Localhost variations
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '::1',
+  // Private network ranges (basic patterns)
+  '10.',
+  '172.16.',
+  '172.17.',
+  '172.18.',
+  '172.19.',
+  '172.20.',
+  '172.21.',
+  '172.22.',
+  '172.23.',
+  '172.24.',
+  '172.25.',
+  '172.26.',
+  '172.27.',
+  '172.28.',
+  '172.29.',
+  '172.30.',
+  '172.31.',
+  '192.168.',
+  // Link-local
+  '169.254.',
+  // Multicast
+  '224.',
+  '225.',
+  '226.',
+  '227.',
+  '228.',
+  '229.',
+  '230.',
+  '231.',
+  '232.',
+  '233.',
+  '234.',
+  '235.',
+  '236.',
+  '237.',
+  '238.',
+  '239.',
+] as const;
+
+/**
+ * Allowed commands for STDIO MCP servers
+ * SECURITY NOTE: Direct interpreter access increases attack surface.
+ * Prefer package managers (npx, uvx) over direct interpreters when possible.
+ */
+const ALLOWED_COMMANDS = [
+  // Package managers (recommended - sandboxed execution)
+  'npx',      // Node.js package executor
+  'pnpm',     // pnpm package manager (uses dlx for execution)
+  'uvx',      // Python package executor (fast, secure)
+  'dnx',      // .NET package executor
+  'uv',       // Python package manager
+  'uvenv',    // Python virtual environment tool
+  // Direct interpreters (use with caution - less secure)
+  'node',     // Direct Node.js execution
+  'python',   // Direct Python execution
+  'python3',  // Direct Python3 execution
+] as const;
+
+/**
+ * Dangerous header names that should not be allowed
+ */
+const DANGEROUS_HEADERS = [
+  'host',
+  // 'authorization', // Allow for API authentication
+  'cookie',
+  'set-cookie',
+  'x-forwarded-for',
+  'x-real-ip',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'origin',
+  'referer',
+] as const;
+
+/**
+ * Check if an IP address is in a private range
+ */
+export function isPrivateIP(ip: string): boolean {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4) return false;
+  
+  // RFC 1918 private ranges
+  if (parts[0] === 10) return true;
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+  if (parts[0] === 192 && parts[1] === 168) return true;
+  
+  // Loopback
+  if (parts[0] === 127) return true;
+  
+  // Link-local
+  if (parts[0] === 169 && parts[1] === 254) return true;
+  
+  // Reserved
+  if (parts[0] === 0) return true;
+  
+  return false;
+}
+
+/**
+ * Whether a resolved address is anything other than globally routable unicast.
+ *
+ * Validating the hostname string is not enough on its own: a name the caller
+ * controls can be pointed anywhere, so whatever DNS actually returns has to be
+ * checked too. The test is an allowlist by inversion — blocking only RFC 1918
+ * and loopback still leaves carrier-grade NAT, multicast, the reserved and
+ * documentation ranges and the whole 240/4 block to aim at.
+ */
+export function isPrivateAddress(address: string): boolean {
+  const ip = address
+    .toLowerCase()
+    .split('%')[0] // drop any zone id
+    .replace(/^\[|\]$/g, ''); // and the brackets a URL hostname carries
+
+  if (!ip.includes(':')) {
+    return isNonGlobalIPv4(ip);
+  }
+
+  const groups = expandIPv6(ip);
+  if (!groups) {
+    return true; // unparseable is not something we connect to
+  }
+
+  // An IPv4-mapped address (::ffff:0:0/96) carries an IPv4 target inside an
+  // IPv6 one, and the socket layer connects to that IPv4. It has several
+  // spellings — ::ffff:127.0.0.1, ::ffff:7f00:1, 0:0:0:0:0:ffff:7f00:1 — and
+  // matching on the text caught only the first. Reading the groups catches all
+  // of them, because the spelling is gone by then.
+  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+    const [a, b] = [groups[6], groups[7]];
+    return isNonGlobalIPv4(`${a >> 8}.${a & 0xff}.${b >> 8}.${b & 0xff}`);
+  }
+
+  return isNonGlobalIPv6Groups(groups);
+}
+
+/**
+ * The bare IP literal in a URL hostname, or null if the host is a name.
+ *
+ * `new URL('http://[::1]/').hostname` is `[::1]`, brackets included, which is
+ * why every anchored pattern that tested the hostname directly missed IPv6
+ * entirely. Names return null: they are not addresses yet, and get checked
+ * against what DNS returns.
+ */
+export function ipLiteralFromHost(hostname: string): string | null {
+  const host = hostname.toLowerCase();
+
+  if (host.startsWith('[') && host.endsWith(']')) {
+    return host.slice(1, -1);
+  }
+
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) ? host : null;
+}
+
+/**
+ * An IPv6 address as its eight 16-bit groups, or null if it will not parse.
+ *
+ * Handles `::` compression and the embedded-IPv4 tail form, so callers can
+ * reason about the address rather than about how it happens to be written.
+ */
+function expandIPv6(ip: string): number[] | null {
+  let text = ip;
+
+  // ::ffff:127.0.0.1 — fold the dotted tail into two hex groups first.
+  const embedded = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (embedded) {
+    const octets = embedded.slice(2).map(Number);
+    if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+      return null;
+    }
+    const hi = ((octets[0] << 8) | octets[1]).toString(16);
+    const lo = ((octets[2] << 8) | octets[3]).toString(16);
+    text = `${embedded[1]}${hi}:${lo}`;
+  }
+
+  const halves = text.split('::');
+  if (halves.length > 2) {
+    return null;
+  }
+
+  const parseGroups = (part: string) =>
+    part === '' ? [] : part.split(':').map((h) => (/^[0-9a-f]{1,4}$/.test(h) ? parseInt(h, 16) : NaN));
+
+  let groups: number[];
+  if (halves.length === 2) {
+    const head = parseGroups(halves[0]);
+    const tail = parseGroups(halves[1]);
+    const missing = 8 - head.length - tail.length;
+    if (missing < 0) {
+      return null;
+    }
+    groups = [...head, ...new Array(missing).fill(0), ...tail];
+  } else {
+    groups = parseGroups(text);
+  }
+
+  if (groups.length !== 8 || groups.some((g) => !Number.isInteger(g))) {
+    return null;
+  }
+
+  return groups;
+}
+
+function isNonGlobalIPv4(ip: string): boolean {
+  const p = ip.split('.').map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+    return true; // unparseable is not something we connect to
+  }
+
+  if (p[0] === 0) return true;                                   // 0.0.0.0/8
+  if (p[0] === 10) return true;                                  // RFC 1918
+  if (p[0] === 127) return true;                                 // loopback
+  if (p[0] === 169 && p[1] === 254) return true;                 // link-local
+  if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;     // RFC 1918
+  if (p[0] === 192 && p[1] === 168) return true;                 // RFC 1918
+  if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true;    // 100.64/10 CGNAT
+  if (p[0] === 192 && p[1] === 0 && p[2] === 0) return true;     // IETF assignments
+  if (p[0] === 192 && p[1] === 0 && p[2] === 2) return true;     // TEST-NET-1
+  if (p[0] === 198 && (p[1] === 18 || p[1] === 19)) return true; // benchmarking
+  if (p[0] === 198 && p[1] === 51 && p[2] === 100) return true;  // TEST-NET-2
+  if (p[0] === 203 && p[1] === 0 && p[2] === 113) return true;   // TEST-NET-3
+  if (p[0] >= 224) return true;                                  // multicast, reserved, broadcast
+
+  return false;
+}
+
+/**
+ * The same ranges the text patterns covered, decided on the parsed groups.
+ *
+ * Prefix tests on the written form depend on the spelling: `::1` and
+ * `0:0:0:0:0:0:0:1` are one address written two ways, and only the first
+ * matched a `=== '::1'` comparison.
+ */
+function isNonGlobalIPv6Groups(g: number[]): boolean {
+  if (g.every((x) => x === 0)) return true;                          // :: unspecified
+  if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return true; // ::1 loopback
+
+  if ((g[0] & 0xfe00) === 0xfc00) return true;   // fc00::/7 unique local
+  if ((g[0] & 0xffc0) === 0xfe80) return true;   // fe80::/10 link-local
+  if ((g[0] & 0xff00) === 0xff00) return true;   // ff00::/8 multicast
+  if (g[0] === 0x2001 && g[1] === 0x0db8) return true; // 2001:db8::/32 documentation
+  if (g[0] === 0x0064 && g[1] === 0xff9b) return true; // NAT64, carries an IPv4 target
+
+  return false;
+}
+
+/**
+ * Validates a URL for MCP connections to prevent SSRF attacks
+ * 
+ * @param url - The URL to validate
+ * @param options - Validation options
+ * @param options.allowLocalhost - Allow localhost and private networks (requires explicit user consent)
+ * @param options.userConsent - User has explicitly consented to localhost access
+ * @returns Validation result with parsed URL if valid
+ */
+export function validateMcpUrl(
+  url: string,
+  options: { allowLocalhost?: boolean; userConsent?: boolean } = {}
+): { valid: boolean; error?: string; parsedUrl?: URL } {
+  try {
+    const parsedUrl = new URL(url);
+    
+    // Check scheme
+    if (!ALLOWED_SCHEMES.includes(parsedUrl.protocol as any)) {
+      return {
+        valid: false,
+        error: `Invalid URL scheme: ${parsedUrl.protocol}. Only HTTP and HTTPS are allowed.`
+      };
+    }
+    
+    // NEVER auto-allow based on NODE_ENV - require explicit user consent
+    const allowLocalhost = options.allowLocalhost && options.userConsent;
+    
+    // Skip host blocking if localhost is allowed with user consent
+    if (!allowLocalhost) {
+      // A trailing dot root-qualifies a name — `localhost.` and `localhost`
+      // reach the same host, but only one matches a string comparison.
+      const hostname = parsedUrl.hostname.toLowerCase().replace(/\.+$/, '');
+      
+      // Enhanced IP address validation
+      // Check if hostname is an IP address
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
+        if (isPrivateIP(hostname)) {
+          return {
+            valid: false,
+            error: 'Private IP addresses are not allowed without explicit consent'
+          };
+        }
+      }
+      
+      // Check exact matches
+      if (BLOCKED_HOSTS.includes(hostname as any)) {
+        return {
+          valid: false,
+          error: `Blocked hostname: ${hostname}. Private networks and localhost are not allowed.`
+        };
+      }
+      
+      // Check IP address patterns
+      for (const blockedPattern of BLOCKED_HOSTS) {
+        if (hostname.startsWith(blockedPattern)) {
+          return {
+            valid: false,
+            error: `Blocked hostname pattern: ${hostname}. Private networks are not allowed.`
+          };
+        }
+      }
+      
+      // Any IP literal, v4 or v6, decided on the parsed address rather than on
+      // how it is spelled. The previous check compared the hostname against
+      // '::1' and a few prefixes, and a URL hostname carries brackets — so
+      // `http://[::1]/` never matched, nor did any IPv4-mapped form
+      // (GHSA-gmhc-h765-37cg).
+      const literal = ipLiteralFromHost(hostname);
+      if (literal && isPrivateAddress(literal)) {
+        return {
+          valid: false,
+          error: `Blocked address: ${hostname}. Private networks are not allowed.`
+        };
+      }
+      
+      // Block common metadata endpoints (cloud providers)
+      const blockedEndpoints = [
+        '169.254.169.254', // AWS metadata
+        'metadata.google.internal', // GCP metadata
+        'metadata.azure.com', // Azure metadata
+      ];
+      
+      if (blockedEndpoints.includes(hostname)) {
+        return {
+          valid: false,
+          error: 'Cloud metadata endpoints are not allowed'
+        };
+      }
+    }
+    
+    // Check port ranges (always validate ports for security)
+    const port = parsedUrl.port ? parseInt(parsedUrl.port, 10) : (parsedUrl.protocol === 'https:' ? 443 : 80);
+    
+    // Allow wider port range in development
+    const minPort = allowLocalhost ? 1 : 80;
+    if (port < minPort || (port > 65535)) {
+      return {
+        valid: false,
+        error: `Invalid port: ${port}. Only ports ${minPort}-65535 are allowed.`
+      };
+    }
+    
+    // Block common internal service ports (unless localhost is allowed)
+    if (!allowLocalhost) {
+      const blockedPorts = [22, 23, 25, 53, 110, 143, 993, 995, 1433, 1521, 3306, 5432, 6379, 27017];
+      if (blockedPorts.includes(port)) {
+        return {
+          valid: false,
+          error: `Blocked port: ${port}. This port is commonly used for internal services.`
+        };
+      }
+    }
+    
+    return { valid: true, parsedUrl };
+  } catch (error) {
+    return {
+      valid: false,
+      error: `Invalid URL format: ${error instanceof Error ? error.message : 'Unknown error'}`
+    };
+  }
+}
+
+/**
+ * Validates custom headers to prevent header injection attacks
+ */
+export function validateHeaders(headers: Record<string, string>): { valid: boolean; error?: string; sanitizedHeaders?: Record<string, string> } {
+  const sanitizedHeaders: Record<string, string> = {};
+  
+  for (const [name, value] of Object.entries(headers)) {
+    const lowerName = name.toLowerCase();
+    
+    // Check for dangerous headers
+    if (DANGEROUS_HEADERS.includes(lowerName as any)) {
+      return {
+        valid: false,
+        error: `Dangerous header not allowed: ${name}`
+      };
+    }
+    
+    // Validate header name (RFC 7230)
+    if (!/^[a-zA-Z0-9!#$&'*+\-.^_`|~]+$/.test(name)) {
+      return {
+        valid: false,
+        error: `Invalid header name: ${name}. Header names must contain only valid characters.`
+      };
+    }
+    
+    // Validate header value (basic validation)
+    if (typeof value !== 'string') {
+      return {
+        valid: false,
+        error: `Invalid header value for ${name}: must be a string`
+      };
+    }
+    
+    // Check for control characters in header value
+    if (/[\r\n\0]/.test(value)) {
+      return {
+        valid: false,
+        error: `Invalid header value for ${name}: contains control characters`
+      };
+    }
+    
+    // Limit header value length
+    if (value.length > 8192) {
+      return {
+        valid: false,
+        error: `Header value too long for ${name}: maximum 8192 characters allowed`
+      };
+    }
+    
+    sanitizedHeaders[name] = value;
+  }
+  
+  return { valid: true, sanitizedHeaders };
+}
+
+/**
+ * Validates STDIO commands against an allowlist
+ */
+export function validateCommand(command: string): { valid: boolean; error?: string } {
+  if (!command || typeof command !== 'string') {
+    return {
+      valid: false,
+      error: 'Command must be a non-empty string'
+    };
+  }
+  
+  // Check against allowlist
+  if (!ALLOWED_COMMANDS.includes(command as any)) {
+    return {
+      valid: false,
+      error: `Command not allowed: ${command}. Allowed commands: ${ALLOWED_COMMANDS.join(', ')}`
+    };
+  }
+  
+  // Additional validation for command injection
+  if (/[;&|`$(){}[\]<>]/.test(command)) {
+    return {
+      valid: false,
+      error: `Command contains dangerous characters: ${command}`
+    };
+  }
+  
+  return { valid: true };
+}
+
+/**
+ * Validates command arguments to prevent injection
+ */
+export function validateCommandArgs(args: string[]): { valid: boolean; error?: string; sanitizedArgs?: string[] } {
+  if (!Array.isArray(args)) {
+    return {
+      valid: false,
+      error: 'Arguments must be an array'
+    };
+  }
+  
+  const sanitizedArgs: string[] = [];
+  
+  for (const arg of args) {
+    if (typeof arg !== 'string') {
+      return {
+        valid: false,
+        error: 'All arguments must be strings'
+      };
+    }
+    
+    // Basic validation - no null bytes or extreme lengths
+    if (arg.includes('\0')) {
+      return {
+        valid: false,
+        error: 'Arguments cannot contain null bytes'
+      };
+    }
+    
+    if (arg.length > 4096) {
+      return {
+        valid: false,
+        error: 'Argument too long: maximum 4096 characters allowed'
+      };
+    }
+
+    // Deliberately no shell-metacharacter check here. Args are handed to the
+    // spawned process as argv - StdioClientTransport and the bubblewrap/firejail
+    // wrappers all pass arrays, and nothing on the path uses a shell - so a
+    // metacharacter in an arg is inert, and it is routinely legitimate:
+    // `--config '{"KEY":"value"}'` is how most servers take their settings.
+    //
+    // The value that *was* dangerous is the package name the installer lifts
+    // out of these args and passes to pnpm/uv/docker. That is validated by
+    // grammar in lib/security/package-name.ts, at the point of use. Rejecting
+    // metacharacters across every arg protects nothing beyond that and breaks
+    // real configurations.
+
+    sanitizedArgs.push(arg);
+  }
+  
+  return { valid: true, sanitizedArgs };
+} 
+/** Interpreters that will run whatever their options tell them to. */
+const DIRECT_INTERPRETERS = ['node', 'python', 'python3'];
+
+/**
+ * The package executors, and the only options an imported definition may pass
+ * to one.
+ *
+ * They are not a way around the rule above: `npx --node-options='--require …'`
+ * reaches the same place by a longer road, as does `uv run --with`. So the
+ * options are an allowlist too — the handful that answer a prompt or quieten
+ * output, and nothing that decides what gets loaded.
+ */
+const PACKAGE_EXECUTORS = ['npx', 'pnpm', 'uvx', 'uv', 'uvenv', 'dnx'];
+
+/**
+ * The subcommand each executor must be given, where it has one.
+ *
+ * Restricting options is not enough on its own: `uv run <anything>` and
+ * `pnpm exec <anything>` carry no flag at all and run whatever they are handed.
+ * So the *shape* of the invocation is allowlisted — for these two the first
+ * positional has to be the package-running subcommand, and for the rest the
+ * first positional is the package itself.
+ */
+const EXECUTOR_SUBCOMMANDS: Record<string, string[]> = {
+  uv: ['tool', 'run'], // the whole sequence: `uv tool install` is not this
+  pnpm: ['dlx'],
+};
+const EXECUTOR_SAFE_OPTIONS = new Set([
+  '-y',
+  '--yes',
+  '-q',
+  '--quiet',
+  '--silent',
+  '--no-install',
+  '-p',
+]);
+
+/**
+ * Environment variables that change what a process executes before its own code
+ * runs. NODE_OPTIONS carries --require and --import; the PYTHON* ones inject
+ * import paths and startup scripts; LD_PRELOAD predates all of it.
+ */
+const EXECUTION_ALTERING_ENV = [
+  'NODE_OPTIONS',
+  'NODE_REPL_EXTERNAL_MODULE',
+  'PYTHONSTARTUP',
+  'PYTHONPATH',
+  'PYTHONHOME',
+  'PYTHONEXECUTABLE',
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+];
+
+/**
+ * Extra restrictions for a server arriving from somebody else's shared content.
+ *
+ * Running `node -e '<code>'` as *yourself* is not a vulnerability — running
+ * local MCP servers is what this product does, and validateCommandArgs
+ * deliberately permits metacharacters because args are passed as argv and never
+ * through a shell. An imported server is different: the definition comes from a
+ * collection or share that anyone can publish, and it lands ACTIVE in the
+ * importer's profile. There, anything that decides what the interpreter runs is
+ * arbitrary code execution as another user.
+ *
+ * Both rules below are allowlists by shape rather than lists of dangerous
+ * names. A denylist invites smuggling — `-e`, `--eval=`, `-m`, `--require`,
+ * `--loader`, `--import`, bundled short flags like `-pe`, and whatever the next
+ * runtime release adds — while a shared definition has no legitimate reason to
+ * pass interpreter options at all. `node ./server.js` imports; `node` with any
+ * option does not.
+ */
+export function validateImportedCommand(
+  command: string | null | undefined,
+  args: unknown
+): { valid: boolean; error?: string } {
+  if (!command) {
+    return { valid: true };
+  }
+
+  if (PACKAGE_EXECUTORS.includes(command)) {
+    return validateImportedExecutorOptions(command, args);
+  }
+
+  if (!DIRECT_INTERPRETERS.includes(command)) {
+    return { valid: true };
+  }
+
+  const list = Array.isArray(args) ? args : [];
+  for (const arg of list) {
+    if (typeof arg === 'string' && arg.startsWith('-')) {
+      return {
+        valid: false,
+        error: `An imported server may not pass options to ${command} (got ${arg})`,
+      };
+    }
+  }
+
+  // An interpreter with nothing to run opens a REPL and never exits, so every
+  // such import leaves a process behind on the host.
+  if (list.length === 0) {
+    return { valid: false, error: `An imported ${command} server must name a script to run` };
+  }
+
+  return { valid: true };
+}
+
+/** As above, for the package executors, which take a few benign options. */
+function validateImportedExecutorOptions(
+  command: string,
+  args: unknown
+): { valid: boolean; error?: string } {
+  const list = Array.isArray(args) ? args : [];
+
+  for (const arg of list) {
+    if (typeof arg !== 'string' || !arg.startsWith('-')) continue;
+
+    // `--node-options=...` and friends carry their payload after an `=`.
+    const option = arg.split('=')[0];
+    if (!EXECUTOR_SAFE_OPTIONS.has(option)) {
+      return {
+        valid: false,
+        error: `An imported server may not pass ${option} to ${command}`,
+      };
+    }
+  }
+
+  const required = EXECUTOR_SUBCOMMANDS[command];
+  if (required) {
+    // The whole sequence has to match, in order. Checking only the first token
+    // let `uv tool install <package>` through, which is not running a package.
+    const positionals = list.filter(
+      (arg): arg is string => typeof arg === 'string' && !arg.startsWith('-')
+    );
+
+    const matches = required.every((token, index) => positionals[index] === token);
+    if (!matches) {
+      return {
+        valid: false,
+        error: `An imported server must invoke ${command} as \`${command} ${required.join(' ')}\``,
+      };
+    }
+
+    if (positionals.length <= required.length) {
+      return { valid: false, error: `An imported ${command} server must name a package` };
+    }
+  } else if (
+    !list.some((arg) => typeof arg === 'string' && !arg.startsWith('-'))
+  ) {
+    return { valid: false, error: `An imported ${command} server must name a package` };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * The environment of a server arriving from somebody else's shared content.
+ *
+ * The command allowlist is worth nothing if the environment can tell the
+ * interpreter what to load: `NODE_OPTIONS=--require=/tmp/x.js` runs before the
+ * server's own entry point, and LD_PRELOAD does the same a layer down.
+ */
+export function validateImportedEnv(env: unknown): { valid: boolean; error?: string } {
+  if (env === undefined || env === null) {
+    return { valid: true };
+  }
+
+  if (typeof env !== 'object' || Array.isArray(env)) {
+    return { valid: false, error: 'Environment must be an object' };
+  }
+
+  for (const key of Object.keys(env as Record<string, unknown>)) {
+    if (EXECUTION_ALTERING_ENV.includes(key.toUpperCase())) {
+      return {
+        valid: false,
+        error: `An imported server may not set ${key}`,
+      };
+    }
+  }
+
+  return { valid: true };
+}

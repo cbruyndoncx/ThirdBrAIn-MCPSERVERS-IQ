@@ -1,0 +1,136 @@
+{
+  "install": {
+    "title": "安装服务器",
+    "description": "配置并安装此 MCP 服务器。",
+    "name": "服务器名称",
+    "command": "命令",
+    "args": "参数（空格分隔）",
+    "env": "环境变量",
+    "url": "服务器 URL",
+    "successDescription": "服务器安装成功",
+    "errorDescription": "服务器安装失败"
+  },
+  "common": {
+    "or": "或",
+    "error": "错误",
+    "success": "成功",
+    "releaseCandidate": "发布候选版本 v{{version}}",
+    "validation": {
+      "required": "此字段为必填项",
+      "email": "请输入有效的电子邮件地址",
+      "minLength": "必须至少包含 {{count}} 个字符",
+      "maxLength": "最多只能包含 {{count}} 个字符",
+      "passwordMatch": "密码必须匹配"
+    },
+    "save": "保存",
+    "previous": "上一个",
+    "next": "下一个",
+    "page": "第 {{page}} 页",
+    "saving": "保存中...",
+    "remove": "移除",
+    "removing": "移除中...",
+    "cancel": "取消",
+    "confirm": "确认",
+    "confirmDelete": "您确定要删除吗？",
+    "errors": {
+      "unexpected": "发生意外错误。请重试。",
+      "pageNotFound": "页面未找到",
+      "pageNotFoundMessage": "您寻找的连接似乎已断开或不存在。"
+    },
+    "loading": "加载中...",
+    "notAvailable": "不适用",
+    "saveChanges": "保存更改",
+    "backToServerList": "返回服务器列表",
+    "viewSchema": "查看模式",
+    "delete": "删除",
+    "deleting": "删除中...",
+    "pluggedinLogo": "plugged.in 标志",
+    "install": "安装",
+    "installing": "正在安装...",
+    "back": "返回",
+    "viewAll": "查看全部"
+  },
+  "actions": {
+    "goHome": "返回首页",
+    "login": "登录",
+    "playground": "游乐场"
+  },
+  "library": {
+    "title": "资料库"
+  },
+  "memory": {
+    "title": "内存"
+  },
+  "dashboard": {
+    "title": "仪表板"
+  },
+  "analytics": {
+    "title": "分析"
+  },
+  "projects": {
+    "loading": "Loading Projects...",
+    "loadingHubs": "Loading Hubs...",
+    "hubs": "Hubs",
+    "switchingHub": "Switching Hub...",
+    "searchHubs": "Search hubs...",
+    "noHubFound": "No hub found.",
+    "createHub": "Create Hub",
+    "createHubDialog": {
+      "title": "Create Hub",
+      "description": "Add a new hub to organize your work.",
+      "hubName": "Hub name",
+      "placeholder": "Enter hub name",
+      "creating": "Creating...",
+      "create": "Create"
+    }
+  },
+  "releaseNotes": {
+    "title": "发布说明",
+    "description": "跟踪我们存储库中的最新更新和更改",
+    "filters": {
+      "filterBy": "按存储库筛选",
+      "all": "所有存储库",
+      "allDesc": "显示所有存储库的发布",
+      "app": "pluggedin-app",
+      "appDesc": "AI数据、记忆和工具交汇处的界面 — 连接模型、人类和机器",
+      "mcp": "pluggedin-mcp",
+      "mcpDesc": "TypeScript MCP代理服务器 - MCP客户端的统一接口",
+      "registryProxy": "registry-proxy",
+      "registryProxyDesc": "增强的MCP注册表基础架构，具有过滤和缓存功能",
+      "pythonSdk": "Python SDK",
+      "pythonSdkDesc": "Plugged.in API的Python SDK，支持同步/异步客户端",
+      "goSdk": "Go SDK",
+      "goSdkDesc": "Plugged.in API的Go SDK，具有完整的类型安全性",
+      "jsSdk": "JavaScript/TypeScript SDK",
+      "jsSdkDesc": "Plugged.in API集成的JavaScript/TypeScript SDK",
+      "docs": "文档",
+      "docsDesc": "由Mintlify提供支持的官方文档网站"
+    },
+    "changeTypes": {
+      "feature": "功能",
+      "bugfix": "错误修复",
+      "performanceimprovement": "性能改进",
+      "breakingchange": "重大更改",
+      "other": "其他更改"
+    },
+    "viewCommit": "查看提交",
+    "noDetails": "此版本未列出具体更改。",
+    "viewOnGitHub": "在 GitHub 上查看",
+    "loadMore": "加载更多",
+    "loading": "正在加载发布...",
+    "error": "加载发布说明失败",
+    "retry": "重试",
+    "noReleases": "未找到发布",
+    "noReleasesTitle": "无可用发布说明",
+    "noReleasesText": "当前没有可显示的发布说明。",
+    "noSearchResultsTitle": "未找到结果",
+    "noSearchResultsText": "没有发布说明符合您的搜索条件。",
+    "noResultsOnPage": "此页面无结果",
+    "noResultsOnPageText": "第 {{page}} 页没有结果。使用分页控件导航到其他页面。",
+    "rssFeed": "通过 RSS 订阅",
+    "search": {
+      "placeholder": "搜索发布说明..."
+    },
+    "refresh": "刷新发布"
+  }
+}

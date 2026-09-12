@@ -1,0 +1,312 @@
+{
+  "title": "メモリ",
+  "description": "AIエージェントのクリップボードデータ、長期メモリ、手順、フレッシュコンテキストを管理します。",
+  "refresh": "更新",
+  "comingSoon": "近日公開",
+  "stats": {
+    "clipboard": "クリップボード",
+    "entries": "エントリ",
+    "storage": "ストレージ",
+    "used": "使用中",
+    "expiring": "期限切れ予定",
+    "today": "今日",
+    "types": "タイプ",
+    "contentTypes": "コンテンツタイプ",
+    "sessions": "セッション",
+    "active": "アクティブ",
+    "memories": "メモリ",
+    "inRings": "リング内",
+    "fresh": "フレッシュ",
+    "unclassified": "未分類",
+    "patterns": "パターン",
+    "collective": "集合的"
+  },
+  "tabs": {
+    "clipboard": "クリップボード",
+    "longterm": "長期",
+    "procedures": "手順",
+    "fresh": "フレッシュ",
+    "collective": "コレクティブ"
+  },
+  "clipboard": {
+    "empty": {
+      "title": "クリップボードエントリがありません",
+      "description": "pluggedin_clipboard_setやplugged_clipboard_pushなどのMCPツールを使用してエントリを追加してください。"
+    },
+    "createEntry": "エントリ作成",
+    "named": "名前付きエントリ",
+    "indexed": "インデックス付きエントリ",
+    "clearAll": "すべてクリア",
+    "viewMode": {
+      "table": "テーブル",
+      "grid": "グリッド"
+    },
+    "table": {
+      "name": "名前",
+      "index": "インデックス",
+      "type": "タイプ",
+      "value": "値",
+      "size": "サイズ",
+      "expires": "有効期限",
+      "actions": "アクション"
+    },
+    "actions": {
+      "preview": "プレビュー",
+      "copy": "コピー",
+      "edit": "編集",
+      "delete": "削除"
+    },
+    "form": {
+      "createTitle": "クリップボードエントリを作成",
+      "editTitle": "クリップボードエントリを編集",
+      "createDescription": "クリップボードメモリに新しいエントリを追加します。",
+      "editDescription": "クリップボードエントリの詳細を更新します。",
+      "name": "名前",
+      "namePlaceholder": "例: api_key, user_preferences",
+      "nameHelp": "このエントリの一意の識別子",
+      "value": "値",
+      "valuePlaceholder": "コンテンツを入力...",
+      "contentType": "コンテンツタイプ",
+      "encoding": "エンコーディング",
+      "visibility": "公開範囲",
+      "visibilityPrivate": "プライベート（自分のみ）",
+      "visibilityWorkspace": "ワークスペース（チームメンバー）",
+      "visibilityPublic": "パブリック（全員）",
+      "ttl": "有効期限",
+      "minutes": "分",
+      "hour": "時間",
+      "hours": "時間",
+      "days": "日",
+      "cancel": "キャンセル",
+      "create": "エントリ作成",
+      "update": "エントリ更新",
+      "saving": "保存中...",
+      "uploadFile": "ファイルをアップロード",
+      "dropzoneText": "ここにファイルをドロップするか、クリックして参照",
+      "dropzoneHint": "画像、PDF、JSON、テキストファイル（最大 {{maxSize}}）",
+      "fileTooLarge": "ファイルが大きすぎます。最大サイズは {{maxSize}} です",
+      "fileUploaded": "ファイルがアップロードされました（{{size}}）",
+      "fileReadError": "ファイルの読み取りに失敗しました",
+      "or": "またはテキストを入力"
+    },
+    "deleteDialog": {
+      "title": "クリップボードエントリを削除",
+      "description": "\"{{identifier}}\"を削除してもよろしいですか？この操作は元に戻せません。",
+      "delete": "削除",
+      "deleting": "削除中...",
+      "cancel": "キャンセル"
+    },
+    "clearAllDialog": {
+      "title": "すべてのクリップボードエントリをクリア",
+      "description": "{{count}}件のクリップボードエントリをすべて削除してもよろしいですか？この操作は元に戻せません。",
+      "clear": "すべてクリア",
+      "clearing": "クリア中...",
+      "cancel": "キャンセル"
+    },
+    "preview": {
+      "unsafeImageType": "画像をプレビューできません：セキュリティ上の理由でサポートされていないコンテンツタイプです。",
+      "contentType": "コンテンツタイプ",
+      "details": "詳細",
+      "source": "ソース",
+      "sourceUi": "UI",
+      "sourceSdk": "SDK",
+      "sourceMcp": "MCP",
+      "visibility": "可視性",
+      "encoding": "エンコーディング",
+      "createdAt": "作成日時",
+      "updatedAt": "更新日時",
+      "expiresAt": "有効期限",
+      "createdBy": "作成者",
+      "tool": "ツール",
+      "model": "モデル",
+      "noExpiration": "無期限"
+    },
+    "toast": {
+      "copied": "クリップボードにコピーしました",
+      "copyFailed": "クリップボードへのコピーに失敗しました",
+      "cannotCopyBinary": "バイナリコンテンツはシステムクリップボードにコピーできません",
+      "deleted": "エントリを削除しました",
+      "deleteFailed": "エントリの削除に失敗しました",
+      "clearedAll": "すべてのエントリをクリアしました",
+      "clearAllFailed": "すべてのエントリのクリアに失敗しました",
+      "created": "エントリを作成しました",
+      "updated": "エントリを更新しました",
+      "saveFailed": "エントリの保存に失敗しました"
+    }
+  },
+  "longterm": {
+    "title": "長期メモリ",
+    "description": "セッションや会話を超えて持続する永続的なメモリ。",
+    "searchPlaceholder": "意味的にメモリを検索...",
+    "search": "検索",
+    "empty": {
+      "title": "メモリがまだありません",
+      "description": "メモリはセッション中に分類された観察から作成されます。"
+    },
+    "table": {
+      "ring": "リング",
+      "content": "内容",
+      "decay": "減衰",
+      "relevance": "関連性",
+      "hits": "ヒット",
+      "actions": "アクション"
+    },
+    "detail": {
+      "title": "メモリ詳細",
+      "fullContent": "完全なコンテンツ",
+      "summary": "要約",
+      "essence": "エッセンス",
+      "relevance": "関連性",
+      "successScore": "成功スコア",
+      "reinforcements": "強化回数",
+      "tokens": "トークン",
+      "accessCount": "アクセス回数",
+      "created": "作成日",
+      "lastAccessed": "最終アクセス",
+      "tags": "タグ"
+    },
+    "deleteDialog": {
+      "title": "メモリを削除",
+      "description": "このメモリを削除してもよろしいですか？この操作は元に戻せません。",
+      "delete": "削除",
+      "cancel": "キャンセル"
+    }
+  },
+  "procedures": {
+    "title": "手順",
+    "description": "過去のやり取りから学習した再利用可能なワークフローと手順。",
+    "searchPlaceholder": "手順を検索...",
+    "search": "検索",
+    "empty": {
+      "title": "手順がまだありません",
+      "description": "手順はセッション内の繰り返される成功パターンから学習されます。"
+    },
+    "detail": {
+      "title": "手順の詳細",
+      "fullContent": "完全なコンテンツ",
+      "summary": "要約",
+      "relevance": "関連性",
+      "reinforcements": "強化回数",
+      "accessCount": "アクセス回数",
+      "tokens": "トークン",
+      "created": "作成日"
+    },
+    "deleteDialog": {
+      "title": "手順を削除",
+      "description": "この手順を削除してもよろしいですか？この操作は元に戻せません。",
+      "delete": "削除",
+      "cancel": "キャンセル"
+    }
+  },
+  "fresh": {
+    "title": "フレッシュコンテキスト",
+    "description": "現在の会話からの最近のコンテキストとワーキングメモリ。",
+    "observations": "観察",
+    "status": {
+      "active": "アクティブ",
+      "completed": "完了",
+      "abandoned": "放棄"
+    },
+    "zReport": "Z-レポート",
+    "zReportSummary": "セッション要約（Z-レポート）",
+    "noSummary": "要約がありません",
+    "observationDetails": "観察の詳細",
+    "noObservations": "観察が読み込まれていません",
+    "pending": "保留中",
+    "tokens": "トークン",
+    "createdAt": "作成日時",
+    "empty": {
+      "title": "セッションがまだありません",
+      "description": "セッションはエージェントが pluggedin_memory_session_start を使用すると作成されます。"
+    },
+    "table": {
+      "type": "タイプ",
+      "content": "内容",
+      "outcome": "結果",
+      "classified": "分類",
+      "actions": "アクション"
+    },
+    "filter": {
+      "all": "すべてのセッション"
+    },
+    "prune": "古いものを削除",
+    "pruneConfirm": "24時間以上前の放棄されたセッションを削除しますか？この操作は元に戻せません。",
+    "pagination": {
+      "prev": "前へ",
+      "next": "次へ",
+      "page": "ページ {{page}}"
+    }
+  },
+  "collective": {
+    "title": "コレクティブベストプラクティス",
+    "description": "コミュニティから匿名で集約されたパターン。",
+    "searchPlaceholder": "コレクティブパターンを検索...",
+    "search": "検索",
+    "noResults": "パターンが見つかりません",
+    "noResultsDescription": "別の検索クエリをお試しください。",
+    "empty": {
+      "title": "集合知",
+      "description": "ベストプラクティス、エラー解決策、落とし穴についてコミュニティパターンを検索します。"
+    },
+    "stats": {
+      "totalPatterns": "表示パターン",
+      "verified": "保留中",
+      "contributors": "貢献者",
+      "contributions": "貢献"
+    },
+    "table": {
+      "type": "タイプ",
+      "pattern": "パターン",
+      "confidence": "信頼度",
+      "seen": "出現回数",
+      "rating": "評価",
+      "actions": "アクション"
+    },
+    "feedback": {
+      "helpful": "役に立ったとマーク",
+      "inaccurate": "不正確とマーク"
+    }
+  },
+  "jungian": {
+    "title": "ユング的知能",
+    "individuation": {
+      "title": "個性化スコア",
+      "level": "成熟度レベル",
+      "trend": "週間トレンド",
+      "memoryDepth": "記憶の深さ",
+      "learningVelocity": "学習速度",
+      "collectiveContribution": "集合的貢献",
+      "selfAwareness": "自己認識",
+      "nascent": "萌芽期",
+      "developing": "発展中",
+      "established": "確立済み",
+      "mature": "成熟",
+      "individuated": "個性化済み",
+      "accelerating": "加速中",
+      "stable": "安定",
+      "decelerating": "減速中"
+    },
+    "archetypes": {
+      "shadow": "影",
+      "sage": "賢者",
+      "hero": "英雄",
+      "trickster": "トリックスター",
+      "shadowDesc": "やってはいけないこと",
+      "sageDesc": "正しいアプローチ",
+      "heroDesc": "これを実行",
+      "tricksterDesc": "創造的な解決策"
+    },
+    "dreams": {
+      "title": "夢の処理",
+      "consolidated": "統合済み",
+      "tokenSavings": "トークン節約",
+      "clusters": "発見されたクラスター"
+    },
+    "synchronicity": {
+      "title": "シンクロニシティパターン",
+      "coOccurrence": "共起",
+      "failureCorrelation": "障害相関",
+      "emergentWorkflow": "創発的ワークフロー"
+    }
+  }
+}

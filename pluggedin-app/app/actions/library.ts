@@ -1,0 +1,1089 @@
+'use server';
+
+import { and, desc, eq, isNull } from 'drizzle-orm';
+import { mkdirSync, realpathSync } from 'fs';
+import { mkdir, unlink, writeFile } from 'fs/promises';
+import { isRedirectError } from 'next/dist/client/components/redirect-error';
+import { getServerSession } from 'next-auth';
+import * as path from 'path';
+import { z } from 'zod';
+
+import { db } from '@/db';
+import { docsTable } from '@/db/schema';
+import { authOptions } from '@/lib/auth';
+import { withProfileAuth } from '@/lib/auth-helpers';
+import {
+  askKnowledgeBaseFor,
+  getDocByUuidFor,
+  getDocsFor,
+  getDocumentVersionsFor,
+  getProjectStorageUsageFor,
+  updateDocRagIdFor,
+  WORKSPACE_STORAGE_LIMIT,
+} from '@/lib/library/queries';
+import { isRagSupported } from '@/lib/rag/constants';
+import { extractTextFromFile } from '@/lib/rag/text-extract';
+import { ragService } from '@/lib/rag-service';
+import { buildSecurePath, getSecureBaseUploadDir,validatePathComponent } from '@/lib/secure-path-builder';
+import type {
+  Doc,
+  DocDeleteResponse,
+  DocListResponse,
+  DocUploadResponse
+} from '@/types/library';
+
+// Create uploads directory if it doesn't exist
+// Use environment variable or fallback to platform-specific paths
+const UPLOADS_BASE_DIR = getSecureBaseUploadDir();
+
+/**
+ * Sanitize path components to prevent path injection attacks
+ * Uses centralized validatePathComponent for consistent security
+ */
+function sanitizePath(pathComponent: string): string {
+  // Use centralized validation which is stricter than custom sanitization
+  return validatePathComponent(pathComponent);
+}
+
+/**
+ * Check if child path is contained within parent path
+ * Handles path separators and prevents directory traversal
+ */
+function isSubPath(parent: string, child: string): boolean {
+  const rel = child.slice(parent.length);
+  return (
+    child === parent ||
+    (child.startsWith(parent + path.sep) && !rel.includes('..'))
+  );
+}
+
+/**
+ * Safely create a file path within the uploads directory
+ * Validates that the final path is within the allowed directory using real paths
+ */
+function createSafeFilePath(userId: string, fileName: string): { userDir: string; filePath: string; relativePath: string } {
+  const sanitizedUserId = sanitizePath(userId);
+  const sanitizedFileName = sanitizePath(fileName);
+
+  // Create paths using secure path builder
+  const userDir = buildSecurePath(UPLOADS_BASE_DIR, sanitizedUserId);
+  const filePath = buildSecurePath(userDir, sanitizedFileName);
+  const relativePath = `${sanitizedUserId}/${sanitizedFileName}`;
+
+  // Use cached resolved uploads directory from startup
+  const resolvedUploadsDir = global.RESOLVED_UPLOADS_DIR || realpathSync(UPLOADS_BASE_DIR);
+
+  // Security validation: Ensure sanitized userDir is within UPLOADS_BASE_DIR before creation
+  // This prevents path traversal attacks even though sanitizePath has already removed '../'
+  if (!userDir.startsWith(UPLOADS_BASE_DIR + path.sep)) {
+    console.warn(`Security: User directory path validation failed for userId: ${sanitizedUserId}`);
+    throw new Error('Invalid user directory path');
+  }
+
+  // Ensure user directory exists before resolving symlinks
+  // Note: userDir is constructed from sanitizedUserId which has been validated:
+  // - No '..' sequences (path traversal removed)
+  // - No path separators (/ and \ replaced with _)
+  // - No null bytes, normalized unicode
+  try {
+    mkdirSync(userDir, { recursive: true });
+  } catch (err) {
+    // Log sanitized error
+    console.error('Error creating user directory');
+    throw new Error('Failed to prepare upload directory');
+  }
+
+  // Resolve real paths to handle symlinks and prevent path traversal attacks
+  let resolvedUserDir: string;
+  let resolvedFilePath: string;
+
+  try {
+    // Resolve user directory with symlink resolution to detect attacks
+    resolvedUserDir = realpathSync(userDir);
+    // Build file path from resolved user directory using secure path builder
+    resolvedFilePath = buildSecurePath(resolvedUserDir, sanitizedFileName);
+  } catch (err) {
+    // Log sanitized error internally
+    console.error('Error resolving paths');
+    // Return generic error to prevent information disclosure
+    throw new Error('Invalid path configuration');
+  }
+
+  // Validate that resolved paths are within the uploads directory (prevent directory traversal)
+  if (!isSubPath(resolvedUploadsDir, resolvedUserDir)) {
+    console.warn(`Path traversal attempt detected: user directory outside uploads`);
+    throw new Error('Invalid user directory path');
+  }
+
+  if (!isSubPath(resolvedUserDir, resolvedFilePath)) {
+    console.warn(`Path traversal attempt detected: file path outside user directory`);
+    throw new Error('Invalid file path');
+  }
+  
+  return { userDir, filePath, relativePath };
+}
+
+/**
+ * Document reads for browser callers.
+ *
+ * These take no user id. Every export here is a public HTTP endpoint, so a
+ * `userId` parameter would let any caller name whose documents to read — which
+ * is what getDocs -> getDocumentVersions allowed, all the way to content_diff.
+ * The implementations live in lib/library/queries.ts for callers that have
+ * already established an identity of their own.
+ */
+/**
+ * The session user, or null.
+ *
+ * These wrappers replaced implementations that caught everything, so a
+ * session-store or adapter failure has to keep producing the documented
+ * failure shape rather than turning a document read into a rejected server
+ * action.
+ */
+async function sessionUserId(): Promise<string | null> {
+  try {
+    const session = await getServerSession(authOptions);
+    return session?.user?.id ?? null;
+  } catch (error) {
+    console.error('Failed to resolve the session:', error);
+    return null;
+  }
+}
+
+export async function getDocs(projectUuid?: string): Promise<DocListResponse> {
+  const userId = await sessionUserId();
+  if (!userId) {
+    return { success: false, error: 'Authentication required' };
+  }
+  return getDocsFor(userId, projectUuid);
+}
+
+export async function getDocByUuid(docUuid: string, projectUuid?: string): Promise<Doc | null> {
+  const userId = await sessionUserId();
+  if (!userId) {
+    return null;
+  }
+  return getDocByUuidFor(userId, docUuid, projectUuid);
+}
+
+export async function getDocumentVersions(documentId: string, projectUuid?: string) {
+  const userId = await sessionUserId();
+  if (!userId) {
+    return { success: false, error: 'Authentication required' };
+  }
+  return getDocumentVersionsFor(userId, documentId, projectUuid);
+}
+
+
+
+// Track document view - separate action for UI components to call
+export async function trackDocumentView(profileUuid: string, docUuid: string) {
+  'use server';
+  try {
+    // profileUuid arrives from the client, and this writes an activity row
+    // under it — so ownership is verified before anything is recorded.
+    await withProfileAuth(profileUuid, async () => undefined);
+
+    // Validate UUID formats
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (!profileUuid || !uuidRegex.test(profileUuid)) {
+      return { success: false, error: 'Invalid profile UUID format' };
+    }
+
+    if (!docUuid || !uuidRegex.test(docUuid)) {
+      return { success: false, error: 'Invalid document UUID format' };
+    }
+
+    const { mcpActivityTable } = await import('@/db/schema');
+    const { analyticsCache } = await import('@/lib/analytics-cache');
+
+    await db.insert(mcpActivityTable).values({
+      profile_uuid: profileUuid,
+      server_uuid: null,
+      external_id: null,
+      source: 'PLUGGEDIN',
+      action: 'document_view',
+      item_name: docUuid,
+    });
+
+    // Invalidate analytics cache for this profile
+    analyticsCache.invalidateProfile(profileUuid);
+
+    return { success: true };
+  } catch (error) {
+    // withProfileAuth turns away an anonymous caller by throwing a Next
+    // redirect. Reporting that as a tracking failure would swallow the
+    // redirect and leave them on the page.
+    if (isRedirectError(error)) {
+      throw error;
+    }
+
+    console.error('Failed to track document view:', error);
+    return { success: false, error: 'Failed to track document view' };
+  }
+}
+
+// Helper function: Get document versions
+
+// Helper function: Calculate project storage usage
+export async function getProjectStorageUsage(projectUuid?: string) {
+  const userId = await sessionUserId();
+  if (!userId) {
+    return {
+      success: false,
+      fileStorage: 0,
+      ragStorage: 0,
+      totalUsage: 0,
+      limit: WORKSPACE_STORAGE_LIMIT,
+      error: 'Authentication required',
+    };
+  }
+
+  return getProjectStorageUsageFor(userId, projectUuid);
+}
+
+// Zod schema for upload metadata validation
+const uploadMetadataSchema = z.object({
+  purpose: z.string().max(500).optional().transform(val => val || undefined),
+  relatedTo: z.string().max(200).optional().transform(val => val || undefined),
+  notes: z.string().max(1000).optional().transform(val => val || undefined),
+});
+
+// Helper function: Parse and validate form data
+async function parseAndValidateFormData(formData: FormData) {
+  const fileEntry = formData.get('file');
+  const name = formData.get('name') as string;
+  const description = formData.get('description') as string || null;
+  const tagsString = formData.get('tags') as string;
+
+  // Validate file entry is actually a File object
+  if (!fileEntry || typeof fileEntry === 'string') {
+    throw new Error('Valid file is required');
+  }
+
+  // Additional validation to ensure it's a proper File/Blob with required properties
+  if (!('size' in fileEntry) || !('type' in fileEntry) || !('name' in fileEntry)) {
+    throw new Error('Invalid file object');
+  }
+
+  const file = fileEntry as File;
+
+  if (!name) {
+    throw new Error('File name is required');
+  }
+
+  // Validate file size (max 100MB per file)
+  const maxFileSize = 100 * 1024 * 1024; // 100MB
+  if (file.size > maxFileSize) {
+    throw new Error('File size must be less than 100MB');
+  }
+
+  // Parse tags
+  const tags = tagsString
+    ? tagsString.split(',').map(tag => tag.trim()).filter(Boolean)
+    : [];
+
+  // Extract upload method
+  const uploadMethod = formData.get('uploadMethod') as 'drag-drop' | 'file-picker' | undefined;
+
+  // Validate and sanitize metadata fields
+  const metadataInput = {
+    purpose: formData.get('purpose') as string || undefined,
+    relatedTo: formData.get('relatedTo') as string || undefined,
+    notes: formData.get('notes') as string || undefined,
+  };
+
+  try {
+    const validatedMetadata = uploadMetadataSchema.parse(metadataInput);
+    return { file, name, description, tags, ...validatedMetadata, uploadMethod };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const fieldErrors = error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      throw new Error(`Invalid metadata: ${fieldErrors}`);
+    }
+    throw error;
+  }
+}
+
+// Helper function: Save file to disk in user-specific directory (outside public)
+async function saveFileToDisk(file: File, userId: string) {
+  // Generate unique filename with timestamp
+  const timestamp = Date.now();
+  const fileName = `${timestamp}-${file.name}`;
+
+  // Create safe file paths with validation
+  const { userDir, filePath, relativePath } = createSafeFilePath(userId, fileName);
+  
+  // Create user-specific uploads directory
+  await mkdir(userDir, { recursive: true });
+
+  // Save file to disk
+  const bytes = await file.arrayBuffer();
+  const buffer = Buffer.from(bytes);
+  await writeFile(filePath, buffer);
+
+  return { fileName: sanitizePath(fileName), relativePath };
+}
+
+// Helper function: Insert document record into database
+async function insertDocRecord(
+  userId: string,
+  projectUuid: string | undefined,
+  name: string,
+  description: string | null,
+  file: File,
+  relativePath: string,
+  tags: string[],
+  purpose?: string,
+  relatedTo?: string,
+  notes?: string,
+  uploadMethod?: 'drag-drop' | 'file-picker'
+) {
+  // Build upload metadata if any context fields are provided or upload method is specified
+  const uploadMetadata = (purpose || relatedTo || notes || uploadMethod) ? {
+    purpose,
+    relatedTo,
+    notes,
+    uploadMethod: uploadMethod || 'file-picker',
+    uploadedAt: new Date().toISOString(),
+    originalFileName: file.name,
+    fileLastModified: file.lastModified ? new Date(file.lastModified).toISOString() : undefined,
+  } : undefined;
+
+  const [docRecord] = await db
+    .insert(docsTable)
+    .values({
+      user_id: userId,
+      project_uuid: projectUuid,
+      name,
+      description,
+      file_name: file.name,
+      file_size: file.size,
+      mime_type: file.type,
+      file_path: relativePath,
+      tags,
+      upload_metadata: uploadMetadata,
+    })
+    .returning();
+
+  return docRecord;
+}
+
+// Helper function: Validate project storage limit
+async function validateProjectStorageLimit(
+  userId: string,
+  projectUuid: string | undefined,
+  newFileSize: number
+): Promise<void> {
+  const storageResult = await getProjectStorageUsageFor(userId, projectUuid);
+  
+  if (!storageResult.success) {
+    throw new Error(storageResult.error || 'Failed to check workspace storage');
+  }
+
+  const newTotalSize = storageResult.totalUsage + newFileSize;
+
+  if (newTotalSize > WORKSPACE_STORAGE_LIMIT) {
+    const usedMB = Math.round(storageResult.totalUsage / (1024 * 1024) * 100) / 100;
+    const limitMB = Math.round(WORKSPACE_STORAGE_LIMIT / (1024 * 1024));
+    const fileMB = Math.round(newFileSize / (1024 * 1024) * 100) / 100;
+    
+    throw new Error(
+      `Workspace storage limit exceeded. Current usage: ${usedMB} MB, ` +
+      `File size: ${fileMB} MB, Limit: ${limitMB} MB. ` +
+      `Please delete some documents to free up space.`
+    );
+  }
+}
+
+// Helper function: Process RAG upload (synchronous with embedded zvec)
+async function processRagUpload(
+  docRecord: any,
+  textContent: string,
+  file: File,
+  _name: string,
+  _tags: string[],
+  userId: string,
+  projectUuid: string
+) {
+  try {
+    const result = await ragService.processDocument(
+      docRecord.uuid,
+      projectUuid,
+      textContent,
+      file.name,
+    );
+
+    if (result.success) {
+      await updateDocRagIdFor(userId, docRecord.uuid, docRecord.uuid);
+      ragService.invalidateStorageCache(projectUuid);
+      return { ragProcessed: true, ragError: undefined };
+    } else {
+      throw new Error(result.error || 'RAG processing failed');
+    }
+  } catch (ragErr) {
+    console.error('Failed to process document for RAG:', ragErr);
+    const ragError = ragErr instanceof Error ? ragErr.message : 'RAG processing failed';
+    return { ragProcessed: false, ragError };
+  }
+}
+
+// Function to update document with RAG document ID after upload completion
+export async function updateDocRagId(
+  docUuid: string,
+  ragDocumentId: string
+): Promise<{ success: boolean; error?: string }> {
+  const userId = await sessionUserId();
+  if (!userId) {
+    return { success: false, error: 'Authentication required' };
+  }
+  return updateDocRagIdFor(userId, docUuid, ragDocumentId);
+}
+
+/**
+ * Re-index a document by reading the stored file and re-running RAG processing.
+ * Deletes existing chunks/vectors first, then re-extracts text and re-embeds.
+ */
+export async function reindexDocument(
+  docUuid: string,
+  projectUuid?: string
+): Promise<{ success: boolean; error?: string }> {
+  const userId = await sessionUserId();
+  if (!userId) {
+    return { success: false, error: 'Authentication required' };
+  }
+
+  try {
+    if (process.env.ENABLE_RAG !== 'true') {
+      return { success: false, error: 'RAG is not enabled' };
+    }
+
+    if (!projectUuid) {
+      return { success: false, error: 'No active project selected. Please select or create a project first.' };
+    }
+
+    // Get the document record
+    const doc = await getDocByUuidFor(userId, docUuid, projectUuid);
+    if (!doc) {
+      return { success: false, error: 'Document not found' };
+    }
+
+    const ragIdentifier = projectUuid;
+
+    if (!isRagSupported(doc.mime_type)) {
+      return { success: false, error: `File type ${doc.mime_type} is not supported for indexing` };
+    }
+
+    // Read the stored file and extract text
+    const fullPath = buildSecurePath(UPLOADS_BASE_DIR, doc.file_path);
+    const textContent = await extractTextFromFile(fullPath, doc.mime_type);
+
+    if (!textContent.trim()) {
+      return { success: false, error: 'No text content could be extracted from the file' };
+    }
+
+    // Remove existing vectors using the ID they were indexed under.
+    // AI-generated documents may have rag_document_id !== doc.uuid.
+    const vectorDocId = doc.rag_document_id ?? doc.uuid;
+    await ragService.removeDocument(vectorDocId, ragIdentifier);
+
+    // Re-process using doc.uuid (normalizes AI docs going forward)
+    const result = await ragService.processDocument(
+      doc.uuid,
+      ragIdentifier,
+      textContent,
+      doc.file_name,
+    );
+
+    if (result.success) {
+      await updateDocRagIdFor(userId, doc.uuid, doc.uuid);
+      ragService.invalidateStorageCache(ragIdentifier);
+      return { success: true };
+    } else {
+      return { success: false, error: result.error || 'Re-indexing failed' };
+    }
+  } catch (error) {
+    console.error('[Library] Re-index document error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Re-indexing failed',
+    };
+  }
+}
+
+export async function createDoc(
+  formData: FormData,
+  projectUuid?: string
+): Promise<DocUploadResponse> {
+  const userId = await sessionUserId();
+  if (!userId) {
+    return { success: false, error: 'Authentication required' };
+  }
+
+  try {
+    // Validate that projectUuid is provided
+    if (!projectUuid) {
+      throw new Error('No active project selected. Please select or create a project first.');
+    }
+
+    // Step 1: Parse and validate form data
+    const { file, name, description, tags, purpose, relatedTo, notes, uploadMethod } = await parseAndValidateFormData(formData);
+
+    // Step 2: Validate project storage limit
+    await validateProjectStorageLimit(userId, projectUuid, file.size);
+
+    // Step 3: Save file to disk in user-specific directory
+    const { relativePath } = await saveFileToDisk(file, userId);
+    
+    // Step 4: Insert document record into database
+    const docRecord = await insertDocRecord(userId, projectUuid, name, description, file, relativePath, tags, purpose, relatedTo, notes, uploadMethod);
+    
+    // Step 5 & 6: Process RAG upload only for supported file types
+    let ragProcessed = false;
+    let ragError: string | undefined;
+    if (process.env.ENABLE_RAG === 'true' && isRagSupported(file.type)) {
+      // Extract text content for RAG
+      let textContent = '';
+
+      if (file.type === 'text/plain' || file.type === 'text/markdown' || file.type === 'text/x-markdown') {
+        const arrayBuffer = await file.arrayBuffer();
+        textContent = new TextDecoder().decode(arrayBuffer);
+      } else if (file.type === 'application/pdf') {
+        const { extractTextFromPdf } = await import('@/lib/rag/pdf-extract');
+        const arrayBuffer = await file.arrayBuffer();
+        textContent = await extractTextFromPdf(arrayBuffer);
+      }
+
+      // Process RAG (synchronous with embedded zvec)
+      const ragResult = await processRagUpload(
+        docRecord, textContent, file, name, tags, userId, projectUuid
+      );
+      ragProcessed = ragResult.ragProcessed;
+      ragError = ragResult.ragError;
+    } else if (process.env.ENABLE_RAG === 'true') {
+      // File type not supported for RAG
+      console.log(`File type ${file.type} not supported for RAG processing`);
+    }
+
+    // Step 7: Return response with formatted doc
+    const doc: Doc = {
+      ...docRecord,
+      source: docRecord.source as 'upload' | 'ai_generated' | 'api',
+      visibility: docRecord.visibility as 'private' | 'workspace' | 'public',
+      created_at: new Date(docRecord.created_at),
+      updated_at: new Date(docRecord.updated_at),
+    };
+
+    // Invalidate analytics cache after successful document upload
+    // This ensures the dashboard updates immediately
+    if (projectUuid) {
+      try {
+        const { projectsTable } = await import('@/db/schema');
+        const { analyticsCache } = await import('@/lib/analytics-cache');
+
+        // Get the active profile for this project to invalidate the correct cache
+        const project = await db.query.projectsTable.findFirst({
+          where: eq(projectsTable.uuid, projectUuid),
+          with: {
+            activeProfile: true
+          }
+        });
+
+        if (project?.activeProfile?.uuid) {
+          console.log(`[CACHE] Invalidating analytics cache for profile: ${project.activeProfile.uuid}`);
+          analyticsCache.invalidateProfile(project.activeProfile.uuid);
+          console.log('[CACHE] Analytics cache invalidated successfully');
+        } else {
+          console.warn('[CACHE] No active profile found for project:', projectUuid);
+        }
+      } catch (cacheError) {
+        // Don't fail the upload if cache invalidation fails
+        console.error('Failed to invalidate analytics cache:', cacheError);
+      }
+    }
+
+    return {
+      success: true,
+      doc,
+      ragProcessed,
+      ragError,
+    };
+  } catch (error) {
+    console.error('Error creating doc:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to upload document',
+    };
+  }
+}
+
+export async function deleteDoc(
+  docUuid: string,
+  projectUuid?: string
+): Promise<DocDeleteResponse> {
+  const userId = await sessionUserId();
+  if (!userId) {
+    return { success: false, error: 'Authentication required' };
+  }
+
+  try {
+    // Get the doc first to get file path and verify ownership
+    const doc = await getDocByUuidFor(userId, docUuid, projectUuid);
+    if (!doc) {
+      return {
+        success: false,
+        error: 'Document not found',
+      };
+    }
+
+    // Delete from database
+    await db
+      .delete(docsTable)
+      .where(
+        and(
+          eq(docsTable.uuid, docUuid),
+          eq(docsTable.user_id, userId)
+        )
+      );
+
+    // Delete file from disk (using same base directory as uploads)
+    try {
+      const fullPath = buildSecurePath(UPLOADS_BASE_DIR, doc.file_path);
+      await unlink(fullPath);
+    } catch (fileError) {
+      console.warn('Failed to delete file from disk:', fileError);
+      // Don't fail the operation if file deletion fails
+    }
+
+    // Remove from RAG API using the stored rag_document_id (if it exists)
+    if (doc.rag_document_id) {
+      const ragIdentifier = projectUuid || userId;
+
+      ragService.removeDocument(doc.rag_document_id, ragIdentifier).catch(error => {
+        console.error('Failed to remove document from RAG API:', error);
+      });
+
+      // Invalidate storage cache after removing document
+      ragService.invalidateStorageCache(ragIdentifier);
+    }
+
+    // Invalidate analytics cache after successful document deletion
+    // This ensures the dashboard updates immediately
+    if (projectUuid) {
+      try {
+        const { projectsTable } = await import('@/db/schema');
+        const { analyticsCache } = await import('@/lib/analytics-cache');
+
+        // Get the active profile for this project to invalidate the correct cache
+        const project = await db.query.projectsTable.findFirst({
+          where: eq(projectsTable.uuid, projectUuid),
+          with: {
+            activeProfile: true
+          }
+        });
+
+        if (project?.activeProfile?.uuid) {
+          analyticsCache.invalidateProfile(project.activeProfile.uuid);
+        }
+      } catch (cacheError) {
+        // Don't fail the deletion if cache invalidation fails
+        console.error('Failed to invalidate analytics cache:', cacheError);
+      }
+    }
+
+    return {
+      success: true,
+    };
+  } catch (error) {
+    console.error('Error deleting doc:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to delete document',
+    };
+  }
+}
+export async function askKnowledgeBase(
+  query: string,
+  projectUuid?: string
+): ReturnType<typeof askKnowledgeBaseFor> {
+  const userId = await sessionUserId();
+  if (!userId) {
+    return { success: false, error: 'Authentication required' };
+  }
+  return askKnowledgeBaseFor(userId, query, projectUuid);
+}
+
+/**
+ * Manual repair function with detailed feedback for fixing document-RAG ID mismatches
+ */
+export async function manualRepairDocumentRagIds(
+  projectUuid?: string
+): Promise<{
+  success: boolean;
+  details?: {
+    totalDocuments: number;
+    orphanedDocuments: number;
+    repairedDocuments: number;
+    failedDocuments: number;
+    repairedList?: string[];
+    failedList?: string[];
+  };
+  error?: string;
+}> {
+  'use server';
+
+  const userId = await sessionUserId();
+  if (!userId) {
+    return { success: false, error: 'Authentication required' };
+  }
+
+  try {
+    // Get the project UUID or use user ID as identifier
+    const ragIdentifier = projectUuid || userId;
+
+    // Get all documents for the user
+    const allDocs = await db
+      .select({
+        uuid: docsTable.uuid,
+        name: docsTable.name,
+        file_name: docsTable.file_name,
+        rag_document_id: docsTable.rag_document_id,
+        created_at: docsTable.created_at
+      })
+      .from(docsTable)
+      .where(
+        and(
+          eq(docsTable.user_id, userId),
+          projectUuid ? eq(docsTable.project_uuid, projectUuid) : undefined
+        )
+      )
+      .orderBy(desc(docsTable.created_at));
+
+    const orphanedDocs = allDocs.filter(doc => !doc.rag_document_id);
+
+    // Get all RAG documents
+    let ragDocuments: Array<[string, string]> = [];
+    try {
+      const ragDocsResult = await ragService.getDocuments(ragIdentifier);
+      if (ragDocsResult.success && ragDocsResult.documents) {
+        ragDocuments = ragDocsResult.documents;
+      }
+    } catch (error) {
+      console.error('Error fetching RAG documents:', error);
+    }
+
+    const repairedList: string[] = [];
+    const failedList: string[] = [];
+
+    // Process each orphaned document
+    for (const doc of orphanedDocs) {
+      try {
+        // Use the enhanced matching function
+        const ragDocId = findMatchingRagDocument(doc, ragDocuments);
+
+        if (ragDocId) {
+          console.log(`Found matching RAG document for ${doc.name}: ${ragDocId}`);
+          const updateResult = await updateDocRagIdFor(userId, doc.uuid, ragDocId);
+          if (updateResult.success) {
+            repairedList.push(doc.name);
+          } else {
+            failedList.push(doc.name);
+          }
+        } else {
+          // Try fetching fresh list
+          try {
+            const freshResult = await ragService.getDocuments(ragIdentifier);
+            if (freshResult.success && freshResult.documents) {
+              const freshRagDocId = findMatchingRagDocument(doc, freshResult.documents);
+              if (freshRagDocId) {
+                console.log(`Found matching RAG document on retry for ${doc.name}: ${freshRagDocId}`);
+                const updateResult = await updateDocRagIdFor(userId, doc.uuid, freshRagDocId);
+                if (updateResult.success) {
+                  repairedList.push(doc.name);
+                } else {
+                  failedList.push(doc.name);
+                }
+              } else {
+                failedList.push(doc.name);
+              }
+            } else {
+              failedList.push(doc.name);
+            }
+          } catch (retryError) {
+            console.error(`Error on retry for document ${doc.name}:`, retryError);
+            failedList.push(doc.name);
+          }
+        }
+      } catch (error) {
+        console.error(`Error processing document ${doc.name}:`, error);
+        failedList.push(doc.name);
+      }
+    }
+
+    return {
+      success: true,
+      details: {
+        totalDocuments: allDocs.length,
+        orphanedDocuments: orphanedDocs.length,
+        repairedDocuments: repairedList.length,
+        failedDocuments: failedList.length,
+        repairedList,
+        failedList
+      }
+    };
+  } catch (error) {
+    console.error('Error in manual repair:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to repair documents'
+    };
+  }
+}
+
+/**
+ * Helper function to process items in batches with concurrency control
+ */
+async function processInBatches<T, R>(
+  items: T[],
+  processFn: (item: T) => Promise<R>,
+  batchSize: number,
+  maxConcurrency: number
+): Promise<R[]> {
+  const results: R[] = [];
+  const total = items.length;
+
+  // Process items in chunks with limited concurrency
+  for (let i = 0; i < total; i += batchSize) {
+    const batch = items.slice(i, Math.min(i + batchSize, total));
+
+    // Process batch with limited concurrency
+    for (let j = 0; j < batch.length; j += maxConcurrency) {
+      const concurrentItems = batch.slice(j, Math.min(j + maxConcurrency, batch.length));
+      const concurrentPromises = concurrentItems.map(item => processFn(item));
+      const concurrentResults = await Promise.allSettled(concurrentPromises);
+
+      // Collect successful results
+      for (const result of concurrentResults) {
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+        }
+      }
+
+      // Add delay between concurrent batches to avoid rate limiting
+      if (j + maxConcurrency < batch.length) {
+        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+      }
+    }
+
+    // Add delay between batches to avoid overwhelming the service
+    if (i + batchSize < total) {
+      await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay between batches
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Helper function to match documents with RAG entries using various patterns
+ */
+function findMatchingRagDocument(
+  doc: { file_name: string; name: string },
+  ragDocuments: Array<[string, string]>
+): string | null {
+  // Try various matching strategies
+  for (const [filename, ragId] of ragDocuments) {
+    // 1. Exact file_name match
+    if (doc.file_name === filename) {
+      return ragId;
+    }
+
+    // 2. Exact name match
+    if (doc.name === filename) {
+      return ragId;
+    }
+
+    // 3. Match after removing timestamp prefix (e.g., "1234567890-filename.ext" -> "filename.ext")
+    if (doc.file_name && doc.file_name.includes('-')) {
+      const withoutTimestamp = doc.file_name.substring(doc.file_name.indexOf('-') + 1);
+      if (withoutTimestamp === filename) {
+        return ragId;
+      }
+    }
+
+    // 4. Match by removing version suffixes (e.g., "document_v2_timestamp.md" -> "document.md")
+    const docBaseName = doc.file_name
+      ?.replace(/_v\d+_[\d-TZ]+/, '') // Remove version pattern
+      ?.replace(/\d{4}-\d{2}-\d{2}_/, '') // Remove date prefix
+      ?.replace(/^\d+-/, ''); // Remove timestamp prefix
+
+    const ragBaseName = filename
+      ?.replace(/_v\d+_[\d-TZ]+/, '')
+      ?.replace(/\d{4}-\d{2}-\d{2}_/, '')
+      ?.replace(/^\d+-/, '');
+
+    if (docBaseName && ragBaseName && docBaseName === ragBaseName) {
+      return ragId;
+    }
+
+    // 5. Fuzzy match for AI-generated documents with complex naming
+    // e.g., "2025-09-18_18-19-00-872Z_claude-opus-4-1_AI_Integration_Best_Practices_Guide.md"
+    const normalizedDocName = doc.file_name
+      ?.replace(/[-_]/g, '')
+      ?.toLowerCase();
+    const normalizedRagName = filename
+      ?.replace(/[-_]/g, '')
+      ?.toLowerCase();
+
+    if (normalizedDocName && normalizedRagName) {
+      // Check if one contains the other (for partial matches)
+      if (normalizedDocName.includes(normalizedRagName) ||
+          normalizedRagName.includes(normalizedDocName)) {
+        return ragId;
+      }
+
+      // Check for AI-generated pattern match
+      if (doc.file_name?.includes('claude') && filename.includes('claude')) {
+        // Extract the meaningful part after model name
+        const docPart = doc.file_name.split(/claude[^_]*_/)[1];
+        const ragPart = filename.split(/claude[^_]*_/)[1];
+        if (docPart && ragPart && docPart === ragPart) {
+          return ragId;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Repair function to fix AI-generated documents without rag_document_id
+ * This can be run as a one-time migration or periodic cleanup task
+ * Implements batching and rate limiting to avoid service overload
+ */
+export async function repairMissingRagDocumentIds(
+  projectUuid?: string,
+  batchSize: number = 10,
+  maxConcurrency: number = 3
+): Promise<{ success: boolean; repaired: number; failed: number; error?: string }> {
+  'use server';
+
+  const userId = await sessionUserId();
+  if (!userId) {
+    return { success: false, repaired: 0, failed: 0, error: 'Authentication required' };
+  }
+
+  try {
+    // Find AI-generated documents without rag_document_id
+    const orphanedDocs = await db
+      .select({
+        uuid: docsTable.uuid,
+        name: docsTable.name,
+        file_path: docsTable.file_path,
+        file_name: docsTable.file_name,
+        mime_type: docsTable.mime_type,
+        source: docsTable.source
+      })
+      .from(docsTable)
+      .where(
+        and(
+          eq(docsTable.user_id, userId),
+          eq(docsTable.source, 'ai_generated'),
+          isNull(docsTable.rag_document_id),
+          projectUuid ? eq(docsTable.project_uuid, projectUuid) : undefined
+        )
+      );
+
+    console.log(`Found ${orphanedDocs.length} AI documents without RAG IDs to repair`);
+
+    if (orphanedDocs.length === 0) {
+      return {
+        success: true,
+        repaired: 0,
+        failed: 0
+      };
+    }
+
+    const ragIdentifier = projectUuid || userId;
+
+    // Fetch RAG documents once to avoid repeated API calls
+    let ragDocuments: [string, string][] = [];
+    try {
+      const documentsResult = await ragService.getDocuments(ragIdentifier);
+      if (documentsResult.success && documentsResult.documents) {
+        ragDocuments = documentsResult.documents;
+      }
+    } catch (error) {
+      console.error('Error fetching RAG documents:', error);
+      // Continue with empty list - individual repairs might still work
+    }
+
+    // Process documents in batches with rate limiting
+    const processDocument = async (doc: typeof orphanedDocs[0]): Promise<boolean> => {
+      try {
+        // Use the enhanced matching function to find the RAG document
+        const ragDocId = findMatchingRagDocument(doc, ragDocuments);
+
+        if (ragDocId) {
+          console.log(`Found matching RAG document for ${doc.name}: ${ragDocId}`);
+
+          // Update the document with the found RAG ID
+          const updateResult = await updateDocRagIdFor(userId, doc.uuid, ragDocId);
+          return updateResult.success;
+        } else {
+          // If not found in pre-fetched list, try individual lookup
+          // This is a fallback for recently added documents
+          try {
+            const freshResult = await ragService.getDocuments(ragIdentifier);
+            if (freshResult.success && freshResult.documents) {
+              // Use enhanced matching on fresh results
+              const freshRagDocId = findMatchingRagDocument(doc, freshResult.documents);
+              if (freshRagDocId) {
+                console.log(`Found matching RAG document on retry for ${doc.name}: ${freshRagDocId}`);
+                const updateResult = await updateDocRagIdFor(userId, doc.uuid, freshRagDocId);
+                return updateResult.success;
+              }
+            }
+          } catch (retryError) {
+            console.error(`Error on retry for document ${doc.name}:`, retryError);
+          }
+
+          console.log(`No matching RAG document found for ${doc.name}, may need re-upload`);
+          return false;
+        }
+      } catch (error) {
+        console.error(`Error repairing document ${doc.uuid}:`, error);
+        return false;
+      }
+    };
+
+    // Process documents with batching and rate limiting
+    const results = await processInBatches(
+      orphanedDocs,
+      processDocument,
+      batchSize,
+      maxConcurrency
+    );
+
+    const repairedCount = results.filter(Boolean).length;
+    const failedCount = results.filter(r => !r).length;
+
+    console.log(`Repair complete: ${repairedCount} fixed, ${failedCount} failed`);
+
+    return {
+      success: true,
+      repaired: repairedCount,
+      failed: failedCount
+    };
+  } catch (error) {
+    console.error('Error repairing RAG document IDs:', error);
+    return {
+      success: false,
+      repaired: 0,
+      failed: 0,
+      error: error instanceof Error ? error.message : 'Failed to repair documents'
+    };
+  }
+}

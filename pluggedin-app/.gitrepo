@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/VeriTeknik/pluggedin-app.git
+	branch = main
+	commit = 451ebbd0cfe267bf4592a81b58fb361f81e1ad04
+	parent = 5cdda273dd22832e681fc4b4f58ff51bf2207f5e
+	method = merge
+	cmdver = 0.4.9

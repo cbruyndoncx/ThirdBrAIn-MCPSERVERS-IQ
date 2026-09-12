@@ -1,0 +1,328 @@
+import { execFile } from 'child_process';
+import { promises as fs } from 'fs';
+import { promisify } from 'util';
+
+import { approvedChildPath, inheritableChildEnv } from '@/lib/mcp/child-env';
+import { buildSecurePath, validatePathComponent } from '@/lib/secure-path-builder';
+import { validatePackageName, validatePackageVersion } from '@/lib/security/package-name';
+
+import { PackageManagerConfig } from '../config';
+import { BasePackageHandler, InstallOptions, PackageInfo } from './base-handler';
+
+// argv execution, never a shell: the package name and version come out of a
+// user-supplied args array, so a shell here is a command-injection sink.
+const execFileAsync = promisify(execFile);
+
+export class UvHandler extends BasePackageHandler {
+  protected packageManagerName = 'uv';
+
+  /**
+   * Resolves the binary path for a package in the given bin directory.
+   * Tries multiple name variations and validates all paths to prevent traversal.
+   */
+  private async resolveBinaryPath(binDir: string, packageName: string): Promise<string | null> {
+    // Validate packageName to prevent path traversal
+    validatePathComponent(packageName);
+    let binaryPath = buildSecurePath(binDir, packageName);
+
+    // Some Python packages install with different binary names
+    if (!(await this.fileExists(binaryPath))) {
+      // Try common variations
+      const variations = [
+        packageName.replace(/-/g, '_'),
+        packageName.replace(/_/g, '-'),
+        packageName.toLowerCase(),
+        packageName.toUpperCase(),
+      ];
+
+      for (const variant of variations) {
+        // Validate variant to prevent path traversal
+        validatePathComponent(variant);
+        const variantPath = buildSecurePath(binDir, variant);
+        if (await this.fileExists(variantPath)) {
+          binaryPath = variantPath;
+          break;
+        }
+      }
+
+      // If still not found, look for any executable in bin
+      if (!(await this.fileExists(binaryPath))) {
+        const files = await fs.readdir(binDir);
+        const executables = [];
+
+        for (const file of files) {
+          // Validate file name to prevent path traversal
+          validatePathComponent(file);
+          const filePath = buildSecurePath(binDir, file);
+          const stats = await fs.stat(filePath);
+          if (stats.isFile() && (stats.mode & 0o111)) { // Check if executable
+            executables.push(file);
+          }
+        }
+
+        if (executables.length === 1) {
+          // Validate executable name to prevent path traversal
+          validatePathComponent(executables[0]);
+          binaryPath = buildSecurePath(binDir, executables[0]);
+        } else if (executables.length > 1) {
+          // Try to find the most likely match
+          const match = executables.find(exe =>
+            exe.toLowerCase().includes(packageName.toLowerCase()) ||
+            packageName.toLowerCase().includes(exe.toLowerCase())
+          );
+          if (match) {
+            // Validate match to prevent path traversal
+            validatePathComponent(match);
+            binaryPath = buildSecurePath(binDir, match);
+          } else {
+            throw new Error(
+              `Multiple executables found for ${packageName}: ${executables.join(', ')}`
+            );
+          }
+        } else {
+          return null;
+        }
+      }
+    }
+
+    return binaryPath;
+  }
+
+  async install(options: InstallOptions): Promise<PackageInfo> {
+    const { serverUuid, packageName, version } = options;
+
+    // The name and version come out of a user-supplied args array. argv
+    // execution above already keeps them away from a shell; this keeps a
+    // malformed value out of the filesystem-path builders too, and fails the
+    // install before anything is spawned.
+    const nameCheck = validatePackageName(packageName);
+    if (!nameCheck.valid) {
+      throw new Error(`Invalid package name: ${nameCheck.error}`);
+    }
+    if (version !== undefined) {
+      const versionCheck = validatePackageVersion(version);
+      if (!versionCheck.valid) {
+        throw new Error(`Invalid package version: ${versionCheck.error}`);
+      }
+    }
+    const installDir = this.getServerInstallDir(serverUuid);
+    const venvDir = buildSecurePath(installDir, '.venv');
+
+    this.log('Installing Python package', { serverUuid, packageName, version, installDir });
+    
+    // Ensure directory exists
+    await this.ensureDirectory(installDir);
+    
+    try {
+      // Create virtual environment if it doesn't exist
+      if (!(await this.fileExists(venvDir))) {
+        await execFileAsync('uv', ['venv'], {
+          cwd: installDir,
+          env: {
+            ...inheritableChildEnv(),
+          // PATH is not in the allowlist; without it execFile cannot find the binary
+          PATH: approvedChildPath(),
+            UV_CACHE_DIR: PackageManagerConfig.UV_CACHE_DIR,
+            UV_PROJECT_ENVIRONMENT: venvDir,
+          },
+          timeout: PackageManagerConfig.STARTUP_TIMEOUT_MS,
+        });
+        
+        this.log('Created virtual environment', { venvDir });
+      }
+      
+      // Construct package spec
+      const packageSpec = version ? `${packageName}==${version}` : packageName;
+      
+      // Install package using uv
+      const { stdout, stderr } = await execFileAsync(
+        'uv',
+        ['pip', 'install', packageSpec],
+        {
+          cwd: installDir,
+          env: {
+            ...inheritableChildEnv(),
+          // PATH is not in the allowlist; without it execFile cannot find the binary
+          PATH: approvedChildPath(),
+            UV_CACHE_DIR: PackageManagerConfig.UV_CACHE_DIR,
+            UV_PROJECT_ENVIRONMENT: venvDir,
+            VIRTUAL_ENV: venvDir,
+          },
+          timeout: PackageManagerConfig.STARTUP_TIMEOUT_MS,
+        }
+      );
+      
+      if (stderr && !stderr.includes('WARNING')) {
+        console.warn(`[uv] Installation warnings for ${packageName}:`, stderr);
+      }
+
+      // Find the installed binary
+      const binDir = buildSecurePath(venvDir, 'bin');
+      const binaryPath = await this.resolveBinaryPath(binDir, packageName);
+
+      if (!binaryPath) {
+        throw new Error(`No executable found for ${packageName}`);
+      }
+      
+      // Get installed version
+      let installedVersion = version;
+      try {
+        // `| grep Version` needed a shell; filter in JS instead.
+        const { stdout: versionOutput } = await execFileAsync(
+          'uv',
+          ['pip', 'show', packageName],
+          {
+            cwd: installDir,
+            env: {
+              ...inheritableChildEnv(),
+          // PATH is not in the allowlist; without it execFile cannot find the binary
+          PATH: approvedChildPath(),
+              UV_PROJECT_ENVIRONMENT: venvDir,
+              VIRTUAL_ENV: venvDir,
+            },
+          }
+        );
+        const versionMatch = versionOutput.match(/Version:\s*(.+)/);
+        if (versionMatch) {
+          installedVersion = versionMatch[1].trim();
+        }
+      } catch (error) {
+        // Ignore version detection errors
+      }
+      
+      this.log('Python package installed successfully', { 
+        packageName, 
+        version: installedVersion, 
+        binaryPath 
+      });
+      
+      return {
+        name: packageName,
+        version: installedVersion,
+        binaryPath,
+        installPath: installDir,
+      };
+    } catch (error) {
+      this.log('Installation failed', { packageName, error });
+      throw new Error(
+        `Failed to install ${packageName}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+  
+  async isInstalled(serverUuid: string, packageName: string): Promise<boolean> {
+    const installDir = this.getServerInstallDir(serverUuid);
+    const venvDir = buildSecurePath(installDir, '.venv');
+
+    if (!(await this.fileExists(venvDir))) {
+      return false;
+    }
+    
+    try {
+      const { stdout } = await execFileAsync(
+        'uv',
+        ['pip', 'show', packageName],
+        {
+          cwd: installDir,
+          env: {
+            ...inheritableChildEnv(),
+          // PATH is not in the allowlist; without it execFile cannot find the binary
+          PATH: approvedChildPath(),
+            UV_PROJECT_ENVIRONMENT: venvDir,
+            VIRTUAL_ENV: venvDir,
+          },
+        }
+      );
+      return stdout.includes('Name:');
+    } catch {
+      return false;
+    }
+  }
+  
+  async getBinaryPath(serverUuid: string, packageName: string): Promise<string | null> {
+    const installDir = this.getServerInstallDir(serverUuid);
+    const venvDir = buildSecurePath(installDir, '.venv');
+    const binDir = buildSecurePath(venvDir, 'bin');
+
+    if (!(await this.fileExists(binDir))) {
+      return null;
+    }
+
+    return this.resolveBinaryPath(binDir, packageName);
+  }
+  
+  async cleanup(serverUuid: string): Promise<void> {
+    const installDir = this.getServerInstallDir(serverUuid);
+    
+    try {
+      await fs.rm(installDir, { recursive: true, force: true });
+      this.log('Cleaned up Python packages', { serverUuid, installDir });
+    } catch (error) {
+      console.error(`Failed to cleanup Python packages for ${serverUuid}:`, error);
+      throw error;
+    }
+  }
+  
+  async getDiskUsage(serverUuid: string): Promise<number> {
+    const installDir = this.getServerInstallDir(serverUuid);
+    return this.getDirectorySize(installDir);
+  }
+  
+  async prewarmPackages(packages: string[]): Promise<void> {
+    if (!PackageManagerConfig.PREWARM_COMMON_PACKAGES) {
+      return;
+    }
+
+    const baseLayerDir = buildSecurePath(
+      PackageManagerConfig.PACKAGE_STORE_DIR,
+      'overlays',
+      'base',
+      'python'
+    );
+    const venvDir = buildSecurePath(baseLayerDir, '.venv');
+
+    await this.ensureDirectory(baseLayerDir);
+    
+    this.log('Pre-warming Python packages', { count: packages.length });
+    
+    // Create base virtual environment
+    if (!(await this.fileExists(venvDir))) {
+      await execFileAsync('uv', ['venv'], {
+        cwd: baseLayerDir,
+        env: {
+          ...inheritableChildEnv(),
+          // PATH is not in the allowlist; without it execFile cannot find the binary
+          PATH: approvedChildPath(),
+          UV_CACHE_DIR: PackageManagerConfig.UV_CACHE_DIR,
+          UV_PROJECT_ENVIRONMENT: venvDir,
+        },
+      });
+    }
+    
+    // Install packages
+    for (const packageName of packages) {
+      try {
+        await execFileAsync('uv', ['pip', 'install', packageName], {
+          cwd: baseLayerDir,
+          env: {
+            ...inheritableChildEnv(),
+          // PATH is not in the allowlist; without it execFile cannot find the binary
+          PATH: approvedChildPath(),
+            UV_CACHE_DIR: PackageManagerConfig.UV_CACHE_DIR,
+            UV_PROJECT_ENVIRONMENT: venvDir,
+            VIRTUAL_ENV: venvDir,
+          },
+          timeout: 60000, // 1 minute for pre-warming
+        });
+        
+        this.log('Pre-warmed Python package', { packageName });
+      } catch (error) {
+        console.warn(`Failed to pre-warm ${packageName}:`, error);
+      }
+    }
+    
+    this.log('Python pre-warming completed', { packages });
+  }
+}

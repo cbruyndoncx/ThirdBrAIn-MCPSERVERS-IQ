@@ -1,0 +1,312 @@
+{
+  "title": "Bellek",
+  "description": "Yapay zeka ajanlarınız için pano verileri, uzun vadeli bellek, prosedürler ve yeni bağlamı yönetin.",
+  "refresh": "Yenile",
+  "comingSoon": "Yakında",
+  "stats": {
+    "clipboard": "Pano",
+    "entries": "girdi",
+    "storage": "Depolama",
+    "used": "kullanıldı",
+    "expiring": "Süresi Dolan",
+    "today": "bugün",
+    "types": "Türler",
+    "contentTypes": "içerik türü",
+    "sessions": "Oturumlar",
+    "active": "aktif",
+    "memories": "Anılar",
+    "inRings": "halkalarda",
+    "fresh": "Taze",
+    "unclassified": "sınıflandırılmamış",
+    "patterns": "Örüntüler",
+    "collective": "kolektif"
+  },
+  "tabs": {
+    "clipboard": "Pano",
+    "longterm": "Uzun Vadeli",
+    "procedures": "Prosedürler",
+    "fresh": "Taze",
+    "collective": "Kolektif"
+  },
+  "clipboard": {
+    "empty": {
+      "title": "Pano girdisi yok",
+      "description": "Girdi eklemek için pluggedin_clipboard_set veya pluggedin_clipboard_push gibi MCP araçlarını kullanın."
+    },
+    "createEntry": "Girdi Oluştur",
+    "named": "İsimli Girdiler",
+    "indexed": "İndeksli Girdiler",
+    "clearAll": "Tümünü Temizle",
+    "viewMode": {
+      "table": "Tablo",
+      "grid": "Izgara"
+    },
+    "table": {
+      "name": "İsim",
+      "index": "İndeks",
+      "type": "Tür",
+      "value": "Değer",
+      "size": "Boyut",
+      "expires": "Süre Bitiş",
+      "actions": "İşlemler"
+    },
+    "actions": {
+      "preview": "Önizle",
+      "copy": "Kopyala",
+      "edit": "Düzenle",
+      "delete": "Sil"
+    },
+    "form": {
+      "createTitle": "Pano Girdisi Oluştur",
+      "editTitle": "Pano Girdisini Düzenle",
+      "createDescription": "Pano belleğinize yeni bir girdi ekleyin.",
+      "editDescription": "Pano girdisi detaylarını güncelleyin.",
+      "name": "İsim",
+      "namePlaceholder": "örn., api_key, user_preferences",
+      "nameHelp": "Bu girdi için benzersiz tanımlayıcı",
+      "value": "Değer",
+      "valuePlaceholder": "İçeriği girin...",
+      "contentType": "İçerik Türü",
+      "encoding": "Kodlama",
+      "visibility": "Görünürlük",
+      "visibilityPrivate": "Özel (sadece siz)",
+      "visibilityWorkspace": "Çalışma Alanı (ekip üyeleri)",
+      "visibilityPublic": "Herkese Açık (herkes)",
+      "ttl": "Süre Dolumu",
+      "minutes": "dakika",
+      "hour": "saat",
+      "hours": "saat",
+      "days": "gün",
+      "cancel": "İptal",
+      "create": "Girdi Oluştur",
+      "update": "Girdiyi Güncelle",
+      "saving": "Kaydediliyor...",
+      "uploadFile": "Dosya yükle",
+      "dropzoneText": "Dosyayı buraya sürükleyin veya göz atmak için tıklayın",
+      "dropzoneHint": "Resimler, PDF, JSON, metin dosyaları (max {{maxSize}})",
+      "fileTooLarge": "Dosya çok büyük. Maksimum boyut {{maxSize}}",
+      "fileUploaded": "Dosya yüklendi ({{size}})",
+      "fileReadError": "Dosya okunamadı",
+      "or": "veya metin girin"
+    },
+    "deleteDialog": {
+      "title": "Pano Girdisini Sil",
+      "description": "\"{{identifier}}\" girdisini silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+      "delete": "Sil",
+      "deleting": "Siliniyor...",
+      "cancel": "İptal"
+    },
+    "clearAllDialog": {
+      "title": "Tüm Pano Girdilerini Temizle",
+      "description": "{{count}} pano girdisinin tümünü silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+      "clear": "Tümünü Temizle",
+      "clearing": "Temizleniyor...",
+      "cancel": "İptal"
+    },
+    "preview": {
+      "unsafeImageType": "Resim önizlenemiyor: Güvenlik nedeniyle desteklenmeyen içerik türü.",
+      "contentType": "İçerik türü",
+      "details": "Detaylar",
+      "source": "Kaynak",
+      "sourceUi": "Arayüz",
+      "sourceSdk": "SDK",
+      "sourceMcp": "MCP",
+      "visibility": "Görünürlük",
+      "encoding": "Kodlama",
+      "createdAt": "Oluşturulma",
+      "updatedAt": "Güncelleme",
+      "expiresAt": "Sona Erme",
+      "createdBy": "Oluşturan",
+      "tool": "Araç",
+      "model": "Model",
+      "noExpiration": "Asla"
+    },
+    "toast": {
+      "copied": "Panoya kopyalandı",
+      "copyFailed": "Panoya kopyalama başarısız",
+      "cannotCopyBinary": "İkili içerik sistem panosuna kopyalanamaz",
+      "deleted": "Girdi başarıyla silindi",
+      "deleteFailed": "Girdi silinemedi",
+      "clearedAll": "Tüm girdiler temizlendi",
+      "clearAllFailed": "Tüm girdiler temizlenemedi",
+      "created": "Girdi başarıyla oluşturuldu",
+      "updated": "Girdi başarıyla güncellendi",
+      "saveFailed": "Girdi kaydedilemedi"
+    }
+  },
+  "longterm": {
+    "title": "Uzun Vadeli Bellek",
+    "description": "Oturumlar ve konuşmalar arasında kalıcı bellek.",
+    "searchPlaceholder": "Belleklerde anlamsal arama yap...",
+    "search": "Ara",
+    "empty": {
+      "title": "Henüz bellek yok",
+      "description": "Bellekler, oturumlar sırasında sınıflandırılmış gözlemlerden oluşturulur."
+    },
+    "table": {
+      "ring": "Halka",
+      "content": "İçerik",
+      "decay": "Bozunma",
+      "relevance": "İlgi",
+      "hits": "Erişim",
+      "actions": "İşlemler"
+    },
+    "detail": {
+      "title": "Bellek Detayları",
+      "fullContent": "Tam İçerik",
+      "summary": "Özet",
+      "essence": "Öz",
+      "relevance": "İlgi Skoru",
+      "successScore": "Başarı Skoru",
+      "reinforcements": "Güçlendirmeler",
+      "tokens": "Token",
+      "accessCount": "Erişim Sayısı",
+      "created": "Oluşturulma",
+      "lastAccessed": "Son Erişim",
+      "tags": "Etiketler"
+    },
+    "deleteDialog": {
+      "title": "Belleği Sil",
+      "description": "Bu belleği silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+      "delete": "Sil",
+      "cancel": "İptal"
+    }
+  },
+  "procedures": {
+    "title": "Prosedürler",
+    "description": "Geçmiş etkileşimlerden öğrenilen yeniden kullanılabilir iş akışları ve prosedürler.",
+    "searchPlaceholder": "Prosedürlerde ara...",
+    "search": "Ara",
+    "empty": {
+      "title": "Henüz prosedür yok",
+      "description": "Prosedürler, oturumlarınızdaki tekrarlanan başarılı kalıplardan öğrenilir."
+    },
+    "detail": {
+      "title": "Prosedür Detayları",
+      "fullContent": "Tam İçerik",
+      "summary": "Özet",
+      "relevance": "İlgi Skoru",
+      "reinforcements": "Güçlendirmeler",
+      "accessCount": "Erişim Sayısı",
+      "tokens": "Token",
+      "created": "Oluşturulma"
+    },
+    "deleteDialog": {
+      "title": "Prosedürü Sil",
+      "description": "Bu prosedürü silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+      "delete": "Sil",
+      "cancel": "İptal"
+    }
+  },
+  "fresh": {
+    "title": "Taze Bağlam",
+    "description": "Mevcut konuşmalardan son bağlam ve çalışma belleği.",
+    "observations": "gözlem",
+    "status": {
+      "active": "Aktif",
+      "completed": "Tamamlandı",
+      "abandoned": "Terk Edildi"
+    },
+    "zReport": "Z-Rapor",
+    "zReportSummary": "Oturum Özeti (Z-Rapor)",
+    "noSummary": "Özet mevcut değil",
+    "observationDetails": "Gözlem Detayları",
+    "noObservations": "Gözlem yüklenmedi",
+    "pending": "Bekliyor",
+    "tokens": "Token",
+    "createdAt": "Oluşturulma",
+    "empty": {
+      "title": "Henüz oturum yok",
+      "description": "Oturumlar, ajanlar pluggedin_memory_session_start kullandığında oluşturulur."
+    },
+    "table": {
+      "type": "Tür",
+      "content": "İçerik",
+      "outcome": "Sonuç",
+      "classified": "Sınıflandırma",
+      "actions": "İşlemler"
+    },
+    "filter": {
+      "all": "Tüm Oturumlar"
+    },
+    "prune": "Eskileri Sil",
+    "pruneConfirm": "24 saatten eski terk edilmiş oturumlar silinsin mi? Bu işlem geri alınamaz.",
+    "pagination": {
+      "prev": "Önceki",
+      "next": "Sonraki",
+      "page": "Sayfa {{page}}"
+    }
+  },
+  "collective": {
+    "title": "Kolektif En İyi Uygulamalar",
+    "description": "Topluluktan anonimleştirilmiş olarak toplanan örüntüler.",
+    "searchPlaceholder": "Kolektif örüntüleri ara...",
+    "search": "Ara",
+    "noResults": "Örüntü bulunamadı",
+    "noResultsDescription": "Farklı bir arama sorgusu deneyin.",
+    "empty": {
+      "title": "Kolektif Zeka",
+      "description": "En iyi uygulamalar, hata çözümleri ve tuzaklar için topluluk örüntülerini arayın."
+    },
+    "stats": {
+      "totalPatterns": "Görünür Kalıplar",
+      "verified": "Beklemede",
+      "contributors": "Katkıda Bulunan",
+      "contributions": "Katkılar"
+    },
+    "table": {
+      "type": "Tür",
+      "pattern": "Örüntü",
+      "confidence": "Güven",
+      "seen": "Görülme",
+      "rating": "Puan",
+      "actions": "İşlemler"
+    },
+    "feedback": {
+      "helpful": "Faydalı olarak işaretle",
+      "inaccurate": "Yanlış olarak işaretle"
+    }
+  },
+  "jungian": {
+    "title": "Jungçu Zeka",
+    "individuation": {
+      "title": "Bireyleşme Skoru",
+      "level": "Olgunluk Seviyesi",
+      "trend": "Haftalık Eğilim",
+      "memoryDepth": "Bellek Derinliği",
+      "learningVelocity": "Öğrenme Hızı",
+      "collectiveContribution": "Kolektif Katkı",
+      "selfAwareness": "Öz Farkındalık",
+      "nascent": "Başlangıç",
+      "developing": "Gelişen",
+      "established": "Yerleşik",
+      "mature": "Olgun",
+      "individuated": "Bireyleşmiş",
+      "accelerating": "Hızlanıyor",
+      "stable": "Kararlı",
+      "decelerating": "Yavaşlıyor"
+    },
+    "archetypes": {
+      "shadow": "Gölge",
+      "sage": "Bilge",
+      "hero": "Kahraman",
+      "trickster": "Düzenbaz",
+      "shadowDesc": "Yapılmaması gereken",
+      "sageDesc": "Doğru yaklaşım",
+      "heroDesc": "Bunu yap",
+      "tricksterDesc": "Yaratıcı çözüm"
+    },
+    "dreams": {
+      "title": "Rüya İşleme",
+      "consolidated": "Birleştirildi",
+      "tokenSavings": "Token Tasarrufu",
+      "clusters": "Bulunan Kümeler"
+    },
+    "synchronicity": {
+      "title": "Eşzamanlılık Örüntüleri",
+      "coOccurrence": "Birlikte Oluşum",
+      "failureCorrelation": "Hata Korelasyonu",
+      "emergentWorkflow": "Beliren İş Akışı"
+    }
+  }
+}

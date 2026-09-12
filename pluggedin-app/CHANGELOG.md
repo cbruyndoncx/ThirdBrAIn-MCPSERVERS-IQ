@@ -1,0 +1,690 @@
+# Changelog
+
+All notable changes to the Plugged.in platform will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [4.1.0] - 2026-09-07
+
+The HIGH tier of the 2026-09-06 security scan, plus the fixes that came out of
+reviewing it. 66 commits, 38 of them tagged `security:`. No schema migration and
+no workflow change.
+
+Minor rather than major: no feature was removed and no data model changed.
+Several routes and server actions that were never reachable from the UI were
+deleted, and a few responses now carry fewer fields — see Removed and Changed.
+
+### Security
+
+All 65 active HIGH findings were checked against `623105ae` by reading the code.
+**Scan verdicts were treated as allegations, not evidence** — the scan's own
+revalidation step had been 79% wrong on the CRITICAL tier, confirming findings
+in files that had already been deleted. 58 records described real defects, five
+were already fixed, one was rejected against the upstream Kubernetes controller,
+and one was attributed to the wrong module. Evidence per finding is in
+[docs/security/high-triage-2026-09-07.md](docs/security/high-triage-2026-09-07.md).
+
+Grouped by what was wrong:
+
+- **Missing ownership checks.** Custom instructions, analytics by project uuid,
+  custom MCP server code and env vars, notifications, tools, server ratings, the
+  active-profile lookup, and MCP stream and deletion by session id now verify
+  the caller owns the thing they named.
+- **Server actions that were never meant to be public.** The audit-log writer,
+  trusted MCP discovery, log-retention helpers, the registry OAuth session
+  cleanup and the notification writers moved behind `server-only`. Every export
+  of a `'use server'` module is a public POST endpoint regardless of what calls
+  it, so the fix is to stop the module being one.
+- **Secrets in responses.** Agent GET, PATCH and export no longer return
+  `model_router_token`, `config_values` or metadata. Settings passes five fields
+  to the client instead of the users row. Shared templates omit OAuth
+  credentials and the private project relation.
+- **SSRF.** Model service sync uses `safeFetch`; remote MCP transports pin the
+  connection to the address that was validated, with an opt-in bounded stream so
+  SSE still delivers events before the connection ends.
+- **Admin boundaries.** Admin surfaces rely on the database `is_admin` role;
+  membership of `ADMIN_NOTIFICATION_EMAILS` no longer grants privileges. Cluster
+  registration, collector reads and alerts require that role.
+- **Auth lifecycle.** Password reset sets `password_changed_at`, which activates
+  the existing JWT revocation check. Duplicate registration returns a conflict
+  instead of replacing a pending account and its verification token. The
+  password-reset rate limiter reads the rightmost `X-Forwarded-For` address, so
+  a client-supplied prefix cannot rotate the bucket.
+- **Isolation.** MCP package mounts and runtime caches are per-server, so one
+  server's bubblewrap child cannot read a sibling's credentials.
+- **Uploads and output encoding.** Avatars are decoded under a pixel limit,
+  raster formats allowlisted, and re-encoded as server-named WebP. Admin
+  notification HTML escapes user-controlled fields.
+
+### Removed
+
+- `POST /api/audit-log` — unauthenticated and unused.
+- The global `cleanupExpiredSessions` action, which also carried an inverted
+  deletion predicate.
+- Public log-retention purge and policy mutation actions.
+
+### Fixed
+
+- Decoded AVIF avatars in the HEIF container are accepted.
+- Agent token status is preserved without exposing the credential.
+- The OpenCode backend stays behind the authenticated chamber.
+
+### Changed
+
+- **Log lines now carry the real version.** `lib/observability/logger.ts` and
+  `lib/logging.ts` each had a hardcoded fallback — `2.14.0` and `1.0.0` — and
+  `APP_VERSION` was set nowhere, so every production log claimed 2.14.0 while
+  the app was 4.0.0. Both now read `lib/app-version.ts`, which takes the version
+  from `package.json`; `APP_VERSION` still overrides. Release-scoped filtering
+  in Sentry and Loki was silently wrong before this.
+
+  `/api/health` carried a third value, `2.18.0`, shown only to whitelisted
+  monitoring IPs — so the probe that exists to report the running version
+  reported one that had not existed for months. Found in review after the first
+  two were fixed, which is why
+  `tests/security/app-version-single-source.test.ts` now discovers the pattern
+  rather than trusting that someone looked everywhere.
+
+### Advisories
+
+All five published advisories were verified against this release rather than
+assumed: no shell `exec` remains in the pnpm or uv install handlers,
+`testMcpConnection` uses `execFileAsync('which', [command])`, the unshare
+endpoint returns 403 without profile ownership, and both SSRF guards classify
+the parsed address. 50 regression assertions cover them.
+
+Thank you again to Syed Anas Mohiuddin, EQSTLab, tonghuaroot and 0xParth — see
+[Acknowledgements](SECURITY.md#acknowledgements).
+
+### Verification
+
+Baseline at `623105ae` reproduces **189 failing assertions**; this release runs
+**1,897 passed / 189 failed** with the **same 189 names** and zero new failures.
+That is not a green suite — it is an unchanged one. `next build` succeeds.
+
+## [4.0.0] - 2026-09-04
+
+A major by Semantic Versioning: two features were removed and the data model
+under Hubs changed. 72 commits since 3.3.0, and no release in between — which
+is why five published security advisories had to point at commit SHAs instead
+of a version. That is the gap this release closes.
+
+Entries between 2.16.0 and 3.3.0 are missing from this file; those releases were
+described in GitHub release notes only. This entry resumes the practice rather
+than reconstructing the gap.
+
+### Removed
+
+- **Workspaces as a separate axis.** Every Workspace is now its own Hub, one
+  Workspace per Hub, and the Workspace switcher is gone along with everything
+  that fed it. Existing Workspaces were promoted in place: no row of user data
+  moved, and `mcp_servers.slug` — the tool-name prefix in `{slug}__{tool}` — is
+  untouched, so saved instructions naming those tools still resolve.
+- **Discover / AI Social.** The feed and its surface are gone. The sharing
+  infrastructure underneath it stays: profiles, shared servers and shared
+  collections still work.
+
+### Added
+
+- **Hosted MCP connector at `/api/mcp`**, with an OAuth 2.1 authorization server
+  in front of it — PKCE, refresh-token rotation with reuse detection, and RFC
+  9728 discovery.
+- **Library tools over MCP**, behind a Hub boundary a caller cannot step
+  around.
+- **Docker + Traefik + SOPS deployment.** The stack runs in containers behind
+  Traefik with secrets decrypted to tmpfs at deploy time. `infra/scripts/deploy.sh`
+  is the entry point; running compose by hand skips decryption.
+- **Scheduled retention for Docker build artefacts**, four times a day, after a
+  4 GB-per-push image build filled the disk and took the site down.
+
+### Security
+
+Twenty security commits and five advisories, all published with the reporter
+credited (see the Acknowledgements section of SECURITY.md):
+
+- [GHSA-m623-vm42-63fg] (critical) — OS command injection through MCP server
+  `args`, reaching an unescaped shell in the pnpm/uv install path. Reported by
+  Syed Anas Mohiuddin.
+- [GHSA-qm2x-3m6j-c7fc] (high) — the same install-path injection reached through
+  discovery. Reported by EQSTLab.
+- [GHSA-m29x-gj35-9w8g] (high) — command injection in `testMcpConnection` via
+  ``exec(`which ${command}`)``. Reported by EQSTLab.
+- [GHSA-gmhc-h765-37cg] (high) — SSRF guard bypass. The guards matched hostname
+  text, which never matches the bracketed, hex-canonicalised form Node produces
+  for an IPv4-mapped address. Reported by tonghuaroot.
+- [GHSA-fv94-f4f5-vr99] (medium) — the REST unshare endpoint authenticated the
+  caller but never checked profile ownership, so any account could delete
+  another tenant's shares. Reported by 0xParth.
+
+Beyond the advisories, and found by an audit rather than reported:
+
+- Server actions no longer trust a caller-supplied identity; the set that did is
+  frozen by a test that discovers them rather than listing them.
+- `/api/search/users` no longer returns password hashes and 2FA secrets to
+  anonymous callers.
+- Spawned MCP servers no longer inherit the application's environment.
+- The SSRF primitive is applied everywhere a stored URL is fetched, and
+  `safeFetch` now resolves each redirect hop and connects to the address it
+  validated rather than re-resolving the name.
+- Email verification tokens are bound to the user they were issued for.
+- Shared-collection content is sanitised on write and on every read.
+- Imports validate what they are about to make runnable.
+
+### Fixed
+
+- **MCP discovery on STDIO servers.** The sandbox aborted on a bind for
+  `~/.local/bin`, a directory absent from every container image, so discovery
+  failed with `MCP error -32000: Connection closed`.
+- **Duplicate "Default Hub".** A race created two for 27 users. The race is
+  closed, and the duplicates are named apart rather than merged — merging would
+  have to rewrite slugs.
+- `deploy.sh` survives a second run and a failed decrypt.
+- Postgres and Redis are no longer published on `0.0.0.0` with a committed
+  password.
+- No SecurityError crash when Web Storage is blocked (Mobile Safari).
+
+### Dependencies
+
+`pnpm audit` reports no known vulnerabilities in this repository or in
+`pluggedin-mcp`. Automated security updates were **off** here and **paused**
+there, which is how twenty alerts went unattended; both are enabled now, and a
+`.github/dependabot.yml` schedules the routine half.
+
+[GHSA-m623-vm42-63fg]: https://github.com/VeriTeknik/pluggedin-app/security/advisories/GHSA-m623-vm42-63fg
+[GHSA-qm2x-3m6j-c7fc]: https://github.com/VeriTeknik/pluggedin-app/security/advisories/GHSA-qm2x-3m6j-c7fc
+[GHSA-m29x-gj35-9w8g]: https://github.com/VeriTeknik/pluggedin-app/security/advisories/GHSA-m29x-gj35-9w8g
+[GHSA-gmhc-h765-37cg]: https://github.com/VeriTeknik/pluggedin-app/security/advisories/GHSA-gmhc-h765-37cg
+[GHSA-fv94-f4f5-vr99]: https://github.com/VeriTeknik/pluggedin-app/security/advisories/GHSA-fv94-f4f5-vr99
+
+## [2.16.0] - 2025-10-30
+
+### Added
+- Added missing `glob` development dependency for build scripts
+
+### Changed
+- **Major Codebase Cleanup**: Comprehensive code quality and maintainability improvements
+  - Removed 10 obsolete documentation and SQL files from root directory
+  - Created `/docs` directory for better project organization
+  - Version synchronization across package.json and README (v2.16.0)
+
+### Removed
+- **Unused Code Cleanup**
+  - Removed 8 unused exported functions identified in audit
+  - Removed 9 unused test utility functions
+  - Removed `pino-pretty` dependency (commented out in logger due to Next.js compatibility issues)
+  - Deleted obsolete files:
+    - `fix-auth-tables.sql`
+    - `fix-jwt-session.sql`
+    - `fix-username-column.sql`
+    - `db-performance-profiler.sql`
+    - `BRANCH_FEATURES.md`
+    - `CODE_REVIEW_FIXES.md`
+    - `MCP_REGISTRY_FIXES.md`
+    - `PACKAGE_UPDATE_PLAN.md`
+    - `PERFORMANCE_OPTIMIZATIONS.md`
+    - `lib/api-key-manager.future.ts.bak`
+
+### Fixed
+- Fixed ESLint error: unescaped apostrophe in email preferences component
+- Auto-fixed multiple ESLint warnings for unused variables and imports
+- Improved code consistency and maintainability across the codebase
+
+### Security
+- Continued reduction of console.log statements (75% reduction from previous audit)
+- Enhanced code quality through systematic ESLint cleanup
+
+### Developer Experience
+- Cleaner root directory structure with organized documentation
+- Better dependency management with accurate package.json
+- Improved maintainability through removal of dead code
+- All TODO/FIXME comments reviewed and confirmed as intentional placeholders
+
+## [2.11.1] - 2025-01-18
+
+### Added
+- **RAG Document Source Attribution**
+  - Display source documents in library AI search results
+  - Clickable document sources that open preview modal
+  - Document names/IDs shown as badges below AI answers
+  - Support for metadata in RAG API responses
+- **Enhanced AI Search Experience**
+  - New `AiSearchAnswer` component for displaying AI responses
+  - `useKnowledgeBaseSearch` hook with 500ms debounce
+  - Collapsible AI answer panel with source attribution
+  - AI search toggle with sparkles icon in library controls
+- **MCP Tool Enhancement Support**
+  - API endpoint now supports `includeMetadata` parameter
+  - Returns JSON with sources when metadata requested
+  - Maintains backward compatibility with plain text responses
+  - Improved audit logging for metadata requests
+
+### Fixed
+- Null safety for document ID handling in library
+- Translation keys for AI search features in all 6 languages
+
+### Changed
+- RAG service updated to handle new response format with sources
+- Library actions enhanced to pass through document metadata
+
+## [2.8.0] - 2025-01-27
+
+### Added
+- **AI Document Exchange (RAG v2)**: Revolutionary document management with AI model attribution
+  - AI-generated documents via `/api/documents/ai` endpoint for MCP servers
+  - Complete model attribution tracking (model name, provider, version)
+  - Document versioning with change history and diffs
+  - Content hash-based deduplication
+  - Support for multiple document sources: 'upload', 'ai_generated', 'api'
+- **Enhanced Document Management**
+  - Profile-based document scoping alongside project-based organization
+  - Document visibility levels: private, workspace, public
+  - Parent-child document relationships for version tracking
+  - Advanced filtering by source type in library UI
+- **Document Model Attribution System**
+  - Track which AI models created, updated, or reviewed documents
+  - Comprehensive contribution metadata with timestamps
+  - Full attribution history with contribution types
+  - Model-specific metadata storage (tokens used, changes summary)
+- **Advanced Document Search API**
+  - Semantic search using PostgreSQL full-text search with relevance scoring
+  - Filter by AI model, provider, date range, tags, and source type
+  - Automatic snippet generation with keyword highlighting
+  - Pagination support with total count tracking
+- **RAG Processing Enhancements**
+  - Real-time upload progress tracking with detailed steps
+  - Progress indicators for text extraction, chunking, embeddings, and database insertion
+  - Estimated time remaining for large document processing
+  - Failure recovery with detailed error notifications
+- **Document Preview Modal**
+  - Full-featured document viewer with multi-format support
+  - PDF viewer with page navigation using react-pdf
+  - Image viewer with zoom controls (10%-500%) and pan functionality
+  - Text/code viewer with proper formatting for 20+ file types
+  - Markdown rendering for .md files
+  - Document navigation for browsing between multiple files
+  - Fullscreen mode for immersive viewing
+  - Metadata sidebar with document details
+
+### Changed
+- **Document Schema Updates**
+  - Added `source`, `ai_metadata`, `content_hash`, `visibility`, `version`, and `parent_document_id` fields
+  - Enhanced document table with profile UUID support
+  - Optimized indexes for search performance and filtering
+- **Library UI Improvements**
+  - New source filter dropdown (All, Uploaded, AI Generated, API)
+  - Model attribution badges for AI-generated documents
+  - Enhanced document metadata display
+  - Improved progress tracking UI for uploads
+  - Click-to-preview functionality in grid and table views
+  - Extracted file type detection logic to reusable utilities
+
+### Security
+- Rate limiting for AI document creation (10 requests per hour)
+- Enhanced directory traversal protection in document download endpoint
+- Path normalization and validation to prevent unauthorized file access
+- Sanitization of AI-generated HTML/Markdown content
+- Path traversal protection for document storage
+- Content length validation (10MB limit)
+
+### Database
+- New `document_versions` table for version history
+- New `document_model_attributions` table for AI attribution tracking
+- Migration `0047_youthful_mockingbird.sql` adds all v2 fields and tables
+
+## [2.7.0] - 2025-01-26
+
+### Added
+- **Smart Server Wizard**: Comprehensive multi-step wizard for MCP server creation and claiming
+  - Automatic GitHub ownership verification for claimed servers
+  - Environment variable detection and configuration
+  - Registry submission with progress tracking
+  - Discovery testing step with real-time validation
+  - Support for npm, Docker, PyPI, and GitHub deployments
+- **OAuth Integration**: Streamable HTTP OAuth support for MCP servers
+  - Session management with PostgreSQL and in-memory caching
+  - OAuth state management and token handling
+  - Automatic token clearing and session cleanup
+  - Support for GitHub and other OAuth providers
+- **Trending Servers**: Activity-based trending server discovery
+  - Real-time activity tracking and calculations
+  - Server metrics tracking with installation counts
+  - Enhanced sorting functionality for better discovery
+- **Enhanced Registry Integration**
+  - Improved registry server handling with simplified display names
+  - Registry token authentication for submissions
+  - Better error handling for GitHub token authentication
+  - Support for new registry schema and transport types
+- **API Reference Page**: New comprehensive API documentation with metadata
+- **Testing Infrastructure**: Comprehensive test coverage for registry features
+- **Profile Language API**: Language preference storage per user profile
+
+### Changed
+- **Search Functionality**: Refactored to remove 'latest only' filter with enhanced server-side filtering
+- **Database Migrations**: Consolidated multiple migrations and added missing language support
+- **Security Enhancements**:
+  - Added Zod validation to all server actions
+  - Removed XSS vulnerabilities by eliminating dangerouslySetInnerHTML usage
+  - Enhanced input validation across all forms
+- **Code Quality Improvements**:
+  - Removed all console.log statements from production code
+  - Cleaned up unused files, exports, and type definitions
+  - Removed unused dependencies (Knip integration)
+  - Improved error handling with standardized responses
+- **UI/UX Enhancements**:
+  - Improved StreamingCliToast connection handling
+  - Enhanced wizard UI consistency across all steps
+  - Better transport configuration handling
+
+### Fixed
+- Syntax errors from automated console.log removal
+- OAuth state management issues
+- Registry submission error handling
+- Server claiming functionality for community servers
+- Environment variable configuration in wizard
+- LLM provider mapping in playground sessions
+
+### Security
+- Comprehensive Zod validation schemas for all user inputs
+- XSS vulnerability fixes by removing dangerous HTML rendering
+- Enhanced OAuth token security with proper cleanup
+- Input sanitization improvements across all forms
+
+### Performance
+- Optimized activity tracking queries
+- Improved trending server calculations
+- Enhanced search performance with better indexing
+- Reduced bundle size by removing unused code
+
+## [2.6.2] - 2025-01-03
+
+### Fixed
+- Fixed "SSEClientTransport already started" errors for Streamable HTTP connections
+- Resolved connection timeout issues during MCP server discovery
+- Fixed retry logic to create fresh client/transport instances on each attempt
+
+### Changed
+- Updated MCP SDK from 1.13.1 to 1.13.3 for improved stability
+- Added default headers for all Streamable HTTP connections (Accept and User-Agent)
+- Implemented 30-second default timeout for all Streamable HTTP connections
+- Enhanced retry mechanism to avoid transport state conflicts
+
+## [2.6.1] - 2025-01-03
+
+### Added
+- **SSE Transport Deprecation Support**
+  - Visual deprecation warnings in UI for SSE servers
+  - Migration buttons to convert SSE to Streamable HTTP
+  - Auto-migration for Context7 servers from SSE to Streamable HTTP
+  - Console warnings when SSE transport is used
+  - Migration server actions for bulk SSE conversion
+
+### Fixed
+- Context7 MCP server now correctly detected as Streamable HTTP with SSE streaming capability
+- Added proper Accept headers for Context7 (`application/json, text/event-stream`)
+- Fixed test connection logic to handle Streamable HTTP servers with SSE streaming
+
+### Changed
+- Updated smart-server-dialog to support new MCP registry schema
+- Added support for 'streamable' transport type from new registry format
+- Added handling for remotes section in server configurations
+- Improved server type detection logic for known MCP endpoints
+- Context7 is now classified as Streamable HTTP (not SSE) per official MCP spec
+- Enhanced UI to show deprecation badges and warnings for SSE servers
+
+## [2.6.0] - 2025-01-03
+
+### Added
+- **High-Performance Package Management System**
+  - Isolated package installation per MCP server using pnpm
+  - Support for npm/npx/pnpm commands with 10-100x faster installs
+  - Python package management with uv (100x faster than pip)
+  - Automatic package directory detection per OS
+  - Smart command transformation for registry servers
+  - Package caching with content-addressable storage
+- **CLI-Style Discovery Toast**
+  - Terminal-style toast notification for MCP discovery output
+  - Real-time log streaming with animated display
+  - Color-coded output based on log types (Action, PackageManager, pnpm, etc.)
+  - JSON formatting for structured data
+  - Auto-scroll to bottom with custom terminal-themed scrollbar
+  - Console capture utility for discovery process logging
+- **Registry Integration Improvements**
+  - Enhanced server detail dialog with full registry server support
+  - Fixed registry server import using official transformer
+  - Proper handling of registry servers with package dependencies
+  - Dynamic command/args display in configuration UI
+
+### Changed
+- **Package Manager Enhancements**
+  - Fixed npx flag parsing (-y, --yes, etc. no longer treated as packages)
+  - Improved binary detection for npx-only packages
+  - Keep using npx command for packages without binaries
+  - Better error handling for package installation failures
+- **UI/UX Improvements**
+  - Optimized CLI toast performance with faster animations
+  - Fixed height issues in toast notifications
+  - Added "Processing..." indicator for ongoing operations
+  - Improved scrolling behavior for long outputs
+
+### Fixed
+- Fixed MCP discovery errors where npx flags were incorrectly parsed as package names
+- Fixed binary not found errors for npx-only packages
+- Fixed registry server command transformation issues
+- Fixed duplicate variable declarations in package manager
+- Fixed CLI toast height and scrolling issues
+
+### Security
+- Package isolation per MCP server for enhanced security
+- Separate installation directories prevent package conflicts
+- Environment-based configuration for resource limits
+
+## [2.5.0] - 2025-01-26
+
+### Added
+- **Discovery Performance Optimizations**
+  - Smart discovery throttling to prevent redundant API calls
+  - In-memory caching for recent discovery attempts
+  - Optimized database queries with single LEFT JOIN operations
+  - Enhanced error recovery with automatic retry mechanisms
+  - Comprehensive discovery status tracking and logging
+
+### Changed
+- **API Performance Improvements**
+  - Tools API (`/api/tools`) now implements 5-minute throttling for automatic discovery
+  - Discovery API (`/api/discover`) uses 2-minute throttling for explicit requests
+  - Single database query fetches server data and tool counts together
+  - Asynchronous discovery processing with improved error handling
+- **Enhanced User Experience**
+  - Faster API response times through optimized queries
+  - Clear feedback on discovery progress and throttling status
+  - Intelligent failure recovery with faster retry mechanisms
+  - Better scalability for concurrent discovery requests
+
+### Fixed
+- Eliminated redundant discovery calls that could overwhelm the system
+- Resolved race conditions in concurrent discovery requests
+- Fixed database query inefficiencies in tool count operations
+- Improved memory management for discovery attempt tracking
+
+### Performance
+- **5-10x reduction** in redundant discovery calls
+- **~50% faster** API response times through query optimization
+- **Zero duplicate work** through intelligent throttling
+- **Better scalability** for high-concurrency scenarios
+
+## [2.4.0] - 2025-01-26
+
+### Added
+- **Enhanced Authentication UI**
+  - New `AuthLayout` component with network animation background
+  - Unified authentication form component (`AuthForm`) across all auth pages
+  - Loading indicators and improved user feedback on email verification
+  - Consistent link configuration across authentication flows
+- **Documentation Updates**
+  - New images for What's New pages showcasing latest features
+  - Enhanced Getting Started page with updated setup guide images
+  - Visual guides for collection sharing, server capabilities, and multilingual support
+  - Updated screenshots for public profiles and import/export functionality
+
+### Changed
+- Refactored all authentication pages (login, register, forgot-password, etc.) to use shared `AuthLayout`
+- Improved language update logic in authentication flows
+- Enhanced error handling and user feedback across authentication forms
+- Updated all language translations for authentication pages
+- Removed obsolete start script and added dynamic exports to WhatsNew pages
+
+### Fixed
+- Language persistence issues during authentication flows
+- Form validation and error display consistency
+- Loading state management in authentication forms
+
+## [2.3.0] - 2025-01-25
+
+### Added
+- **Security Validations for MCP Servers**
+  - URL validation with SSRF protection for SSE and Streamable HTTP servers
+  - Command allowlisting for STDIO servers (node, npx, python, python3, uv, uvx, uvenv)  
+  - Header validation and sanitization for Streamable HTTP configurations
+  - Centralized security validators in `lib/security/validators.ts`
+  - Validation in createMcpServer, updateMcpServer, and bulkImportMcpServers
+- **Enhanced Notifications System**
+  - Custom notification titles with localization support
+  - Filtering and sorting capabilities (by severity, date)
+  - Search functionality for notifications
+  - Refresh button for instant updates (RefreshCw icon)
+  - Protection for custom notifications from bulk deletion
+  - Faster polling interval reduced from 60 to 15 seconds
+  - Improved UI with better spacing and controls
+- **Streamable HTTP Transport Improvements**
+  - Better support for session management options
+  - Improved transport configuration UI
+  - Enhanced error messages for connection failures
+  - Backward compatibility for legacy transport options
+
+### Changed
+- Updated notification provider polling interval for better responsiveness
+- Improved Turkish and other language localizations for notifications
+- Enhanced error handling in MCP server creation and updates
+- Better separation of transport options from environment variables
+- Refined bulk import to validate and skip invalid servers
+- Updated test infrastructure to work with new validations
+- Improved error messages to be more user-friendly
+
+### Fixed
+- Missing translation keys in notifications page:
+  - `notifications.status.unread` instead of `status.unread`
+  - `notifications.actions.markAsRead` instead of `actions.markAsRead`
+  - `notifications.actions.delete` instead of `actions.delete`
+- Turkish localization not working for custom notifications
+- Docker build issues with NextJS static generation
+- Notification translation namespace consistency
+- Streamable HTTP integration tests compatibility
+- Test failures after security validation implementation
+
+### Security
+- All MCP server URLs now validated against SSRF attacks
+- Command injection protection through strict allowlisting
+- Header injection prevention for Streamable HTTP
+- Input sanitization for all server configurations
+- Protection against private IP access and dangerous ports
+- RFC 7230 compliant header validation
+- Control character detection in headers
+
+## [2.2.0] - 2025-06-21
+
+### Added
+- **MCP Server Data Encryption**: Implemented AES-256-GCM encryption for sensitive MCP server data
+  - Encrypts `command`, `args`, `env`, and `url` fields
+  - Per-profile encryption with derived keys for enhanced security
+  - Transparent encryption/decryption for seamless user experience
+  - Sanitized templates for secure server sharing
+
+### Changed
+- Database schema updated to support encrypted fields
+- MCP API endpoints now decrypt data before sending to proxy
+- Update operations properly handle encryption for sensitive fields
+
+### Fixed
+- Fixed MCP server update issue where arguments would revert to previous values
+- Fixed "Session not found" error when using MCP proxy with encrypted servers
+
+### Security
+- All sensitive MCP server configuration data is now encrypted at rest
+- Only the profile owner can decrypt and use their servers
+- Shared servers expose sanitized templates without sensitive information
+
+## [2.1.0] - 2025-06-19
+
+### Added
+- **RAG-Powered Document Library**: Upload and manage documents as context for AI interactions
+- **Real-Time Notification System**: Comprehensive notifications with optional email delivery
+- **Progressive Server Initialization**: Faster startup with resilient server connections
+- **Theme Customization**: Enhanced settings page with theme options
+- **Notification Bell**: Real-time notification count updates in UI
+
+### Changed
+- Redesigned MCP Playground with better layout and responsiveness
+- Enhanced error handling and user feedback throughout the application
+- Improved memory management for long-running sessions
+
+### Fixed
+- Fixed JSON-RPC protocol interference in MCP proxy
+- Resolved localhost URL validation for development
+- Fixed memory leaks in long-running sessions
+- Corrected streaming message handling
+
+### Security
+- Industry-standard HTML sanitization with `sanitize-html`
+- Secure environment variable parsing
+- Comprehensive input validation
+- Rate limiting and audit logging
+
+## [1.0.0] - 2025-04-14
+
+### Added
+- **Social Features**: User profiles, MCP server sharing, and community discovery
+- **Collections Management**: Group and share curated sets of MCP servers
+- **Public/Private Controls**: Granular privacy settings for shared content
+- **Attribution System**: Proper credit for shared content creators
+- **Custom Instructions**: Fine-tune how MCP servers respond
+- **Resource Templates**: Create and share templates for common resources
+- **Internationalization**: Support for English, Turkish, Chinese, Hindi, Japanese, and Dutch
+- **User Profiles**: Dedicated profile pages at `/to/username`
+- **Export/Import**: Backup or share entire collections
+- **Usage Analytics**: Track installation and usage of shared content
+
+### Changed
+- Upgraded to React 19 for performance improvements
+- Restructured database schema to support social features
+- Enhanced API endpoints for sharing and discovery
+- Improved state management for better performance
+- Optimized bundle sizes for faster loading
+
+### Fixed
+- Profile images display issues
+- Collection export performance for large collections
+- Various UI translation completeness
+
+## [0.4.5] - 2025-04-02 (Pre-release)
+
+### Added
+- **Full MCP Specification Compatibility**: Complete support for MCP prompts, custom instructions, tools, and resources
+- **Capability Discovery & Storage**: Comprehensive discovery for Tools, Resources, Resource Templates, and Prompts
+- **Custom Instructions**: Backend and frontend implementation for server-specific instructions
+- **Server Detail UI Enhancements**: Tabs to display discovered capabilities
+- **Discovery Button**: Manual capability discovery on server detail page
+- **Release Notes System**: Complete release notes with filtering, search, and pagination
+- **API-Driven Architecture**: New endpoints for proxy capability listing and resolution
+
+### Changed
+- Moved all capability discovery to pluggedin-app for improved startup time
+- Database schema updates with promptsTable and customInstructionsTable
+
+### Fixed
+- Dynamic route parameter access using await params pattern
+- Data transformation in custom instruction API route
+- Server Notes functionality verification and fixes
+
+### Breaking Changes
+- Full compatibility with MCP specifications requires updating both pluggedin-app and pluggedin-mcp

@@ -1,0 +1,267 @@
+import { execFile } from 'child_process';
+import { promises as fs } from 'fs';
+import { promisify } from 'util';
+
+import { approvedChildPath, inheritableChildEnv } from '@/lib/mcp/child-env';
+import { buildSecurePath, validatePathComponent } from '@/lib/secure-path-builder';
+import { validatePackageName, validatePackageVersion } from '@/lib/security/package-name';
+
+import { PackageManagerConfig } from '../config';
+import { BasePackageHandler, InstallOptions, PackageInfo } from './base-handler';
+
+// argv execution, never a shell: the package name and version come out of a
+// user-supplied args array, so a shell here is a command-injection sink.
+const execFileAsync = promisify(execFile);
+
+export class PnpmHandler extends BasePackageHandler {
+  protected packageManagerName = 'pnpm';
+  
+  async install(options: InstallOptions): Promise<PackageInfo> {
+    const { serverUuid, packageName, version } = options;
+
+    // The name and version come out of a user-supplied args array. argv
+    // execution above already keeps them away from a shell; this keeps a
+    // malformed value out of the filesystem-path builders too, and fails the
+    // install before anything is spawned.
+    const nameCheck = validatePackageName(packageName);
+    if (!nameCheck.valid) {
+      throw new Error(`Invalid package name: ${nameCheck.error}`);
+    }
+    if (version !== undefined) {
+      const versionCheck = validatePackageVersion(version);
+      if (!versionCheck.valid) {
+        throw new Error(`Invalid package version: ${versionCheck.error}`);
+      }
+    }
+    const installDir = this.getServerInstallDir(serverUuid);
+    
+    this.log('Installing package', { serverUuid, packageName, version, installDir });
+    
+    // Ensure directory exists
+    await this.ensureDirectory(installDir);
+
+    // Create minimal package.json if not exists
+    const packageJsonPath = buildSecurePath(installDir, 'package.json');
+    if (!(await this.fileExists(packageJsonPath))) {
+      await fs.writeFile(
+        packageJsonPath,
+        JSON.stringify({
+          name: `mcp-server-${serverUuid}`,
+          private: true,
+          description: `Isolated packages for MCP server ${serverUuid}`,
+        }, null, 2)
+      );
+    }
+    
+    // Construct package spec
+    const packageSpec = version ? `${packageName}@${version}` : packageName;
+    
+    try {
+      // Install package using pnpm
+      const { stdout, stderr } = await execFileAsync('pnpm', ['add', packageSpec], {
+        cwd: installDir,
+        env: {
+          ...inheritableChildEnv(),
+          // PATH is not in the allowlist; without it execFile cannot find the binary
+          PATH: approvedChildPath(),
+          PNPM_STORE_DIR: PackageManagerConfig.PNPM_STORE_DIR,
+          NODE_LINKER: 'isolated',
+          PACKAGE_IMPORT_METHOD: 'clone', // For CoW filesystems
+          PNPM_LOCKFILE: 'false', // Don't create lockfiles for isolated installs
+        },
+        timeout: PackageManagerConfig.STARTUP_TIMEOUT_MS,
+      });
+      
+      if (stderr && !stderr.includes('WARN')) {
+        console.warn(`[pnpm] Installation warnings for ${packageName}:`, stderr);
+      }
+
+      // Get the binary path
+      // Validate packageName to prevent path traversal
+      validatePathComponent(packageName);
+      const binaryPath = buildSecurePath(installDir, 'node_modules', '.bin', packageName);
+      let foundBinaryPath: string | null = null;
+
+      // Verify the binary exists
+      if (await this.fileExists(binaryPath)) {
+        foundBinaryPath = binaryPath;
+      } else {
+        // Try to find the actual binary name from package.json
+        const packageJsonPath = buildSecurePath(installDir, 'node_modules', packageName, 'package.json');
+        if (await this.fileExists(packageJsonPath)) {
+          const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
+          if (packageJson.bin) {
+            const binName = typeof packageJson.bin === 'string'
+              ? packageName
+              : Object.keys(packageJson.bin)[0];
+            // Validate binName to prevent path traversal
+            validatePathComponent(binName);
+            const altBinaryPath = buildSecurePath(installDir, 'node_modules', '.bin', binName);
+            if (await this.fileExists(altBinaryPath)) {
+              foundBinaryPath = altBinaryPath;
+            }
+          }
+        }
+      }
+
+      // Get installed version
+      const installedPackageJson = buildSecurePath(installDir, 'node_modules', packageName, 'package.json');
+      let installedVersion = version;
+      if (await this.fileExists(installedPackageJson)) {
+        const packageData = JSON.parse(await fs.readFile(installedPackageJson, 'utf-8'));
+        installedVersion = packageData.version;
+      }
+      
+      // For packages without binaries (meant to be run with npx), 
+      // we still return success but with a special marker
+      const effectiveBinaryPath = foundBinaryPath || 'npx-package';
+      
+      this.log('Package installed successfully', { 
+        packageName, 
+        version: installedVersion, 
+        binaryPath: effectiveBinaryPath,
+        hasBinary: !!foundBinaryPath
+      });
+      
+      return {
+        name: packageName,
+        version: installedVersion,
+        binaryPath: effectiveBinaryPath,
+        installPath: installDir,
+      };
+    } catch (error) {
+      this.log('Installation failed', { packageName, error });
+      throw new Error(
+        `Failed to install ${packageName}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+  
+  async isInstalled(serverUuid: string, packageName: string): Promise<boolean> {
+    const binaryPath = await this.getBinaryPath(serverUuid, packageName);
+    return binaryPath !== null;
+  }
+  
+  async getBinaryPath(serverUuid: string, packageName: string): Promise<string | null> {
+    const installDir = this.getServerInstallDir(serverUuid);
+
+    // Validate packageName to prevent path traversal
+    validatePathComponent(packageName);
+
+    // First check if the package is installed at all
+    const packageJsonPath = buildSecurePath(installDir, 'node_modules', packageName, 'package.json');
+    if (!(await this.fileExists(packageJsonPath))) {
+      return null; // Package not installed
+    }
+
+    // Check for binary in .bin directory
+    const binaryPath = buildSecurePath(installDir, 'node_modules', '.bin', packageName);
+    if (await this.fileExists(binaryPath)) {
+      return binaryPath;
+    }
+    
+    // Try to find alternative binary names
+    try {
+      const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
+      if (packageJson.bin) {
+        const binName = typeof packageJson.bin === 'string'
+          ? packageName
+          : Object.keys(packageJson.bin)[0];
+        // Validate binName to prevent path traversal
+        validatePathComponent(binName);
+        const altBinaryPath = buildSecurePath(installDir, 'node_modules', '.bin', binName);
+        if (await this.fileExists(altBinaryPath)) {
+          return altBinaryPath;
+        }
+      }
+    } catch (error) {
+      console.warn(`Failed to read package.json for ${packageName}:`, error);
+    }
+    
+    // Package is installed but has no binary (npx-only package)
+    // Return a special marker to indicate the package exists
+    return 'npx-package';
+  }
+  
+  async cleanup(serverUuid: string): Promise<void> {
+    const installDir = this.getServerInstallDir(serverUuid);
+    
+    try {
+      await fs.rm(installDir, { recursive: true, force: true });
+      this.log('Cleaned up packages', { serverUuid, installDir });
+    } catch (error) {
+      console.error(`Failed to cleanup packages for ${serverUuid}:`, error);
+      throw error;
+    }
+  }
+  
+  async getDiskUsage(serverUuid: string): Promise<number> {
+    const installDir = this.getServerInstallDir(serverUuid);
+    return this.getDirectorySize(installDir);
+  }
+  
+  async prewarmPackages(packages: string[]): Promise<void> {
+    if (!PackageManagerConfig.PREWARM_COMMON_PACKAGES) {
+      return;
+    }
+
+    const baseLayerDir = buildSecurePath(PackageManagerConfig.PACKAGE_STORE_DIR, 'overlays', 'base', 'node_modules');
+    await this.ensureDirectory(baseLayerDir);
+
+    // Create a temporary package.json for base layer
+    const tempDir = buildSecurePath(PackageManagerConfig.PACKAGE_STORE_DIR, 'temp-prewarm');
+    await this.ensureDirectory(tempDir);
+
+    const packageJsonPath = buildSecurePath(tempDir, 'package.json');
+    await fs.writeFile(
+      packageJsonPath,
+      JSON.stringify({
+        name: 'mcp-base-layer',
+        private: true,
+        description: 'Common packages for MCP servers',
+      }, null, 2)
+    );
+    
+    this.log('Pre-warming packages', { count: packages.length });
+    
+    for (const packageName of packages) {
+      try {
+        await execFileAsync('pnpm', ['add', packageName], {
+          cwd: tempDir,
+          env: {
+            ...inheritableChildEnv(),
+          // PATH is not in the allowlist; without it execFile cannot find the binary
+          PATH: approvedChildPath(),
+            PNPM_STORE_DIR: PackageManagerConfig.PNPM_STORE_DIR,
+            NODE_LINKER: 'isolated',
+          },
+          timeout: 60000, // 1 minute for pre-warming
+        });
+        
+        this.log('Pre-warmed package', { packageName });
+      } catch (error) {
+        console.warn(`Failed to pre-warm ${packageName}:`, error);
+      }
+    }
+    
+    // Move node_modules to base layer
+    const tempNodeModulesDir = buildSecurePath(tempDir, 'node_modules');
+    try {
+      await fs.rename(tempNodeModulesDir, baseLayerDir);
+    } catch (error) {
+      // If rename fails, try copy without using shell command (prevents command injection)
+      try {
+        await fs.cp(tempNodeModulesDir, baseLayerDir, { recursive: true });
+      } catch (copyError) {
+        console.warn('Failed to copy node_modules to base layer after rename failure:', copyError);
+      }
+    }
+    
+    // Cleanup temp directory
+    await fs.rm(tempDir, { recursive: true, force: true });
+    
+    this.log('Pre-warming completed', { packages });
+  }
+}

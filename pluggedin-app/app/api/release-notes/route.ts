@@ -1,0 +1,52 @@
+import { NextRequest, NextResponse } from 'next/server';
+
+import { getReleaseNotes, searchReleaseNotes, updateReleaseNotesFromGitHub } from '@/app/actions/release-notes';
+import { validateCSRF } from '@/lib/csrf-protection';
+import { type RepositoryName } from '@/lib/github/release-fetcher';
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const repository = searchParams.get('repository') as RepositoryName | 'all' | null;
+  const page = parseInt(searchParams.get('page') || '1', 10);
+  const limit = parseInt(searchParams.get('limit') || '10', 10);
+  const query = searchParams.get('query'); // For search functionality
+
+  try {
+    let result;
+    if (query) {
+      // If a search query is present, use the search action with pagination
+      result = await searchReleaseNotes(query, repository || 'all', page, limit);
+    } else {
+      // Otherwise, fetch paginated notes
+      result = await getReleaseNotes(repository || 'all', page, limit);
+    }
+
+    // Return both notes and total count for proper pagination
+    return NextResponse.json({
+      notes: result.notes || [],
+      total: result.total || 0
+    });
+  } catch (error: any) {
+    console.error('Error fetching release notes via API:', error);
+    return NextResponse.json({ error: 'Failed to fetch release notes', details: error.message }, { status: 500 });
+  }
+}
+
+// POST endpoint to trigger updates manually
+export async function POST(request: NextRequest) {
+  try {
+    // Validate CSRF for this state-changing operation
+    const csrfError = await validateCSRF(request);
+    if (csrfError) return csrfError;
+
+    const result = await updateReleaseNotesFromGitHub();
+    if (result.success) {
+      return NextResponse.json({ message: result.message, updatedRepos: result.updatedRepos });
+    } else {
+      return NextResponse.json({ error: result.message, details: result.error }, { status: 500 });
+    }
+  } catch (error: any) {
+    console.error('Error triggering release notes update via API:', error);
+    return NextResponse.json({ error: 'Failed to trigger update', details: error.message }, { status: 500 });
+  }
+}
