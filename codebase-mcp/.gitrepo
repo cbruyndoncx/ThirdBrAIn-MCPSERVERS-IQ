@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/DeDeveloper23/codebase-mcp.git
+	branch = main
+	commit = 3ec749d237dd8eabbeef48657cf917275792fde6
+	parent = 93b3035f365777cb2cc7112345b917835e7ba908
+	method = merge
+	cmdver = 0.4.9
