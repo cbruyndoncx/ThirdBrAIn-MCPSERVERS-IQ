@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/VibeTensor/vibemcp.git
+	branch = main
+	commit = fcdfed58e9a2dacc8d0c3043de59f9389f5a7a99
+	parent = 5e7958ef76fe739eae31dd08c227e9ce87f6bae4
+	method = merge
+	cmdver = 0.4.9

@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "vibemcp": {
+      "command": "npx",
+      "args": ["-y", "vibemcp"],
+      "env": {
+        "GOOGLE_CLIENT_ID": "your-google-client-id.apps.googleusercontent.com",
+        "GOOGLE_CLIENT_SECRET": "your-google-client-secret",
+        "MICROSOFT_CLIENT_ID": "your-microsoft-client-id",
+        "MICROSOFT_TENANT_ID": "common",
+        "VIBEMCP_OUTPUT_FORMAT": "toon"
+      }
+    }
+  }
+}
