@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/toolprint/hypertool-mcp.git
+	branch = main
+	commit = 5a5175c61b35b4626827be1b6cb373c452a95585
+	parent = 15ee839f2ece4f5bc8b143881a695e9432a686b8
+	method = merge
+	cmdver = 0.4.9

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "hypertool": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@toolprint/hypertool-mcp@latest",
+        "mcp",
+        "run",
+        "--mcp-config",
+        "mcp.hypertool.json"
+      ]
+    }
+  }
+}
