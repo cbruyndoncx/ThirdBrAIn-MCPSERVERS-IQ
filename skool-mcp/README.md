@@ -85,8 +85,9 @@ Uses session cookies from an authenticated Skool session. The `auth_token` JWT i
 - `skool.courses.list` — List courses
 - `skool.lessons.list` — List lessons in a course
 
-### Notifications
-- `skool.notifications` — Get recent notifications
+### Notifications and chats
+- `skool_notifications` — The bell feed across all your communities, newest first, from `api2 /self/notifications`. Filters: `unreadOnly`, `community` (slug, group id or name); page with `cursor`. At most 30 per page. Read-only.
+- `skool_chats` — Your DM conversations with unread counts and the last message, from `api2 /self/chat-channels`. Filter `unreadOnly`; page with `offset`. At most 30 per page. Read-only.
 
 ## API Notes
 

@@ -9,6 +9,7 @@ import { membersListTool, membersPendingTool, membersApproveTool, membersRejectT
 import { postsListTool, postsGetTool, postsCreateTool, postsCommentTool } from "./tools/posts.js";
 import { coursesListTool, lessonsListTool } from "./tools/classroom.js";
 import { notificationsTool } from "./tools/notifications.js";
+import { chatsTool } from "./tools/chats.js";
 
 const server = new McpServer({
   name: "skool-mcp",
@@ -119,6 +120,14 @@ server.tool(
   notificationsTool.description,
   notificationsTool.inputSchema,
   async (args) => ({ content: [{ type: "text", text: await notificationsTool.handler(args) }] }),
+);
+
+// Chats
+server.tool(
+  chatsTool.name,
+  chatsTool.description,
+  chatsTool.inputSchema,
+  async (args) => ({ content: [{ type: "text", text: await chatsTool.handler(args) }] }),
 );
 
 // Start the server

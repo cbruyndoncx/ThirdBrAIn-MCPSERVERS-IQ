@@ -153,6 +153,8 @@ Auth: `Cookie: auth_token={jwt}` header. JWT is httpOnly, stored in browser.
 - `GET /posts` → 405 (POST only, used for creating)
 - `GET /users` → 405 (POST only)
 - `GET /groups` → 405 (POST only)
+- `GET /self/notifications?limit=30&type=all[&cursor=…]` → `{"messages": [...], "cursor": "...", "has_more": bool, "type": "all"}`. Recorded from the bell on 2026-10-30. Covers every group the user is in. Each message has `unread`, `action`, `group_id` and `metadata.data`, a JSON string with `display_name`, `group_display_name`, `text`, `content` and `link_as` (the real post path; `link_href` is a Next.js route template). `limit` above 30 returns 400 "invalid limit". Reading does not mark anything read. The old `/notifications` page route 307-redirects to `/`.
+- `GET /self/chat-channels?offset=0&limit=30&last=true&unread-only=false` → `{"channels": [...]}`. Recorded from the chat panel on 2026-10-30. Each channel has `metadata.num_unread`, `user` (the other person), `last_message.metadata.content` and `src` (sender id). `limit` above 30 returns 400. Listing does not mark anything read.
 
 ### api2 uses snake_case (unlike Next.js camelCase)!
 
